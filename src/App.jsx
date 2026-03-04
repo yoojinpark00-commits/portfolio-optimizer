@@ -290,12 +290,15 @@ useEffect(() => {
   const selectTicker = useCallback(async (stk) => {
     setSf(f => ({ ...f, t: stk.t, n: stk.n, sec: stk.s })); setStockDD(false); setStockResults([]); setAdding(true);
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, tools: [{ type: "web_search_20250305", name: "web_search" }],
-          messages: [{ role: "user", content: `Current price for "${stk.t}" (${stk.n}). Return ONLY JSON: {"price":NUMBER,"sector":"SECTOR"} No markdown.` }] }) });
-      const data = await resp.json(); const txt = data.content?.map(b => b.type === "text" ? b.text : "").filter(Boolean).join("") || "";
-      try { const info = JSON.parse(txt.replace(/```json|```/g, "").trim()); setSf(f => ({ ...f, sec: info.sector || stk.s, livePrice: +info.price || 0 })); } catch (e) { }
-    } catch (e) { }
+      const resp = await fetch(`/api/prices?tickers=${stk.t}`);
+      if (resp.ok) {
+        const json = await resp.json();
+        const info = json.data?.[stk.t];
+        if (info?.price) {
+          setSf(f => ({ ...f, livePrice: info.price }));
+        }
+      }
+    } catch (e) { console.warn("Price lookup failed:", e); }
     setAdding(false);
   }, []);
 
@@ -319,24 +322,29 @@ useEffect(() => {
     else setStocks(p => p.filter(s => s.ticker !== ticker));
   }, []);
 
-  // ─── Fetch live prices ───
+  // ─── Fetch live prices via Yahoo Finance API route ───
   const fetchLive = useCallback(async () => {
     setLiveL(true);
     try {
       const tickers = [...etfs.map(e => e.ticker), ...stocks.map(s => s.ticker)].filter(Boolean);
+      if (!tickers.length) { setLiveL(false); return; }
       const results = {};
-      for (let i = 0; i < tickers.length; i += 8) {
-        const batch = tickers.slice(i, i + 8);
+      // Batch into groups of 20 (Yahoo Finance limit)
+      for (let i = 0; i < tickers.length; i += 20) {
+        const batch = tickers.slice(i, i + 20);
         try {
-          const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, tools: [{ type: "web_search_20250305", name: "web_search" }],
-              messages: [{ role: "user", content: `Current prices for: ${batch.join(", ")}. Return ONLY JSON: {"TICKER":{"price":NUMBER,"change":NUMBER}} No markdown.` }] }) });
-          const data = await resp.json(); const txt = data.content?.map(b => b.type === "text" ? b.text : "").filter(Boolean).join("") || "";
-          try { Object.assign(results, JSON.parse(txt.replace(/```json|```/g, "").trim())) } catch (e) { batch.forEach(t => { results[t] = { price: +(100 + Math.random() * 300).toFixed(2), change: +((Math.random() - .5) * 3).toFixed(2) } }) }
-        } catch (e) { batch.forEach(t => { results[t] = { price: +(100 + Math.random() * 300).toFixed(2), change: +((Math.random() - .5) * 3).toFixed(2) } }) }
+          const resp = await fetch(`/api/prices?tickers=${batch.join(",")}`);
+          if (resp.ok) {
+            const json = await resp.json();
+            if (json.data) Object.assign(results, json.data);
+          }
+        } catch (e) { console.warn("Price fetch batch failed:", e); }
       }
-      setLive(results); setLastF(new Date());
-    } catch (e) { }
+      // Only update if we got real data
+      if (Object.keys(results).length > 0) {
+        setLive(results); setLastF(new Date());
+      }
+    } catch (e) { console.warn("Price fetch failed:", e); }
     setLiveL(false);
   }, [etfs, stocks]);
 
@@ -391,7 +399,7 @@ useEffect(() => {
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {totalVal > 0 && <span style={{ fontSize: 11, fontFamily: mono2, color: cs.green, fontWeight: 700 }}>{fmt$(totalVal)}</span>}
           <button onClick={() => setModSh(v => !v)} style={{ padding: "4px 8px", borderRadius: 5, border: `1px solid ${modSh ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.08)"}`, background: modSh ? "rgba(244,114,182,.1)" : "transparent", color: modSh ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{modSh ? "σ²" : "Std"} SR</button>
-          {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()}</span>}
+          {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()}{Object.values(live).some(v => v.marketState === "REGULAR") ? " · OPEN" : " · CLOSED"}</span>}
           <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: liveL ? "rgba(110,231,183,.05)" : "rgba(110,231,183,.1)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "..." : "⟳ Live"}</button>
         </div>
       </div>
