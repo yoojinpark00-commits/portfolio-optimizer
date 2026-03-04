@@ -14,10 +14,10 @@ export default async function handler(req, res) {
   const { tickers } = req.query;
   if (!tickers) return res.status(400).json({ error: "Missing ?tickers= param" });
 
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  const apiKey = process.env.TWELVEDATA_API_KEY;
   if (!apiKey) {
     return res.status(500).json({
-      error: "TWELVE_DATA_API_KEY not set. Add it in Vercel → Settings → Environment Variables.",
+      error: "TWELVEDATA_API_KEY not set. Add it in Vercel → Settings → Environment Variables.",
     });
   }
 
