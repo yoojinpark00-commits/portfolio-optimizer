@@ -410,11 +410,15 @@ useEffect(() => {
         setStockSearching(true);
         try {
           const kind = addType === "etf" ? "ETF" : "stock";
-          const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, tools: [{ type: "web_search_20250305", name: "web_search" }],
-              messages: [{ role: "user", content: `${kind} tickers matching "${query}" tradable on Schwab. Return ONLY JSON array: [{"t":"TICKER","n":"Name","s":"Category"}] up to 8. Categories for ETFs: US Large Cap/US Growth/US Value/US Mid Cap/US Small Cap/US Dividend/International/Intl Developed/Emerging Mkts/Sector Tech/Sector Health/Sector Finance/Sector Energy/Sector Indust/Sector Consumer/Sector RE/Sector Utilities/Sector Materials/Sector Comms/Factor Momentum/Factor Quality/Factor LowVol/US Bond/US Treasury/US Corp Bond/US High Yield/Intl Bond/Commodity. Categories for stocks: Technology/Healthcare/Financial/Energy/Consumer/Industrial/Real Estate/Communications/Utilities/Materials. No markdown.` }] }) });
-          const data = await resp.json(); const txt = data.content?.map(b => b.type === "text" ? b.text : "").filter(Boolean).join("") || "";
-          try { const parsed = JSON.parse(txt.replace(/```json|```/g, "").trim()); if (Array.isArray(parsed)) { const seen = new Set(local.map(l => l.t)); const merged = [...local]; parsed.forEach(p => { if (p.t && !seen.has(p.t)) { seen.add(p.t); merged.push(p) } }); setStockResults(merged.slice(0, 10)); } } catch (e) { }
+          const resp = await fetch("/api/ai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: `${kind} tickers matching "${query}" tradable on Schwab. Return ONLY JSON array: [{"t":"TICKER","n":"Name","s":"Category"}] up to 8. Categories for ETFs: US Large Cap/US Growth/US Value/US Mid Cap/US Small Cap/US Dividend/International/Intl Developed/Emerging Mkts/Sector Tech/Sector Health/Sector Finance/Sector Energy/Sector Indust/Sector Consumer/Sector RE/Sector Utilities/Sector Materials/Sector Comms/Factor Momentum/Factor Quality/Factor LowVol/US Bond/US Treasury/US Corp Bond/US High Yield/Intl Bond/Commodity. Categories for stocks: Technology/Healthcare/Financial/Energy/Consumer/Industrial/Real Estate/Communications/Utilities/Materials. No markdown.` }),
+          });
+          const data = await resp.json();
+          if (data.text) {
+            try { const parsed = JSON.parse(data.text.replace(/```json|```/g, "").trim()); if (Array.isArray(parsed)) { const seen = new Set(local.map(l => l.t)); const merged = [...local]; parsed.forEach(p => { if (p.t && !seen.has(p.t)) { seen.add(p.t); merged.push(p) } }); setStockResults(merged.slice(0, 10)); } } catch (e) { }
+          }
         } catch (e) { }
         setStockSearching(false);
       }, 400);
@@ -527,12 +531,12 @@ useEffect(() => {
     setAccepted(new Set());
   }, [allPos, cashBalance, holdingsVal, ot, modSh]);
 
-  // ─── AI Advisor ───
+  // ─── AI Advisor (via serverless proxy) ───
   const getAI = useCallback(async (ctx) => {
     setAiL(true); setAiText("");
     const summary = {
-      existingETFs: etfV.map(e => ({ ticker: e.ticker, name: e.data?.n, shares: e.shares, mktValue: e.mktValue, category: e.data?.c })),
-      lockedStocks: stockV.map(s => ({ ticker: s.ticker, name: s.name, shares: s.shares, mktValue: s.mktValue, sector: s.sector })),
+      existingETFs: etfV.map(e => ({ ticker: e.ticker, name: e.data?.n, shares: e.shares, costBasis: e.costBasis, mktValue: e.mktValue, category: e.data?.c, expenseRatio: e.data?.er })),
+      lockedStocks: stockV.map(s => ({ ticker: s.ticker, name: s.name, shares: s.shares, costBasis: s.costBasis, mktValue: s.mktValue, sector: s.sector, unrealizedGL: s.mktValue - (s.costBasis * s.shares) })),
       holdingsValue: holdingsVal, cashToInvest: cashBalance, totalValue: totalVal,
       metrics: metrics ? { ret: metrics.er.toFixed(2), vol: metrics.vol.toFixed(2), sharpe: metrics.sh.toFixed(3) } : null,
       optimizerSuggestion: optResult?.slice(0, 8)
@@ -540,15 +544,22 @@ useEffect(() => {
     const prompts = {
       deploy: `Expert portfolio advisor. I have $${cashBalance.toLocaleString()} cash to invest. My existing holdings below include individual stocks that are LOCKED (cannot be sold). Recommend specific ETF purchases to optimally deploy this cash. Consider diversification gaps, sector exposure relative to locked stocks, risk-adjusted returns, and correlation. Give exact dollar amounts.\n\n${JSON.stringify(summary, null, 2)}`,
       risk: `Risk management expert. Analyze concentration risk, correlation, tail risk in this portfolio. Stocks are LOCKED. How should the new cash be deployed to reduce risk?\n\n${JSON.stringify(summary, null, 2)}`,
-      rebalance: `Portfolio advisor. Suggest how to rebalance my ETF positions and deploy new cash, keeping stocks locked. Consider current market conditions.\n\n${JSON.stringify(summary, null, 2)}`,
+      rebalance: `Portfolio rebalancing expert. Analyze my current portfolio allocation vs optimal targets. My stocks are LOCKED and cannot be sold. For my ETF positions, suggest specific rebalancing trades: which ETFs to trim (sell partial shares) and which to add to, with exact dollar amounts and share counts. Consider: 1) Whether any ETF positions are overweight vs the overall portfolio strategy 2) Drift from target allocation 3) How to use available cash ($${cashBalance.toLocaleString()}) to rebalance rather than selling when possible 4) Tax implications of selling ETF positions. Provide a clear rebalancing action plan with specific trades.\n\n${JSON.stringify(summary, null, 2)}`,
+      taxloss: `Tax-loss harvesting expert. Analyze my portfolio for tax-loss harvesting opportunities. For each position, I've included cost basis and current market value. My stocks are LOCKED (cannot sell for tax purposes). For ETF positions, identify: 1) Positions with unrealized losses (market value < cost basis × shares) that could be sold to realize tax losses 2) Suitable replacement ETFs to maintain similar market exposure while avoiding wash sale rules (must be substantially different — different index, different fund family, or different strategy) 3) Estimated tax savings at both short-term (37%) and long-term (20%) capital gains rates 4) Whether the loss is worth harvesting given trading costs and tracking error of the replacement 5) Any positions approaching 1-year holding period where waiting could convert short-term to long-term gains. Provide specific sell/buy pairs with dollar amounts.\n\n${JSON.stringify(summary, null, 2)}`,
     };
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, tools: [{ type: "web_search_20250305", name: "web_search" }],
-          messages: [{ role: "user", content: prompts[ctx] || prompts.deploy }] }) });
+      const resp = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompts[ctx] || prompts.deploy }),
+      });
       const data = await resp.json();
-      setAiText(data.content?.map(b => b.type === "text" ? b.text : "").filter(Boolean).join("\n\n") || "Unable to generate advice.");
-    } catch (e) { setAiText("Error. Please try again.") }
+      if (resp.ok && data.text) {
+        setAiText(data.text);
+      } else {
+        setAiText(data.error ? `Error: ${data.error}${data.detail ? ` — ${data.detail}` : ""}` : "Unable to generate advice. Check that ANTHROPIC_API_KEY is set in Vercel.");
+      }
+    } catch (e) { setAiText("Error connecting to AI advisor. Check your deployment.") }
     setAiL(false);
   }, [etfV, stockV, cashBalance, holdingsVal, totalVal, metrics, optResult]);
 
@@ -852,13 +863,19 @@ useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
               <span style={{ fontSize: 16 }}>✦</span><div style={{ fontSize: 13, fontWeight: 700 }}>AI Portfolio Advisor</div>
             </div>
-            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Powered by Claude with live market data. Analyzes your locked stocks + ETFs and recommends how to deploy cash.</div>
+            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Powered by Claude with live market data. Analyzes your locked stocks + ETFs and provides actionable recommendations.</div>
 
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 14 }}>
-              {[{ k: "deploy", l: "Cash Deployment", i: "🎯" }, { k: "risk", l: "Risk Analysis", i: "🛡️" }, { k: "rebalance", l: "Rebalancing", i: "⚖️" }].map(c => (
+              {[
+                { k: "deploy", l: "Cash Deployment", i: "🎯", d: "Recommend ETF purchases" },
+                { k: "risk", l: "Risk Analysis", i: "🛡️", d: "Concentration & tail risk" },
+                { k: "rebalance", l: "Rebalancing", i: "⚖️", d: "Trim/add to ETF positions" },
+                { k: "taxloss", l: "Tax-Loss Harvesting", i: "📉", d: "Harvest losses & replacements" },
+              ].map(c => (
                 <button key={c.k} onClick={() => { setAiCtx(c.k); getAI(c.k) }} disabled={aiL} style={{ flex: "1 1 130px", padding: "10px 12px", borderRadius: 8, border: "1px solid", cursor: aiL ? "wait" : "pointer", fontFamily: "inherit", textAlign: "left", borderColor: aiCtx === c.k && aiText ? "rgba(110,231,183,.25)" : "rgba(255,255,255,.06)", background: aiCtx === c.k && aiText ? "rgba(110,231,183,.06)" : "rgba(255,255,255,.02)", color: aiCtx === c.k && aiText ? cs.green : cs.dim, opacity: aiL ? .5 : 1 }}>
                   <div style={{ fontSize: 14, marginBottom: 3 }}>{c.i}</div>
                   <div style={{ fontSize: 10, fontWeight: 600 }}>{c.l}</div>
+                  <div style={{ fontSize: 8, opacity: .6, marginTop: 1 }}>{c.d}</div>
                 </button>
               ))}
             </div>
