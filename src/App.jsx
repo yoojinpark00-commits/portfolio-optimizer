@@ -285,6 +285,138 @@ function Scatter({ data, cp, w: W = 520, h: H = 320 }) {
 }
 
 const fmt$ = v => v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(1)}k` : `$${(+v || 0).toFixed(0)}`;
+
+// ─── Lightweight Markdown renderer for AI Advisor ───
+function AiMarkdown({ text }) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  const elements = [];
+  let i = 0;
+
+  // Inline formatting: **bold**, *italic*, `code`, $amounts
+  const fmt = (str) => {
+    const parts = [];
+    const rx = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|(\$[\d,.]+[kKmMbB]?%?))/g;
+    let last = 0, m;
+    while ((m = rx.exec(str)) !== null) {
+      if (m.index > last) parts.push(str.slice(last, m.index));
+      if (m[2]) parts.push(<strong key={m.index} style={{ color: cs.text, fontWeight: 700 }}>{m[2]}</strong>);
+      else if (m[3]) parts.push(<em key={m.index} style={{ color: cs.dim }}>{m[3]}</em>);
+      else if (m[4]) parts.push(<code key={m.index} style={{ background: "rgba(110,231,183,.08)", color: cs.green, padding: "1px 5px", borderRadius: 3, fontSize: 10, fontFamily: mono2 }}>{m[4]}</code>);
+      else if (m[5]) parts.push(<span key={m.index} style={{ color: cs.blue, fontWeight: 600, fontFamily: mono2 }}>{m[5]}</span>);
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) parts.push(str.slice(last));
+    return parts.length ? parts : str;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Skip empty lines
+    if (!trimmed) { i++; continue; }
+
+    // Headers: ### / ## / #
+    if (/^#{1,3}\s/.test(trimmed)) {
+      const level = trimmed.match(/^(#{1,3})/)[1].length;
+      const content = trimmed.replace(/^#{1,3}\s+/, "");
+      const sizes = { 1: 15, 2: 13, 3: 12 };
+      const colors = { 1: cs.green, 2: cs.blue, 3: cs.text };
+      elements.push(<div key={i} style={{ fontSize: sizes[level], fontWeight: 700, color: colors[level], marginTop: elements.length ? 16 : 4, marginBottom: 6, letterSpacing: level === 1 ? ".02em" : 0 }}>{fmt(content)}</div>);
+      i++; continue;
+    }
+
+    // Horizontal rule
+    if (/^[-*_]{3,}$/.test(trimmed)) {
+      elements.push(<hr key={i} style={{ border: "none", borderTop: "1px solid rgba(255,255,255,.06)", margin: "12px 0" }} />);
+      i++; continue;
+    }
+
+    // Bullet list items: - or • or *
+    if (/^[-•*]\s/.test(trimmed)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-•*]\s/.test(lines[i]?.trim())) {
+        items.push(lines[i].trim().replace(/^[-•*]\s+/, ""));
+        i++;
+      }
+      elements.push(
+        <div key={`ul-${i}`} style={{ margin: "6px 0 8px 0" }}>
+          {items.map((item, j) => (
+            <div key={j} style={{ display: "flex", gap: 8, marginBottom: 5, alignItems: "flex-start" }}>
+              <span style={{ color: cs.green, fontSize: 8, marginTop: 4, flexShrink: 0 }}>●</span>
+              <span style={{ flex: 1 }}>{fmt(item)}</span>
+            </div>
+          ))}
+        </div>
+      );
+      continue;
+    }
+
+    // Numbered list items: 1. 2. etc.
+    if (/^\d+[.)]\s/.test(trimmed)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+[.)]\s/.test(lines[i]?.trim())) {
+        items.push(lines[i].trim().replace(/^\d+[.)]\s+/, ""));
+        i++;
+      }
+      elements.push(
+        <div key={`ol-${i}`} style={{ margin: "6px 0 8px 0" }}>
+          {items.map((item, j) => (
+            <div key={j} style={{ display: "flex", gap: 8, marginBottom: 5, alignItems: "flex-start" }}>
+              <span style={{ color: cs.blue, fontSize: 10, fontWeight: 700, fontFamily: mono2, minWidth: 16, textAlign: "right", flexShrink: 0 }}>{j + 1}.</span>
+              <span style={{ flex: 1 }}>{fmt(item)}</span>
+            </div>
+          ))}
+        </div>
+      );
+      continue;
+    }
+
+    // Table detection: lines with | separators
+    if (trimmed.includes("|") && trimmed.startsWith("|")) {
+      const tableLines = [];
+      while (i < lines.length && lines[i]?.trim().includes("|") && lines[i]?.trim().startsWith("|")) {
+        const tl = lines[i].trim();
+        // Skip separator rows like |---|---|
+        if (!/^[|\s-:]+$/.test(tl)) {
+          tableLines.push(tl.split("|").filter(c => c.trim()).map(c => c.trim()));
+        }
+        i++;
+      }
+      if (tableLines.length > 0) {
+        const header = tableLines[0];
+        const rows = tableLines.slice(1);
+        elements.push(
+          <div key={`tbl-${i}`} style={{ margin: "8px 0", overflowX: "auto", borderRadius: 6, border: "1px solid rgba(255,255,255,.06)" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+              <thead>
+                <tr style={{ background: "rgba(110,231,183,.04)" }}>
+                  {header.map((h, ci) => <th key={ci} style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: cs.green, borderBottom: "1px solid rgba(255,255,255,.08)", fontFamily: mono2, fontSize: 9 }}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, ri) => (
+                  <tr key={ri} style={{ background: ri % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
+                    {row.map((cell, ci) => <td key={ci} style={{ padding: "5px 10px", borderBottom: "1px solid rgba(255,255,255,.03)", color: cs.text }}>{fmt(cell)}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+        continue;
+      }
+    }
+
+    // Regular paragraph
+    elements.push(<p key={i} style={{ margin: "4px 0 8px 0", lineHeight: 1.7 }}>{fmt(trimmed)}</p>);
+    i++;
+  }
+
+  return <div>{elements}</div>;
+}
+
 const TABS = ["My Holdings", "Deploy Cash", "Analysis", "Frontier", "AI Advisor"];
 // ═══ MAIN APP ═══
 export default function App() {
@@ -541,11 +673,12 @@ useEffect(() => {
       metrics: metrics ? { ret: metrics.er.toFixed(2), vol: metrics.vol.toFixed(2), sharpe: metrics.sh.toFixed(3) } : null,
       optimizerSuggestion: optResult?.slice(0, 8)
     };
+    const fmtInst = `\n\nFormat your response with clear markdown: use ## headers for sections, bullet points (- ) for lists, **bold** for tickers and key figures, numbered lists for action steps, and | tables | for comparisons when helpful. Be specific with dollar amounts and percentages.`;
     const prompts = {
-      deploy: `Expert portfolio advisor. I have $${cashBalance.toLocaleString()} cash to invest. My existing holdings below include individual stocks that are LOCKED (cannot be sold). Recommend specific ETF purchases to optimally deploy this cash. Consider diversification gaps, sector exposure relative to locked stocks, risk-adjusted returns, and correlation. Give exact dollar amounts.\n\n${JSON.stringify(summary, null, 2)}`,
-      risk: `Risk management expert. Analyze concentration risk, correlation, tail risk in this portfolio. Stocks are LOCKED. How should the new cash be deployed to reduce risk?\n\n${JSON.stringify(summary, null, 2)}`,
-      rebalance: `Portfolio rebalancing expert. Analyze my current portfolio allocation vs optimal targets. My stocks are LOCKED and cannot be sold. For my ETF positions, suggest specific rebalancing trades: which ETFs to trim (sell partial shares) and which to add to, with exact dollar amounts and share counts. Consider: 1) Whether any ETF positions are overweight vs the overall portfolio strategy 2) Drift from target allocation 3) How to use available cash ($${cashBalance.toLocaleString()}) to rebalance rather than selling when possible 4) Tax implications of selling ETF positions. Provide a clear rebalancing action plan with specific trades.\n\n${JSON.stringify(summary, null, 2)}`,
-      taxloss: `Tax-loss harvesting expert. Analyze my portfolio for tax-loss harvesting opportunities. For each position, I've included cost basis and current market value. My stocks are LOCKED (cannot sell for tax purposes). For ETF positions, identify: 1) Positions with unrealized losses (market value < cost basis × shares) that could be sold to realize tax losses 2) Suitable replacement ETFs to maintain similar market exposure while avoiding wash sale rules (must be substantially different — different index, different fund family, or different strategy) 3) Estimated tax savings at both short-term (37%) and long-term (20%) capital gains rates 4) Whether the loss is worth harvesting given trading costs and tracking error of the replacement 5) Any positions approaching 1-year holding period where waiting could convert short-term to long-term gains. Provide specific sell/buy pairs with dollar amounts.\n\n${JSON.stringify(summary, null, 2)}`,
+      deploy: `Expert portfolio advisor. I have $${cashBalance.toLocaleString()} cash to invest. My existing holdings below include individual stocks that are LOCKED (cannot be sold). Recommend specific ETF purchases to optimally deploy this cash. Consider diversification gaps, sector exposure relative to locked stocks, risk-adjusted returns, and correlation. Give exact dollar amounts.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
+      risk: `Risk management expert. Analyze concentration risk, correlation, tail risk in this portfolio. Stocks are LOCKED. How should the new cash be deployed to reduce risk?${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
+      rebalance: `Portfolio rebalancing expert. Analyze my current portfolio allocation vs optimal targets. My stocks are LOCKED and cannot be sold. For my ETF positions, suggest specific rebalancing trades: which ETFs to trim (sell partial shares) and which to add to, with exact dollar amounts and share counts. Consider: 1) Whether any ETF positions are overweight vs the overall portfolio strategy 2) Drift from target allocation 3) How to use available cash ($${cashBalance.toLocaleString()}) to rebalance rather than selling when possible 4) Tax implications of selling ETF positions. Provide a clear rebalancing action plan with specific trades.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
+      taxloss: `Tax-loss harvesting expert. Analyze my portfolio for tax-loss harvesting opportunities. For each position, I've included cost basis and current market value. My stocks are LOCKED (cannot sell for tax purposes). For ETF positions, identify: 1) Positions with unrealized losses (market value < cost basis × shares) that could be sold to realize tax losses 2) Suitable replacement ETFs to maintain similar market exposure while avoiding wash sale rules (must be substantially different — different index, different fund family, or different strategy) 3) Estimated tax savings at both short-term (37%) and long-term (20%) capital gains rates 4) Whether the loss is worth harvesting given trading costs and tracking error of the replacement 5) Any positions approaching 1-year holding period where waiting could convert short-term to long-term gains. Provide specific sell/buy pairs with dollar amounts.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
     };
     try {
       const resp = await fetch("/api/ai", {
@@ -882,7 +1015,7 @@ useEffect(() => {
 
             {!etfs.length && !stocks.length && <div style={{ textAlign: "center", padding: 25, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>Add holdings first.</div>}
             {aiL && <div style={{ padding: 18, textAlign: "center" }}><div style={{ fontSize: 12, color: cs.green }}><span style={{ display: "inline-block", animation: "pulse 1.5s ease-in-out infinite" }}>✦</span> Analyzing with live market data...</div></div>}
-            {aiText && !aiL && <div style={{ padding: 14, borderRadius: 9, background: "rgba(110,231,183,.02)", border: "1px solid rgba(110,231,183,.08)", whiteSpace: "pre-wrap", fontSize: 11, lineHeight: 1.65, color: "#d1d5db" }}>{aiText}</div>}
+            {aiText && !aiL && <div style={{ padding: 16, borderRadius: 9, background: "rgba(110,231,183,.02)", border: "1px solid rgba(110,231,183,.08)", fontSize: 11, lineHeight: 1.65, color: "#d1d5db" }}><AiMarkdown text={aiText} /></div>}
           </div>
         </div>}
 
