@@ -172,7 +172,12 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [addType, setAddType] = useState("stock"); // "stock" or "etf"
   const didHydrate = useRef(false);
-
+ async function fetchHistory(symbol) {
+    const response = await fetch(`/api/history?symbol=${symbol}`);
+    const data = await response.json();
+    return data.values || [];
+  }
+  
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
