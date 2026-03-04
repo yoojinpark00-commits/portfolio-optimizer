@@ -197,7 +197,10 @@ function optimizeCash(existing, cash, totalVal, candidates, target, useMod) {
   for (let t = 0; t < 6000; t++) {
     const ws = Array.from({ length: n }, () => Math.random());
     const s = ws.reduce((a, b) => a + b, 0);
-    const alloc = ws.map(w => w / s * cash);
+    // Deploy between 90% and 100% of cash
+    const deployPct = 0.9 + Math.random() * 0.1;
+    const deployAmt = cash * deployPct;
+    const alloc = ws.map(w => w / s * deployAmt);
     const newTV = totalVal + cash;
     const items = [
       ...existing.map(p => ({ w: p.dollars / newTV, vol: p.v || 0, cat: p.cat || "Stock", ret: p.r || 0 })),
@@ -212,7 +215,21 @@ function optimizeCash(existing, cash, totalVal, candidates, target, useMod) {
     else if (target === "max_return") sc = ret; else sc = sh * .5 + ret * .03 - vol * .02;
     if (sc > bs) { bs = sc; best = alloc; }
   }
-  return candidates.map((e, i) => ({ ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1) })).filter(e => e.dollars > 10).sort((a, b) => b.dollars - a.dollars).slice(0, 10);
+  const raw = candidates.map((e, i) => ({ ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1) })).filter(e => e.dollars > 10).sort((a, b) => b.dollars - a.dollars).slice(0, 10);
+  // Ensure total deployment is at least 90% of cash — redistribute any remainder from filtered-out tiny allocations
+  const deployed = raw.reduce((s, r) => s + r.dollars, 0);
+  const minDeploy = cash * 0.9;
+  if (deployed < minDeploy && raw.length > 0) {
+    const shortfall = minDeploy - deployed;
+    // Add shortfall proportionally to existing allocations
+    const totalRaw = raw.reduce((s, r) => s + r.dollars, 0) || 1;
+    raw.forEach(r => {
+      const extra = Math.round(shortfall * (r.dollars / totalRaw));
+      r.dollars += extra;
+      r.pct = +((r.dollars / cash) * 100).toFixed(1);
+    });
+  }
+  return raw;
 }
 
 function genFrontier(existing, cash, totalVal, candidates) {
@@ -448,25 +465,33 @@ useEffect(() => {
     else setStocks(p => p.filter(s => s.ticker !== ticker));
   }, []);
 
-  // ─── Accept optimizer recommendation → add as ETF holding, deduct cash ───
-  const acceptRec = useCallback(async (rec) => {
-    if (accepted.has(rec.ticker) || etfs.find(e => e.ticker === rec.ticker)) return;
-    // Fetch live price to calculate shares
-    let price = 0;
-    try {
-      const resp = await fetch(`/api/prices?tickers=${rec.ticker}`);
-      if (resp.ok) { const json = await resp.json(); price = json.data?.[rec.ticker]?.price || 0; }
-    } catch (e) { }
-    const shares = price > 0 ? Math.floor(rec.dollars / price) : 0;
-    const actualCost = price > 0 ? shares * price : rec.dollars;
-    // Look up in ETF_DB or create from recommendation
-    let etfData = ETF_DB.find(e => e.t === rec.ticker);
-    if (!etfData) {
-      etfData = { t: rec.ticker, n: rec.name, c: rec.cat, h: 50, er: rec.er || .20, r: rec.r || 8.0, v: rec.v || 18.0, d: rec.d || 0 };
+  // ─── Toggle optimizer recommendation → add or remove ETF holding, adjust cash ───
+  const toggleRec = useCallback(async (rec) => {
+    const alreadyAdded = accepted.has(rec.ticker);
+    if (alreadyAdded) {
+      // DESELECT: remove from holdings, refund cash
+      const existing = etfs.find(e => e.ticker === rec.ticker);
+      const refund = existing ? existing.mktValue || 0 : rec.dollars;
+      setEtfs(p => p.filter(e => e.ticker !== rec.ticker));
+      setCashBalance(prev => prev + refund);
+      setAccepted(prev => { const next = new Set(prev); next.delete(rec.ticker); return next; });
+    } else {
+      // SELECT: add to holdings, deduct cash
+      let price = 0;
+      try {
+        const resp = await fetch(`/api/prices?tickers=${rec.ticker}`);
+        if (resp.ok) { const json = await resp.json(); price = json.data?.[rec.ticker]?.price || 0; }
+      } catch (e) { }
+      const shares = price > 0 ? Math.floor(rec.dollars / price) : 0;
+      const actualCost = price > 0 ? shares * price : rec.dollars;
+      let etfData = ETF_DB.find(e => e.t === rec.ticker);
+      if (!etfData) {
+        etfData = { t: rec.ticker, n: rec.name, c: rec.cat, h: 50, er: rec.er || .20, r: rec.r || 8.0, v: rec.v || 18.0, d: rec.d || 0 };
+      }
+      setEtfs(p => [...p, { ticker: rec.ticker, data: etfData, shares, costBasis: price || 0, mktValue: actualCost, type: "etf" }]);
+      setCashBalance(prev => Math.max(0, prev - actualCost));
+      setAccepted(prev => new Set([...prev, rec.ticker]));
     }
-    setEtfs(p => [...p, { ticker: rec.ticker, data: etfData, shares, costBasis: price || 0, mktValue: actualCost, type: "etf" }]);
-    setCashBalance(prev => Math.max(0, prev - actualCost));
-    setAccepted(prev => new Set([...prev, rec.ticker]));
   }, [accepted, etfs]);
 
   // ─── Fetch live prices via Twelve Data (serverless proxy) ───
@@ -581,14 +606,17 @@ useEffect(() => {
 
           {/* Cash contribution */}
           <div style={{ ...cardS, background: "rgba(96,165,250,.02)", borderColor: "rgba(96,165,250,.1)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-              <div><div style={{ fontSize: 11, fontWeight: 700, color: cs.blue }}>💰 Cash Balance (New Contributions)</div>
-                <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>Add cash as you contribute. Go to "Deploy Cash" for recommendations on how to invest it.</div></div>
-              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ fontSize: 10, color: cs.dim }}>$</span>
-                <input type="number" value={cashBalance || ""} onChange={e => setCashBalance(Math.max(0, +e.target.value || 0))} placeholder="0" style={{ ...inpS, width: 120, fontSize: 14, fontWeight: 700, color: cs.blue, borderColor: "rgba(96,165,250,.2)", textAlign: "right" }} />
-              </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: cs.blue, marginBottom: 6 }}>💰 Cash Balance</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: mono2, color: cs.blue }}>{fmt$(cashBalance)}</div>
+              <div style={{ fontSize: 9, color: cs.dim }}>available to invest</div>
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", background: "rgba(96,165,250,.03)", borderRadius: 6, border: "1px solid rgba(96,165,250,.08)" }}>
+              <span style={{ fontSize: 10, color: cs.dim, whiteSpace: "nowrap" }}>Contribute $</span>
+              <input id="cashContribInput" type="number" placeholder="10,000" style={{ ...inpS, flex: 1, fontSize: 13, fontWeight: 600, color: cs.blue, borderColor: "rgba(96,165,250,.15)", textAlign: "right" }} onKeyDown={e => { if (e.key === "Enter") { const v = +e.target.value || 0; if (v > 0) { setCashBalance(prev => prev + v); e.target.value = ""; } } }} />
+              <button onClick={() => { const inp = document.getElementById("cashContribInput"); const v = +(inp?.value) || 0; if (v > 0) { setCashBalance(prev => prev + v); inp.value = ""; } }} style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(96,165,250,.2)", background: "rgba(96,165,250,.1)", color: cs.blue, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>+ Add</button>
+            </div>
+            <div style={{ fontSize: 8, color: cs.dim, marginTop: 4 }}>Enter amount and click "+ Add" or press Enter. Contributions stack on your existing balance.</div>
           </div>
 
           {/* Add holding form */}
@@ -715,39 +743,46 @@ useEffect(() => {
               {optResult.map(r => {
                 const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker);
                 return (
-                <div key={r.ticker} onClick={() => !isAccepted && acceptRec(r)}
+                <div key={r.ticker} onClick={() => toggleRec(r)}
                   style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 7,
                     background: isAccepted ? "rgba(110,231,183,.06)" : "rgba(110,231,183,.02)",
                     border: `1px solid ${isAccepted ? "rgba(110,231,183,.25)" : "rgba(110,231,183,.08)"}`,
-                    cursor: isAccepted ? "default" : "pointer", opacity: isAccepted ? .6 : 1, transition: "all .2s" }}
-                  onMouseEnter={e => { if (!isAccepted) e.currentTarget.style.background = "rgba(110,231,183,.08)" }}
-                  onMouseLeave={e => { if (!isAccepted) e.currentTarget.style.background = "rgba(110,231,183,.02)" }}>
-                  <Badge color={isAccepted ? cs.dim : cs.green}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
+                    cursor: "pointer", transition: "all .2s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = isAccepted ? "rgba(248,113,113,.06)" : "rgba(110,231,183,.08)" }}
+                  onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(110,231,183,.06)" : "rgba(110,231,183,.02)" }}>
+                  <Badge color={isAccepted ? cs.green : cs.blue}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-                      <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.dim : cs.green }}>{r.ticker}</span>
+                      <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
                       <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
                       <Badge color={cs.dim}>{r.cat}</Badge>
                     </div>
                     <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>R:{r.r}% · V:{r.v}% · ER:{r.er}% · Div:{r.d}%</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.dim : cs.green }}>${r.dollars.toLocaleString()}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.green : cs.text }}>${r.dollars.toLocaleString()}</div>
                     <div style={{ fontSize: 9, color: cs.dim, fontFamily: mono2 }}>{r.pct}% of cash</div>
                   </div>
                 </div>
               )})}
             </div>
 
-            {accepted.size > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "rgba(110,231,183,.04)", fontSize: 9, color: cs.green }}>
-              ✓ {accepted.size} of {optResult.length} added to holdings · Cash remaining: {fmt$(cashBalance)}
+            {accepted.size > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "rgba(110,231,183,.04)", fontSize: 9, color: cs.green, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>✓ {accepted.size} of {optResult.length} added · Cash remaining: {fmt$(cashBalance)}</span>
+              <span style={{ color: cs.dim }}>Click again to remove</span>
             </div>}
 
-            {/* Accept all button */}
-            {accepted.size < optResult.length && <button onClick={() => { optResult.forEach(r => { if (!accepted.has(r.ticker) && !etfs.find(e => e.ticker === r.ticker)) acceptRec(r) }) }}
-              style={{ marginTop: 8, width: "100%", padding: "9px", borderRadius: 7, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-              Add All {optResult.length - accepted.size} to Holdings
-            </button>}
+            {/* Accept all / Remove all buttons */}
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              {accepted.size < optResult.length && <button onClick={() => { optResult.forEach(r => { if (!accepted.has(r.ticker) && !etfs.find(e => e.ticker === r.ticker)) toggleRec(r) }) }}
+                style={{ flex: 1, padding: "9px", borderRadius: 7, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Add All {optResult.length - accepted.size} to Holdings
+              </button>}
+              {accepted.size > 0 && <button onClick={() => { [...accepted].forEach(ticker => { const rec = optResult.find(r => r.ticker === ticker); if (rec) toggleRec(rec) }) }}
+                style={{ flex: accepted.size < optResult.length ? "0 0 auto" : 1, padding: "9px 16px", borderRadius: 7, border: "1px solid rgba(248,113,113,.15)", background: "rgba(248,113,113,.04)", color: cs.red, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Remove All
+              </button>}
+            </div>
 
             {/* Post-deployment metrics */}
             {(() => {
