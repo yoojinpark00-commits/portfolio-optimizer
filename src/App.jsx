@@ -488,6 +488,22 @@ export default function App() {
   const [btResult, setBtResult] = useState(null);
   const [btStartCash, setBtStartCash] = useState(100000);
 
+  // ── Regime state ──
+  const [regimeData, setRegimeData] = useState(null);
+  const [regimeLoading, setRegimeLoading] = useState(false);
+  const [regimeError, setRegimeError] = useState("");
+
+  const fetchRegime = useCallback(async () => {
+    setRegimeLoading(true); setRegimeError("");
+    try {
+      const resp = await fetch("/api/regime");
+      const json = await resp.json();
+      if (resp.ok && json.regime) { setRegimeData(json); }
+      else { setRegimeError(json.error || "Failed to fetch regime data"); }
+    } catch (e) { setRegimeError("Error: " + e.message); }
+    setRegimeLoading(false);
+  }, []);
+
   const didHydrate = useRef(false);
 
   // ── Backtest runner ──
@@ -1279,6 +1295,126 @@ useEffect(() => {
                     </tr>)}</tbody></table>
                 </div>
               </div>}
+
+              {/* ── Regime Analysis ── */}
+              <div style={cardS}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>🌊 Market Regime Analysis</div>
+                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>3-signal composite: HY Credit Spreads + VIX Term Structure + NFCI Financial Conditions</div>
+                  </div>
+                  <button onClick={fetchRegime} disabled={regimeLoading} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 9, fontWeight: 600, cursor: regimeLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
+                    {regimeLoading ? "Loading..." : regimeData ? "⟳ Refresh" : "Fetch Live Data"}
+                  </button>
+                </div>
+
+                {regimeError && <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(248,113,113,.04)", border: "1px solid rgba(248,113,113,.12)", fontSize: 9, color: cs.red, marginBottom: 10 }}>{regimeError}</div>}
+
+                {!regimeData && !regimeLoading && !regimeError && <div style={{ textAlign: "center", padding: 20, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>
+                  Click "Fetch Live Data" to pull macro indicators from FRED.<br/>Requires FRED_API_KEY in Vercel env vars (free at fred.stlouisfed.org).
+                </div>}
+
+                {regimeData?.regime && (() => {
+                  const r = regimeData.regime;
+                  const regimeColor = r.regime === "bull" ? cs.green : r.regime === "bear" ? cs.red : cs.yellow;
+                  const regimeIcon = r.regime === "bull" ? "🟢" : r.regime === "bear" ? "🔴" : "🟡";
+                  const regimeLabel = r.regime === "bull" ? "BULL / Risk-On" : r.regime === "bear" ? "BEAR / Risk-Off" : "NEUTRAL / Transition";
+
+                  return <div>
+                    {/* Regime Banner */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 8, background: `${regimeColor}08`, border: `1px solid ${regimeColor}25`, marginBottom: 12 }}>
+                      <div style={{ fontSize: 28 }}>{regimeIcon}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: regimeColor }}>{regimeLabel}</div>
+                        <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>
+                          Composite Score: <span style={{ color: regimeColor, fontWeight: 600, fontFamily: mono2 }}>{r.score?.toFixed(2)}</span>
+                          <span style={{ marginLeft: 10 }}>P(bear): <span style={{ color: r.probBear > 0.6 ? cs.red : r.probBear < 0.4 ? cs.green : cs.yellow, fontWeight: 600, fontFamily: mono2 }}>{(r.probBear * 100).toFixed(0)}%</span></span>
+                        </div>
+                      </div>
+                      {/* Score gauge */}
+                      <div style={{ width: 120, height: 8, borderRadius: 4, background: "rgba(255,255,255,.06)", position: "relative", overflow: "hidden" }}>
+                        <div style={{ position: "absolute", left: `${Math.min(100, Math.max(0, (r.score + 2) / 4 * 100))}%`, top: -2, width: 4, height: 12, borderRadius: 2, background: regimeColor, transform: "translateX(-50%)" }} />
+                        <div style={{ position: "absolute", left: "25%", top: 0, width: 1, height: 8, background: "rgba(110,231,183,.3)" }} />
+                        <div style={{ position: "absolute", left: "62.5%", top: 0, width: 1, height: 8, background: "rgba(248,113,113,.3)" }} />
+                      </div>
+                    </div>
+
+                    {/* 3 Core Signals */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Core Signals (z-weighted composite)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 12 }}>
+                      {[
+                        { label: "HY Credit Spread", icon: "📊", weight: "45%", data: r.details?.hy_oas, zVal: r.zScores?.hy,
+                          main: r.details?.hy_oas ? `${r.details.hy_oas.level?.toFixed(0)} bps` : "—",
+                          sub: r.details?.hy_oas ? `Δ ${r.details.hy_oas.roc > 0 ? "+" : ""}${r.details.hy_oas.roc?.toFixed(0)} bps` : "" },
+                        { label: "VIX Term Structure", icon: "📈", weight: "35%", data: r.details?.vix_slope, zVal: r.zScores?.slope,
+                          main: r.details?.vix_slope ? `${(r.details.vix_slope.slope * 100).toFixed(1)}%` : "—",
+                          sub: r.details?.vix_slope ? `${r.details.vix_slope.slope > 0 ? "Contango" : "Backwardation"}` : "" },
+                        { label: "NFCI Conditions", icon: "🏦", weight: "20%", data: r.details?.nfci, zVal: r.zScores?.nfci,
+                          main: r.details?.nfci ? r.details.nfci.level?.toFixed(2) : "—",
+                          sub: r.details?.nfci ? (r.details.nfci.level < 0 ? "Loose" : "Tight") : "" },
+                      ].map((s, i) => {
+                        const sig = s.data?.signal || "neutral";
+                        const sigColor = sig === "risk-on" ? cs.green : sig === "risk-off" ? cs.red : cs.yellow;
+                        return <div key={i} style={{ padding: "10px 12px", borderRadius: 7, background: "rgba(255,255,255,.015)", border: `1px solid ${sigColor}15` }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                            <span style={{ fontSize: 12 }}>{s.icon}</span>
+                            <Badge color={sigColor}>{sig.toUpperCase()}</Badge>
+                          </div>
+                          <div style={{ fontSize: 18, fontWeight: 700, fontFamily: mono2, color: sigColor }}>{s.main}</div>
+                          <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>{s.sub}</div>
+                          <div style={{ fontSize: 8, color: cs.muted, marginTop: 4, fontFamily: mono2 }}>w: {s.weight} · z: {s.zVal?.toFixed(2) || "—"}</div>
+                          <div style={{ fontSize: 8, color: cs.dim, marginTop: 1 }}>{s.label}</div>
+                        </div>;
+                      })}
+                    </div>
+
+                    {/* Supplementary Signals */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Supplementary Signals</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 4, marginBottom: 8 }}>
+                      {[
+                        { label: "VIX Level", data: r.details?.vix_level, main: r.details?.vix_level ? r.details.vix_level.level?.toFixed(1) : "—", threshold: "< 20 bull · > 25 bear" },
+                        { label: "S&P 500 vs MA200", data: r.details?.sp500_ma, main: r.details?.sp500_ma?.aboveMa200 ? "Above ✓" : "Below ✗", threshold: r.details?.sp500_ma ? `${r.details.sp500_ma.goldenCross ? "Golden" : "Death"} cross` : "" },
+                        { label: "Yield Curve", data: r.details?.yield_curve, main: r.details?.yield_curve ? `${r.details.yield_curve.spread?.toFixed(2)}%` : "—", threshold: "10Y-2Y spread" },
+                        { label: "Drawdown", data: r.details?.drawdown, main: r.details?.drawdown ? `-${r.details.drawdown.drawdownPct?.toFixed(1)}%` : "—", threshold: "> -10% correction" },
+                        { label: "12M Momentum", data: r.details?.momentum, main: r.details?.momentum ? `${r.details.momentum.return12m > 0 ? "+" : ""}${r.details.momentum.return12m?.toFixed(1)}%` : "—", threshold: "> 0% = bullish" },
+                      ].map((s, i) => {
+                        const sig = s.data?.signal || "neutral";
+                        const sigColor = sig === "risk-on" ? cs.green : sig === "risk-off" ? cs.red : cs.yellow;
+                        return <div key={i} style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.01)", border: `1px solid ${sigColor}10` }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <span style={{ fontSize: 9, color: cs.dim }}>{s.label}</span>
+                            <span style={{ width: 6, height: 6, borderRadius: 3, background: sigColor, display: "inline-block" }} />
+                          </div>
+                          <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: sigColor, marginTop: 2 }}>{s.main}</div>
+                          <div style={{ fontSize: 7, color: cs.muted, marginTop: 2 }}>{s.threshold}</div>
+                        </div>;
+                      })}
+                    </div>
+
+                    {/* Signal Summary Bar */}
+                    <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim }}>
+                      {(() => {
+                        const allSignals = Object.values(r.details || {}).filter(d => d?.signal);
+                        const on = allSignals.filter(d => d.signal === "risk-on").length;
+                        const off = allSignals.filter(d => d.signal === "risk-off").length;
+                        const neutral = allSignals.filter(d => d.signal === "neutral").length;
+                        return <span>{on} risk-on · {off} risk-off · {neutral} neutral of {allSignals.length} signals · Formula: 0.45·z(HY OAS) + 0.35·z(−VIX Slope) + 0.20·z(NFCI)</span>;
+                      })()}
+                    </div>
+
+                    {/* Optimizer Guidance */}
+                    <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 7, background: r.regime === "bear" ? "rgba(248,113,113,.04)" : r.regime === "bull" ? "rgba(110,231,183,.04)" : "rgba(251,191,36,.04)", border: `1px solid ${regimeColor}12` }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: regimeColor, marginBottom: 4 }}>Optimizer Guidance for {r.regime.toUpperCase()} Regime</div>
+                      <div style={{ fontSize: 9, color: cs.dim, lineHeight: 1.6 }}>
+                        {r.regime === "bear" && "Consider: Min Volatility objective, higher vol target (defensive), increase bond/gold allocation. Half Kelly helps cap position sizes in stressed markets. Tax-loss harvesting opportunities may be elevated."}
+                        {r.regime === "bull" && "Consider: Max Sharpe or Max Return objective, higher equity allocation, growth/momentum ETFs. Half Kelly still recommended but broader allocations appropriate."}
+                        {r.regime === "neutral" && "Consider: Balanced objective with moderate vol target. Transition periods benefit from diversification. Monitor signals closely for regime shift confirmation."}
+                      </div>
+                    </div>
+                  </div>;
+                })()}
+              </div>
+
             </>}
         </div>}
 
