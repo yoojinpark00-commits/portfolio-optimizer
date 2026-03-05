@@ -200,17 +200,34 @@ function calcMetrics(positions, cashDollars, totalVal) {
   return { er, vol, sh, varSh, vol2Sh, so, nr, wer, div, md, cm, dr, cashW, var95, hk };
 }
 
-function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly) {
+// ── Category risk classification for regime-adaptive optimization ──
+const DEFENSIVE_CATS = new Set(["US Bond","US Treasury","US Corp Bond","Intl Bond","Commodity","Factor LowVol","Sector Utilities","US Dividend","US Value"]);
+const AGGRESSIVE_CATS = new Set(["US Growth","US Small Cap","US Mid Cap","Emerging Mkts","Sector Tech","Sector Consumer","Sector Comms","Sector Finance","Factor Momentum"]);
+// Everything else is "moderate" (US Large Cap, International, Intl Developed, Sector Health, etc.)
+
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regime) {
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
 
-  // Pre-compute Half Kelly max allocation per candidate: f* = 0.5 × (R - Rf) / σ²
+  // Regime tilt multipliers: boost/penalize candidates based on category
+  const regimeTilt = candidates.map(c => {
+    if (!regime || regime === "neutral") return 0;
+    const isDef = DEFENSIVE_CATS.has(c.c);
+    const isAgg = AGGRESSIVE_CATS.has(c.c);
+    if (regime === "bear") return isDef ? 0.12 : isAgg ? -0.10 : 0;
+    if (regime === "bull") return isAgg ? 0.10 : isDef ? -0.08 : 0;
+    return 0;
+  });
+
+  // Pre-compute Half Kelly max allocation per candidate
   const kellyMaxPct = candidates.map(c => {
-    if (!useKelly) return 1.0; // Kelly disabled → no cap
+    if (!useKelly) return 1.0;
     const sigSq = (c.v / 100) * (c.v / 100);
     if (sigSq <= 0) return 1.0;
     const fStar = 0.5 * ((c.r - RF) / 100) / sigSq;
-    return Math.max(0.01, Math.min(fStar, 1.0));
+    // In bear regime, tighten Kelly to 1/3 Kelly for aggressive assets
+    const kellyMult = (regime === "bear" && AGGRESSIVE_CATS.has(c.c)) ? 0.67 : 1.0;
+    return Math.max(0.01, Math.min(fStar * kellyMult, 1.0));
   });
 
   for (let t = 0; t < 6000; t++) {
@@ -245,14 +262,23 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const vol2Sh = vol > 0 ? (ret - RF) / (vol * vol / 100) : 0;
     const sh = srMode === "var" ? varSh : srMode === "vol2" ? vol2Sh : stdSh;
 
-    // Volatility targeting penalty: penalize deviation from target vol
+    // Volatility targeting penalty
     const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
 
+    // Regime tilt: weighted sum of regime bonuses for this allocation
+    let regimeBonus = 0;
+    if (regime && regime !== "neutral") {
+      for (let i = 0; i < n; i++) {
+        const allocPct = alloc[i] / (deployAmt || 1);
+        regimeBonus += allocPct * regimeTilt[i];
+      }
+    }
+
     let sc;
-    if (target === "max_sharpe") sc = sh + volPenalty;
-    else if (target === "min_vol") sc = -vol;
-    else if (target === "max_return") sc = ret + volPenalty;
-    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty;  // balanced
+    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus;
+    else if (target === "min_vol") sc = -vol + regimeBonus;
+    else if (target === "max_return") sc = ret + volPenalty + regimeBonus;
+    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus;  // balanced
     if (sc > bs) { bs = sc; best = alloc; }
   }
   const raw = candidates.map((e, i) => {
@@ -472,6 +498,7 @@ export default function App() {
   const [ot, setOt] = useState("max_sharpe");
   const [volTarget, setVolTarget] = useState(0);  // 0 = off, otherwise target vol %
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
+  const [useRegime, setUseRegime] = useState(true); // Regime-adaptive toggle
   const [optResult, setOptResult] = useState(null);
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
@@ -509,6 +536,23 @@ export default function App() {
   // ── Backtest runner ──
   const runBacktest = useCallback(async () => {
     setBtRunning(true); setBtResult(null); setBtProgress("Fetching historical data...");
+
+    // ── Fetch historical regime data from FRED (if regime enabled) ──
+    let historicalRegimes = null;
+    if (useRegime) {
+      setBtProgress("Fetching historical regime data from FRED (HY OAS, VIX, NFCI)...");
+      try {
+        const regResp = await fetch("/api/regime?history=true");
+        const regJson = await regResp.json();
+        if (regJson.monthlyRegimes) {
+          historicalRegimes = {};
+          regJson.monthlyRegimes.forEach(r => { historicalRegimes[r.date] = r; });
+          setBtProgress(`Got ${regJson.monthlyRegimes.length} months of regime data. Now fetching ETF prices...`);
+        }
+      } catch (e) {
+        setBtProgress("Warning: Could not fetch regime data, using proxy. Fetching ETF prices...");
+      }
+    }
 
     // Comprehensive ETF universe for backtest (all major categories, liquid, Schwab-tradable)
     const btETFs = [
@@ -617,8 +661,39 @@ export default function App() {
 
       // Run optimizer with trailing stats as candidates
       const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
+
+      // Compute regime for this rebalance year
+      let btRegime = null;
+      let btRegimeScore = null;
+      let btRegimeProbBear = null;
+      if (useRegime) {
+        // Try real FRED historical data first
+        const regKey = `${year}-01`; // January of rebalance year
+        const regData = historicalRegimes?.[regKey];
+        if (regData) {
+          btRegime = regData.regime;
+          btRegimeScore = regData.score;
+          btRegimeProbBear = regData.probBear;
+        } else {
+          // Fallback: proxy from trailing SPY data
+          const spyStats = trailingStats["SPY"] || Object.values(trailingStats).find(s => s.t === "VTI");
+          const spyRets = monthlyReturns["SPY"]?.filter(r => new Date(r.date).getFullYear() === year - 1) || [];
+          const bndRets = monthlyReturns["BND"]?.filter(r => new Date(r.date).getFullYear() === year - 1) || [];
+          const spyMomentum = spyStats ? spyStats.r : 0;
+          const spyVol = spyStats ? spyStats.v : 15;
+          const bndAvg = bndRets.length > 0 ? bndRets.reduce((s, r) => s + r.ret, 0) / bndRets.length * 12 * 100 : 3;
+          const spyAvg = spyRets.length > 0 ? spyRets.reduce((s, r) => s + r.ret, 0) / spyRets.length * 12 * 100 : 10;
+          const momSignal = spyMomentum > 5 ? -1 : spyMomentum < -5 ? 1 : 0;
+          const volSignal = spyVol > 22 ? 1 : spyVol < 14 ? -1 : 0;
+          const flightSignal = bndAvg > spyAvg ? 1 : -1;
+          const proxyScore = momSignal * 0.5 + volSignal * 0.3 + flightSignal * 0.2;
+          btRegime = proxyScore > 0.3 ? "bear" : proxyScore < -0.3 ? "bull" : "neutral";
+          btRegimeScore = proxyScore;
+        }
+      }
+
       if (candidates.length >= 3) {
-        const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly);
+        const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime);
         optAlloc = {};
         const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
         result.forEach(r => { optAlloc[r.ticker] = r.dollars / totalDeployed; });
@@ -660,6 +735,9 @@ export default function App() {
         spyRet: spyYearStart > 0 ? ((spyValue - spyYearStart) / spyYearStart * 100) : 0,
         bal60Ret: bal60YearStart > 0 ? ((bal60Value - bal60YearStart) / bal60YearStart * 100) : 0,
         alloc: { ...optAlloc },
+        regime: btRegime,
+        regimeScore: btRegimeScore,
+        probBear: btRegimeProbBear,
       });
     }
 
@@ -703,9 +781,10 @@ export default function App() {
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
+      regimeSource: historicalRegimes ? "FRED HY OAS + VIX + NFCI" : "Proxy (SPY momentum/vol)",
     });
     setBtProgress(""); setBtRunning(false);
-  }, [ot, srMode, volTarget, useKelly, btStartCash]);
+  }, [ot, srMode, volTarget, useKelly, useRegime, btStartCash]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -726,6 +805,7 @@ useEffect(() => {
     if (typeof saved.ot === "string") setOt(saved.ot);
     if (typeof saved.volTarget === "number") setVolTarget(saved.volTarget);
     if (typeof saved.useKelly === "boolean") setUseKelly(saved.useKelly);
+    if (typeof saved.useRegime === "boolean") setUseRegime(saved.useRegime);
 
     if (typeof saved.sc === "string") setSc(saved.sc);
     if (typeof saved.so === "boolean") setSo(saved.so);
@@ -748,12 +828,13 @@ useEffect(() => {
       ot,
       volTarget,
       useKelly,
+      useRegime,
       sc,
       so,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, sc, so]);
+  }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, useRegime, sc, so]);
 
   // ─── Computed ───
   const etfV = useMemo(() => etfs.map(e => {
@@ -924,10 +1005,11 @@ useEffect(() => {
   // ─── Optimizer ───
   const runOptimizer = useCallback(() => {
     if (cashBalance <= 0) return;
-    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, srMode, volTarget, useKelly);
+    const activeRegime = useRegime && regimeData?.regime?.regime ? regimeData.regime.regime : null;
+    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, srMode, volTarget, useKelly, activeRegime);
     setOptResult(result);
     setAccepted(new Set());
-  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly]);
+  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData]);
 
   // ─── AI Advisor (via serverless proxy) ───
   const getAI = useCallback(async (ctx) => {
@@ -1184,11 +1266,16 @@ useEffect(() => {
                   <span style={{ fontSize: 9, color: useKelly ? cs.purple : cs.dim, fontWeight: 600 }}>½K</span>
                   <span style={{ fontSize: 8, color: useKelly ? cs.purple : cs.dim }}>{useKelly ? "ON" : "OFF"}</span>
                 </button>
+                <button onClick={() => setUseRegime(v => !v)} style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${useRegime ? "rgba(251,191,36,.2)" : "rgba(255,255,255,.06)"}`, background: useRegime ? "rgba(251,191,36,.05)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
+                  <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (regimeData?.regime?.regime === "bear" ? "BEAR" : regimeData?.regime?.regime === "bull" ? "BULL" : regimeData?.regime ? "NEUT" : "ON") : "OFF"}</span>
+                </button>
               </div>
 
               <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                Run Optimizer — Deploy ${cashBalance.toLocaleString()} (6,000 simulations)
+                Run Optimizer — Deploy ${cashBalance.toLocaleString()}{useRegime && regimeData?.regime?.regime ? ` (${regimeData.regime.regime.toUpperCase()} regime)` : ""} (6,000 simulations)
               </button>
+              {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime enabled but no data fetched — go to Analysis tab → "Fetch Live Data" first, or optimizer runs without regime tilt.</div>}
 
               {stocks.length > 0 && <div style={{ marginTop: 7, fontSize: 9, color: cs.yellow }}>🔒 {stocks.map(s => s.ticker).join(", ")} locked — optimizer works around them.</div>}
             </>}
@@ -1475,6 +1562,7 @@ useEffect(() => {
                 {srMode !== "std" && <span style={{ color: cs.pink }}> · {srMode === "var" ? "VaR" : "σ²"} SR</span>}
                 {volTarget > 0 && <span style={{ color: cs.blue }}> · Vol {volTarget}%</span>}
                 {useKelly && <span style={{ color: cs.purple }}> · ½Kelly</span>}
+                {useRegime && <span style={{ color: cs.yellow }}> · Regime-Adaptive</span>}
               </div>
             </div>
 
@@ -1555,6 +1643,7 @@ useEffect(() => {
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.blue, fontFamily: mono2, fontSize: 9 }}>SPY</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.purple, fontFamily: mono2, fontSize: 9 }}>60/40</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Alpha</th>
+                        {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.yellow, fontFamily: mono2, fontSize: 9 }}>Regime</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -1567,6 +1656,10 @@ useEffect(() => {
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.spyRet >= 0 ? cs.blue : cs.red }}>{a.spyRet >= 0 ? "+" : ""}{a.spyRet.toFixed(1)}%</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.bal60Ret >= 0 ? cs.purple : cs.red }}>{a.bal60Ret >= 0 ? "+" : ""}{a.bal60Ret.toFixed(1)}%</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, fontWeight: 600, color: alpha >= 0 ? cs.green : cs.red }}>{alpha >= 0 ? "+" : ""}{alpha.toFixed(1)}%</td>
+                            {useRegime && <td style={{ padding: "5px 8px", textAlign: "center", fontSize: 9 }}>
+                              <span title={a.regimeScore != null ? `Score: ${a.regimeScore?.toFixed(2)} · P(bear): ${((a.probBear || 0) * 100).toFixed(0)}%` : ""}>{a.regime === "bear" ? "🔴" : a.regime === "bull" ? "🟢" : "🟡"}</span>
+                              <div style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{a.regimeScore != null ? a.regimeScore.toFixed(1) : ""}</div>
+                            </td>}
                           </tr>
                         );
                       })}
@@ -1576,7 +1669,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly caps" : ""}
+                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly caps" : ""}{useRegime ? ` · Regime-adaptive (${btResult.regimeSource || "FRED"})` : ""}
               </div>
             </>;
           })()}
