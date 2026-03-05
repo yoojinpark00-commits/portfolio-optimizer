@@ -169,6 +169,9 @@ const STOCK_DB=[
 ];
 
 // ═══ ENGINE ═══
+// VaR at 95% confidence (parametric): VaR = σ × 1.645
+// mSR (VaR Sharpe) = (Rp - Rf) / VaR
+// Half Kelly: f* = 0.5 × (R - Rf) / σ²
 function calcMetrics(positions, cashDollars, totalVal) {
   if (!positions.length && !cashDollars) return null;
   const tv = totalVal || 1;
@@ -184,23 +187,46 @@ function calcMetrics(positions, cashDollars, totalVal) {
     vr += all[i].w * all[j].w * (all[i].vol / 100) * (all[j].vol / 100) * gc(all[i].cat, all[j].cat);
   const vol = Math.sqrt(Math.max(0, vr)) * 100;
   const sh = vol > 0 ? (er - RF) / vol : 0;
-  const msh = vol > 0 ? (er - RF) / (vol * vol / 100) : 0;
+  // VaR-based Sharpe: mSR = (Rp - Rf) / VaR_95
+  const var95 = vol * 1.645;  // 95% parametric VaR (annual %)
+  const msh = var95 > 0 ? (er - RF) / var95 : 0;
   const so = vol > 0 ? (er - RF) / (vol * .7) : 0;
   const nr = er - wer; const md = vol * 2.1; const cm = md > 0 ? nr / md : 0;
   const dr = vol > 0 ? items.reduce((s, p) => s + p.w * (p.v || 0), 0) / vol : 1;
-  return { er, vol, sh, msh, so, nr, wer, div, md, cm, dr, cashW };
+  // Half Kelly fraction for the overall portfolio: f* = 0.5 × (R - Rf) / σ²
+  const hk = vol > 0 ? 0.5 * (er - RF) / ((vol / 100) * (vol / 100)) / 100 : 0;  // as fraction of capital
+  return { er, vol, sh, msh, so, nr, wer, div, md, cm, dr, cashW, var95, hk };
 }
 
-function optimizeCash(existing, cash, totalVal, candidates, target, useMod) {
+function optimizeCash(existing, cash, totalVal, candidates, target, useMod, volTarget) {
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
+
+  // Pre-compute Half Kelly max allocation per candidate: f* = 0.5 × (R - Rf) / σ²
+  // This caps the max % of cash any single ETF can receive
+  const kellyMaxPct = candidates.map(c => {
+    const sigSq = (c.v / 100) * (c.v / 100);
+    if (sigSq <= 0) return 1.0;
+    const fStar = 0.5 * ((c.r - RF) / 100) / sigSq;
+    return Math.max(0.01, Math.min(fStar, 1.0)); // clamp between 1% and 100%
+  });
+
   for (let t = 0; t < 6000; t++) {
     const ws = Array.from({ length: n }, () => Math.random());
     const s = ws.reduce((a, b) => a + b, 0);
     // Deploy between 90% and 100% of cash
     const deployPct = 0.9 + Math.random() * 0.1;
     const deployAmt = cash * deployPct;
-    const alloc = ws.map(w => w / s * deployAmt);
+    let alloc = ws.map((w, i) => {
+      let pct = w / s;
+      // Apply Half Kelly cap: no single position exceeds its Kelly fraction
+      pct = Math.min(pct, kellyMaxPct[i]);
+      return pct;
+    });
+    // Renormalize after Kelly caps
+    const allocSum = alloc.reduce((a, b) => a + b, 0) || 1;
+    alloc = alloc.map(a => (a / allocSum) * deployAmt);
+
     const newTV = totalVal + cash;
     const items = [
       ...existing.map(p => ({ w: p.dollars / newTV, vol: p.v || 0, cat: p.cat || "Stock", ret: p.r || 0 })),
@@ -210,18 +236,32 @@ function optimizeCash(existing, cash, totalVal, candidates, target, useMod) {
     for (let i = 0; i < items.length; i++) { ret += items[i].w * items[i].ret;
       for (let j = 0; j < items.length; j++) vr += items[i].w * items[j].w * (items[i].vol / 100) * (items[j].vol / 100) * gc(items[i].cat, items[j].cat); }
     const vol = Math.sqrt(Math.max(0, vr)) * 100;
-    const sh = vol > 0 ? (useMod ? (ret - RF) / (vol * vol / 100) : (ret - RF) / vol) : 0;
-    let sc; if (target === "max_sharpe") sc = sh; else if (target === "min_vol") sc = -vol;
-    else if (target === "max_return") sc = ret; else sc = sh * .5 + ret * .03 - vol * .02;
+
+    // VaR-based Sharpe: mSR = (Rp - Rf) / VaR_95
+    const var95 = vol * 1.645;
+    const varSh = var95 > 0 ? (ret - RF) / var95 : 0;
+    const stdSh = vol > 0 ? (ret - RF) / vol : 0;
+    const sh = useMod ? varSh : stdSh;
+
+    // Volatility targeting penalty: penalize deviation from target vol
+    const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
+
+    let sc;
+    if (target === "max_sharpe") sc = sh + volPenalty;
+    else if (target === "min_vol") sc = -vol;
+    else if (target === "max_return") sc = ret + volPenalty;
+    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty;  // balanced
     if (sc > bs) { bs = sc; best = alloc; }
   }
-  const raw = candidates.map((e, i) => ({ ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1) })).filter(e => e.dollars > 10).sort((a, b) => b.dollars - a.dollars).slice(0, 10);
-  // Ensure total deployment is at least 90% of cash — redistribute any remainder from filtered-out tiny allocations
+  const raw = candidates.map((e, i) => {
+    const hk = kellyMaxPct[i];
+    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: +(hk * 100).toFixed(1) };
+  }).filter(e => e.dollars > 10).sort((a, b) => b.dollars - a.dollars).slice(0, 10);
+  // Ensure total deployment is at least 90% of cash
   const deployed = raw.reduce((s, r) => s + r.dollars, 0);
   const minDeploy = cash * 0.9;
   if (deployed < minDeploy && raw.length > 0) {
     const shortfall = minDeploy - deployed;
-    // Add shortfall proportionally to existing allocations
     const totalRaw = raw.reduce((s, r) => s + r.dollars, 0) || 1;
     raw.forEach(r => {
       const extra = Math.round(shortfall * (r.dollars / totalRaw));
@@ -417,7 +457,7 @@ function AiMarkdown({ text }) {
   return <div>{elements}</div>;
 }
 
-const TABS = ["My Holdings", "Deploy Cash", "Analysis", "Frontier", "AI Advisor"];
+const TABS = ["My Holdings", "Deploy Cash", "Analysis", "Frontier", "AI Advisor", "Backtest"];
 // ═══ MAIN APP ═══
 export default function App() {
   const [etfs, setEtfs] = useState([]);       // {ticker, data, shares, costBasis, mktValue}
@@ -428,6 +468,7 @@ export default function App() {
   const [sq, setSq] = useState(""); const [so, setSo] = useState(false); const [sc, setSc] = useState("All");
   const [modSh, setModSh] = useState(false);
   const [ot, setOt] = useState("max_sharpe");
+  const [volTarget, setVolTarget] = useState(0);  // 0 = off, otherwise target vol %
   const [optResult, setOptResult] = useState(null);
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
@@ -437,12 +478,196 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [addType, setAddType] = useState("stock"); // "stock" or "etf"
   const [accepted, setAccepted] = useState(new Set()); // tickers accepted from optimizer
+
+  // ── Backtest state ──
+  const [btRunning, setBtRunning] = useState(false);
+  const [btProgress, setBtProgress] = useState("");
+  const [btResult, setBtResult] = useState(null);
+  const [btStartCash, setBtStartCash] = useState(100000);
+
   const didHydrate = useRef(false);
- async function fetchHistory(symbol) {
-    const response = await fetch(`/api/history?symbol=${symbol}`);
-    const data = await response.json();
-    return data.values || [];
-  }
+
+  // ── Backtest runner ──
+  const runBacktest = useCallback(async () => {
+    setBtRunning(true); setBtResult(null); setBtProgress("Fetching historical data...");
+
+    // Core ETFs to include in backtest (top liquid, diverse categories)
+    const btETFs = ["SPY","VTI","QQQ","VEA","VWO","BND","AGG","VNQ","GLD","XLF","XLK","XLV","XLE","SCHD","IWM","EFA","TIP","VIG","ARKK","IJR"];
+    const benchmarks = ["SPY"];  // benchmark comparison
+
+    // Fetch all historical data
+    const allSymbols = [...new Set([...btETFs, ...benchmarks])];
+    setBtProgress(`Fetching ${allSymbols.length} ETFs (2015-2025)...`);
+
+    let histData = {};
+    try {
+      // Batch in groups of 8 to stay within rate limits
+      for (let i = 0; i < allSymbols.length; i += 8) {
+        const batch = allSymbols.slice(i, i + 8);
+        setBtProgress(`Fetching batch ${Math.floor(i/8)+1}/${Math.ceil(allSymbols.length/8)}: ${batch.join(", ")}...`);
+        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2015-01-01&end=2025-12-31`);
+        const json = await resp.json();
+        if (json.data) Object.assign(histData, json.data);
+        // Delay between batches for rate limit
+        if (i + 8 < allSymbols.length) await new Promise(r => setTimeout(r, 2500));
+      }
+    } catch (e) {
+      setBtProgress("Error fetching historical data: " + e.message);
+      setBtRunning(false); return;
+    }
+
+    const available = Object.keys(histData).filter(k => histData[k]?.length >= 12);
+    if (available.length < 3) {
+      setBtProgress("Not enough historical data. Only got: " + available.join(", "));
+      setBtRunning(false); return;
+    }
+
+    setBtProgress(`Processing ${available.length} ETFs...`);
+
+    // Build monthly returns for each symbol
+    const monthlyReturns = {};
+    for (const sym of available) {
+      const prices = histData[sym];
+      monthlyReturns[sym] = [];
+      for (let i = 1; i < prices.length; i++) {
+        monthlyReturns[sym].push({
+          date: prices[i].date,
+          ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close,
+          close: prices[i].close,
+        });
+      }
+    }
+
+    // Simulate annual rebalancing from 2016 to 2025
+    // (Need 2015 data for trailing stats, first allocation at start of 2016)
+    const startCash = btStartCash;
+    const years = [];
+    for (let y = 2016; y <= 2025; y++) years.push(y);
+
+    // Portfolio equity curves
+    const optCurve = [{ date: "2016-01", value: startCash }];
+    const spyCurve = [{ date: "2016-01", value: startCash }];
+    const bal60Curve = [{ date: "2016-01", value: startCash }]; // 60/40
+
+    let optValue = startCash;
+    let spyValue = startCash;
+    let bal60Value = startCash;
+    let optAlloc = {}; // ticker -> weight
+    const annualResults = [];
+
+    for (const year of years) {
+      setBtProgress(`Simulating ${year}...`);
+
+      // Get trailing 12-month returns/vol for each available ETF (from prior year)
+      const trailingStats = {};
+      for (const sym of available) {
+        const rets = monthlyReturns[sym]?.filter(r => {
+          const d = new Date(r.date);
+          return d.getFullYear() === year - 1;
+        });
+        if (!rets || rets.length < 6) continue;
+        const avgMo = rets.reduce((s, r) => s + r.ret, 0) / rets.length;
+        const annRet = avgMo * 12 * 100;
+        const variance = rets.reduce((s, r) => s + Math.pow(r.ret - avgMo, 2), 0) / rets.length;
+        const annVol = Math.sqrt(variance) * Math.sqrt(12) * 100;
+        const db = ETF_DB.find(e => e.t === sym);
+        trailingStats[sym] = {
+          t: sym, n: db?.n || sym, c: db?.c || "US Large Cap",
+          r: annRet, v: Math.max(annVol, 1), er: db?.er || 0.1, d: db?.d || 0,
+        };
+      }
+
+      // Run optimizer with trailing stats as candidates
+      const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
+      if (candidates.length >= 3) {
+        const result = optimizeCash([], optValue, 0, candidates, ot, modSh, volTarget);
+        optAlloc = {};
+        const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
+        result.forEach(r => { optAlloc[r.ticker] = r.dollars / totalDeployed; });
+      }
+
+      // Simulate the year month-by-month
+      let optYearStart = optValue, spyYearStart = spyValue, bal60YearStart = bal60Value;
+
+      const yearMonths = monthlyReturns["SPY"]?.filter(r => new Date(r.date).getFullYear() === year) || [];
+
+      for (const month of yearMonths) {
+        const d = month.date;
+
+        // Optimized portfolio return
+        let optMonthRet = 0;
+        for (const [sym, wt] of Object.entries(optAlloc)) {
+          const symMonth = monthlyReturns[sym]?.find(r => r.date === d);
+          if (symMonth) optMonthRet += wt * symMonth.ret;
+        }
+        optValue *= (1 + optMonthRet);
+
+        // SPY benchmark
+        spyValue *= (1 + month.ret);
+
+        // 60/40 portfolio (60% VTI, 40% BND)
+        const vtiMonth = monthlyReturns["VTI"]?.find(r => r.date === d);
+        const bndMonth = monthlyReturns["BND"]?.find(r => r.date === d);
+        const bal60Ret = 0.6 * (vtiMonth?.ret || 0) + 0.4 * (bndMonth?.ret || 0);
+        bal60Value *= (1 + bal60Ret);
+
+        optCurve.push({ date: d.slice(0, 7), value: optValue });
+        spyCurve.push({ date: d.slice(0, 7), value: spyValue });
+        bal60Curve.push({ date: d.slice(0, 7), value: bal60Value });
+      }
+
+      annualResults.push({
+        year,
+        optRet: optYearStart > 0 ? ((optValue - optYearStart) / optYearStart * 100) : 0,
+        spyRet: spyYearStart > 0 ? ((spyValue - spyYearStart) / spyYearStart * 100) : 0,
+        bal60Ret: bal60YearStart > 0 ? ((bal60Value - bal60YearStart) / bal60YearStart * 100) : 0,
+        alloc: { ...optAlloc },
+      });
+    }
+
+    // Compute summary stats
+    const optTotal = (optValue / startCash - 1) * 100;
+    const spyTotal = (spyValue / startCash - 1) * 100;
+    const bal60Total = (bal60Value / startCash - 1) * 100;
+    const numYears = years.length;
+    const optCAGR = (Math.pow(optValue / startCash, 1 / numYears) - 1) * 100;
+    const spyCAGR = (Math.pow(spyValue / startCash, 1 / numYears) - 1) * 100;
+    const bal60CAGR = (Math.pow(bal60Value / startCash, 1 / numYears) - 1) * 100;
+
+    // Max drawdown
+    const calcDD = (curve) => {
+      let peak = 0, maxDD = 0;
+      for (const pt of curve) { peak = Math.max(peak, pt.value); maxDD = Math.max(maxDD, (peak - pt.value) / peak); }
+      return maxDD * 100;
+    };
+
+    // Volatility from monthly returns
+    const calcVol = (curve) => {
+      const rets = [];
+      for (let i = 1; i < curve.length; i++) rets.push(curve[i].value / curve[i-1].value - 1);
+      if (rets.length < 2) return 0;
+      const avg = rets.reduce((s, r) => s + r, 0) / rets.length;
+      const v = rets.reduce((s, r) => s + (r - avg) ** 2, 0) / (rets.length - 1);
+      return Math.sqrt(v) * Math.sqrt(12) * 100;
+    };
+
+    const optVol = calcVol(optCurve);
+    const spyVol = calcVol(spyCurve);
+    const bal60Vol = calcVol(bal60Curve);
+
+    setBtResult({
+      curves: { opt: optCurve, spy: spyCurve, bal60: bal60Curve },
+      summary: {
+        opt: { final: optValue, total: optTotal, cagr: optCAGR, vol: optVol, dd: calcDD(optCurve), sharpe: optVol > 0 ? (optCAGR - RF) / optVol : 0 },
+        spy: { final: spyValue, total: spyTotal, cagr: spyCAGR, vol: spyVol, dd: calcDD(spyCurve), sharpe: spyVol > 0 ? (spyCAGR - RF) / spyVol : 0 },
+        bal60: { final: bal60Value, total: bal60Total, cagr: bal60CAGR, vol: bal60Vol, dd: calcDD(bal60Curve), sharpe: bal60Vol > 0 ? (bal60CAGR - RF) / bal60Vol : 0 },
+      },
+      annual: annualResults,
+      startCash,
+      etfsUsed: available.length,
+    });
+    setBtProgress(""); setBtRunning(false);
+  }, [ot, modSh, volTarget, btStartCash]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -461,6 +686,7 @@ useEffect(() => {
     if (typeof saved.tab === "string") setTab(saved.tab);
     if (typeof saved.modSh === "boolean") setModSh(saved.modSh);
     if (typeof saved.ot === "string") setOt(saved.ot);
+    if (typeof saved.volTarget === "number") setVolTarget(saved.volTarget);
 
     if (typeof saved.sc === "string") setSc(saved.sc);
     if (typeof saved.so === "boolean") setSo(saved.so);
@@ -481,12 +707,13 @@ useEffect(() => {
       tab,
       modSh,
       ot,
+      volTarget,
       sc,
       so,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [etfs, stocks, cashBalance, tab, modSh, ot, sc, so]);
+  }, [etfs, stocks, cashBalance, tab, modSh, ot, volTarget, sc, so]);
 
   // ─── Computed ───
   const etfV = useMemo(() => etfs.map(e => {
@@ -658,10 +885,10 @@ useEffect(() => {
   // ─── Optimizer ───
   const runOptimizer = useCallback(() => {
     if (cashBalance <= 0) return;
-    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, modSh);
+    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, modSh, volTarget);
     setOptResult(result);
     setAccepted(new Set());
-  }, [allPos, cashBalance, holdingsVal, ot, modSh]);
+  }, [allPos, cashBalance, holdingsVal, ot, modSh, volTarget]);
 
   // ─── AI Advisor (via serverless proxy) ───
   const getAI = useCallback(async (ctx) => {
@@ -714,7 +941,7 @@ useEffect(() => {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {totalVal > 0 && <span style={{ fontSize: 11, fontFamily: mono2, color: cs.green, fontWeight: 700 }}>{fmt$(totalVal)}</span>}
-          <button onClick={() => setModSh(v => !v)} style={{ padding: "4px 8px", borderRadius: 5, border: `1px solid ${modSh ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.08)"}`, background: modSh ? "rgba(244,114,182,.1)" : "transparent", color: modSh ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{modSh ? "σ²" : "Std"} SR</button>
+          <button onClick={() => setModSh(v => !v)} style={{ padding: "4px 8px", borderRadius: 5, border: `1px solid ${modSh ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.08)"}`, background: modSh ? "rgba(244,114,182,.1)" : "transparent", color: modSh ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{modSh ? "VaR" : "Std"} SR</button>
           {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()}</span>}
           <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: liveL ? "rgba(110,231,183,.05)" : "rgba(110,231,183,.1)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "..." : "⟳ Live"}</button>
         </div>
@@ -736,7 +963,7 @@ useEffect(() => {
             <MC label="Holdings Value" value={fmt$(holdingsVal)} accent={cs.green} sub="Auto-calculated from shares × price" />
             <MC label="Cash to Deploy" value={fmt$(cashBalance)} accent={cs.blue} sub="New contributions" />
             <MC label="Total Portfolio" value={fmt$(totalVal)} accent={cs.text} sub="Holdings + Cash" />
-            {metrics && <MC label={modSh ? "Mod Sharpe" : "Sharpe"} value={(modSh ? metrics.msh : metrics.sh).toFixed(2)} accent={(modSh ? metrics.msh : metrics.sh) > .5 ? cs.green : cs.yellow} sub={modSh ? "(R-Rf)/σ²" : "(R-Rf)/σ"} />}
+            {metrics && <MC label={modSh ? "VaR Sharpe" : "Sharpe"} value={(modSh ? metrics.msh : metrics.sh).toFixed(2)} accent={(modSh ? metrics.msh : metrics.sh) > .5 ? cs.green : cs.yellow} sub={modSh ? "(R-Rf)/VaR₉₅" : "(R-Rf)/σ"} />}
           </div>
 
           {/* Allocation bar */}
@@ -870,6 +1097,27 @@ useEffect(() => {
                 ))}
               </div>
 
+              {/* Advanced: Vol Target + Sharpe mode */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flex: "1 1 200px", padding: "7px 10px", borderRadius: 6, border: "1px solid rgba(96,165,250,.12)", background: "rgba(96,165,250,.03)" }}>
+                  <span style={{ fontSize: 9, color: cs.blue, fontWeight: 600, whiteSpace: "nowrap" }}>🎯 Vol Target</span>
+                  <input type="number" value={volTarget || ""} onChange={e => setVolTarget(Math.max(0, +e.target.value || 0))} placeholder="off" step="1" min="0" max="50" style={{ ...inpS, width: 55, fontSize: 11, fontWeight: 600, textAlign: "center", color: cs.blue, borderColor: "rgba(96,165,250,.15)" }} />
+                  <span style={{ fontSize: 8, color: cs.dim }}>%</span>
+                  {[8, 12, 16, 20].map(v => (
+                    <button key={v} onClick={() => setVolTarget(volTarget === v ? 0 : v)} style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${volTarget === v ? "rgba(96,165,250,.3)" : "rgba(255,255,255,.06)"}`, background: volTarget === v ? "rgba(96,165,250,.12)" : "transparent", color: volTarget === v ? cs.blue : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{v}%</button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", borderRadius: 6, border: "1px solid rgba(244,114,182,.1)", background: "rgba(244,114,182,.02)" }}>
+                  <span style={{ fontSize: 9, color: cs.pink, fontWeight: 600, whiteSpace: "nowrap" }}>SR Mode</span>
+                  <button onClick={() => setModSh(false)} style={{ padding: "3px 7px", borderRadius: 4, border: `1px solid ${!modSh ? "rgba(110,231,183,.3)" : "rgba(255,255,255,.06)"}`, background: !modSh ? "rgba(110,231,183,.08)" : "transparent", color: !modSh ? cs.green : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>(R-Rf)/σ</button>
+                  <button onClick={() => setModSh(true)} style={{ padding: "3px 7px", borderRadius: 4, border: `1px solid ${modSh ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.06)"}`, background: modSh ? "rgba(244,114,182,.1)" : "transparent", color: modSh ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>(R-Rf)/VaR</button>
+                </div>
+                <div style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid rgba(167,139,250,.1)", background: "rgba(167,139,250,.02)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 9, color: cs.purple, fontWeight: 600 }}>½K</span>
+                  <span style={{ fontSize: 8, color: cs.dim }}>Kelly caps active</span>
+                </div>
+              </div>
+
               <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Run Optimizer — Deploy ${cashBalance.toLocaleString()} (6,000 simulations)
               </button>
@@ -901,7 +1149,7 @@ useEffect(() => {
                       <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
                       <Badge color={cs.dim}>{r.cat}</Badge>
                     </div>
-                    <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>R:{r.r}% · V:{r.v}% · ER:{r.er}% · Div:{r.d}%</div>
+                    <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>R:{r.r}% · V:{r.v}% · ER:{r.er}% · Div:{r.d}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.green : cs.text }}>${r.dollars.toLocaleString()}</div>
@@ -936,7 +1184,7 @@ useEffect(() => {
               return <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
                 <MC sm label="New Return" value={`${nm.er.toFixed(2)}%`} accent={cs.green} sub={`was ${metrics?.er.toFixed(2) || "?"}%`} />
                 <MC sm label="New Vol" value={`${nm.vol.toFixed(2)}%`} accent={cs.blue} sub={`was ${metrics?.vol.toFixed(2) || "?"}%`} />
-                <MC sm label={modSh ? "New Mod SR" : "New Sharpe"} value={(modSh ? nm.msh : nm.sh).toFixed(3)} accent={(modSh ? nm.msh : nm.sh) > (modSh ? metrics?.msh : metrics?.sh || 0) ? cs.green : cs.red} sub={`was ${(modSh ? metrics?.msh : metrics?.sh)?.toFixed(3) || "?"}`} />
+                <MC sm label={modSh ? "New VaR SR" : "New Sharpe"} value={(modSh ? nm.msh : nm.sh).toFixed(3)} accent={(modSh ? nm.msh : nm.sh) > (modSh ? metrics?.msh : metrics?.sh || 0) ? cs.green : cs.red} sub={`was ${(modSh ? metrics?.msh : metrics?.sh)?.toFixed(3) || "?"}`} />
               </div>;
             })()}
           </div>}
@@ -947,14 +1195,16 @@ useEffect(() => {
           {!metrics ? <div style={{ textAlign: "center", padding: 45, color: cs.muted }}><div style={{ fontSize: 24, marginBottom: 5 }}>📈</div><div style={{ fontSize: 11 }}>Add holdings first</div></div>
             : <>
               <div style={{ display: "flex", justifyContent: "center", gap: 18, flexWrap: "wrap", padding: "14px 0 18px", borderBottom: "1px solid rgba(255,255,255,.04)", marginBottom: 14 }}>
-                <GR value={modSh ? metrics.msh : metrics.sh} max={modSh ? 1 : 2} label={modSh ? "Mod Sharpe" : "Sharpe"} color={(modSh ? metrics.msh : metrics.sh) > .5 ? cs.green : cs.yellow} />
+                <GR value={modSh ? metrics.msh : metrics.sh} max={modSh ? 1 : 2} label={modSh ? "VaR Sharpe" : "Sharpe"} color={(modSh ? metrics.msh : metrics.sh) > .5 ? cs.green : cs.yellow} />
                 <GR value={metrics.so} max={3} label="Sortino" color={cs.blue} />
                 <GR value={metrics.dr} max={2} label="Div Ratio" color={cs.purple} />
                 <GR value={metrics.cm} max={1} label="Calmar" color={cs.pink} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 6, marginBottom: 16 }}>
                 <MC sm label="Exp Return" value={`${metrics.er.toFixed(2)}%`} accent={cs.green} sub="Weighted annual" />
-                <MC sm label="Volatility" value={`${metrics.vol.toFixed(2)}%`} accent={cs.blue} sub="Annual" />
+                <MC sm label="Volatility" value={`${metrics.vol.toFixed(2)}%`} accent={cs.blue} sub={volTarget > 0 ? `Target: ${volTarget}%` : "Annual"} />
+                <MC sm label="VaR (95%)" value={`${metrics.var95.toFixed(2)}%`} accent={cs.yellow} sub="σ × 1.645" />
+                <MC sm label="Half Kelly" value={`${(metrics.hk * 100).toFixed(1)}%`} accent={metrics.hk > 0 ? cs.green : cs.red} sub="0.5×(R-Rf)/σ²" />
                 <MC sm label="Net Return" value={`${metrics.nr.toFixed(2)}%`} accent={cs.green} sub="After expenses" />
                 <MC sm label="Max Drawdown" value={`-${metrics.md.toFixed(1)}%`} accent={cs.red} sub="≈2.1× vol" />
               </div>
@@ -1017,6 +1267,131 @@ useEffect(() => {
             {aiL && <div style={{ padding: 18, textAlign: "center" }}><div style={{ fontSize: 12, color: cs.green }}><span style={{ display: "inline-block", animation: "pulse 1.5s ease-in-out infinite" }}>✦</span> Analyzing with live market data...</div></div>}
             {aiText && !aiL && <div style={{ padding: 16, borderRadius: 9, background: "rgba(110,231,183,.02)", border: "1px solid rgba(110,231,183,.08)", fontSize: 11, lineHeight: 1.65, color: "#d1d5db" }}><AiMarkdown text={aiText} /></div>}
           </div>
+        </div>}
+
+        {/* ════ BACKTEST ════ */}
+        {tab === "Backtest" && <div>
+          <div style={cardS}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
+              <span style={{ fontSize: 16 }}>📈</span><div style={{ fontSize: 13, fontWeight: 700 }}>Backtest: 2016–2025</div>
+            </div>
+            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data. Annual rebalancing using trailing 12-month stats. Half Kelly caps + Vol Target + VaR Sharpe all applied.</div>
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 9, color: cs.dim }}>Starting Capital $</span>
+                <input type="number" value={btStartCash} onChange={e => setBtStartCash(Math.max(1000, +e.target.value || 100000))} style={{ ...inpS, width: 100, fontSize: 12, fontWeight: 600, textAlign: "right", color: cs.blue }} />
+              </div>
+              <div style={{ fontSize: 9, color: cs.dim }}>
+                Strategy: <span style={{ color: cs.green, fontWeight: 600 }}>{ot.replace("_", " ")}</span>
+                {modSh && <span style={{ color: cs.pink }}> · VaR SR</span>}
+                {volTarget > 0 && <span style={{ color: cs.blue }}> · Vol {volTarget}%</span>}
+                <span style={{ color: cs.purple }}> · ½Kelly</span>
+              </div>
+            </div>
+
+            <button onClick={runBacktest} disabled={btRunning} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: btRunning ? "rgba(255,255,255,.06)" : "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: btRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: btRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
+              {btRunning ? btProgress : "Run Backtest (2016–2025)"}
+            </button>
+          </div>
+
+          {btResult && (() => {
+            const { curves, summary, annual, startCash: sc2 } = btResult;
+            const allPts = [...curves.opt, ...curves.spy, ...curves.bal60];
+            const maxV = Math.max(...allPts.map(p => p.value));
+            const minV = Math.min(...allPts.map(p => p.value));
+            const W = 560, H = 280, pd = { t: 25, r: 15, b: 30, l: 60 };
+            const w = W - pd.l - pd.r, h = H - pd.t - pd.b;
+            const sx = (i, len) => pd.l + (i / Math.max(1, len - 1)) * w;
+            const sy = v => pd.t + h - ((v - minV) / (maxV - minV || 1)) * h;
+
+            const drawLine = (data, color) => data.map((p, i) => `${sx(i, data.length)},${sy(p.value)}`).join(" ");
+
+            return <>
+              {/* Equity Curve */}
+              <div style={cardS}>
+                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Equity Curve — ${(sc2/1000).toFixed(0)}k Starting Capital</div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, borderRadius: 2, background: cs.green, display: "inline-block" }} />Optimized ({fmt$(summary.opt.final)})</span>
+                  <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, borderRadius: 2, background: cs.blue, display: "inline-block" }} />SPY ({fmt$(summary.spy.final)})</span>
+                  <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, borderRadius: 2, background: cs.purple, display: "inline-block" }} />60/40 ({fmt$(summary.bal60.final)})</span>
+                </div>
+                <svg width={W} height={H} style={{ overflow: "visible", maxWidth: "100%" }} viewBox={`0 0 ${W} ${H}`}>
+                  {/* Grid lines */}
+                  {[0, .25, .5, .75, 1].map(f => {
+                    const yy = pd.t + h * (1 - f), val = minV + f * (maxV - minV);
+                    return <g key={f}><line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke="rgba(255,255,255,0.04)" /><text x={pd.l - 5} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{fmt$(val)}</text></g>;
+                  })}
+                  {/* Year labels */}
+                  {curves.opt.filter((_, i) => i % 12 === 0).map((p, i) => {
+                    const x = sx(i * 12, curves.opt.length);
+                    return <text key={i} x={x} y={H - 5} fill={cs.muted} fontSize={8} textAnchor="middle" fontFamily={mono2}>{p.date?.slice(0, 4)}</text>;
+                  })}
+                  {/* Lines */}
+                  <polyline points={drawLine(curves.bal60, cs.purple)} fill="none" stroke={cs.purple} strokeWidth={1.5} opacity={.6} />
+                  <polyline points={drawLine(curves.spy, cs.blue)} fill="none" stroke={cs.blue} strokeWidth={1.5} opacity={.7} />
+                  <polyline points={drawLine(curves.opt, cs.green)} fill="none" stroke={cs.green} strokeWidth={2} />
+                </svg>
+              </div>
+
+              {/* Summary Metrics */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 14 }}>
+                {[
+                  { label: "Optimized", data: summary.opt, color: cs.green },
+                  { label: "S&P 500", data: summary.spy, color: cs.blue },
+                  { label: "60/40", data: summary.bal60, color: cs.purple },
+                ].map(s => (
+                  <div key={s.label} style={{ ...cardS, marginBottom: 0, borderColor: `${s.color}22` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: s.color, marginBottom: 8 }}>{s.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, fontFamily: mono2, color: s.color }}>{fmt$(s.data.final)}</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 8 }}>
+                      <div><div style={{ fontSize: 7, color: cs.dim }}>CAGR</div><div style={{ fontSize: 11, fontWeight: 600, fontFamily: mono2 }}>{s.data.cagr.toFixed(1)}%</div></div>
+                      <div><div style={{ fontSize: 7, color: cs.dim }}>Total</div><div style={{ fontSize: 11, fontWeight: 600, fontFamily: mono2 }}>{s.data.total.toFixed(0)}%</div></div>
+                      <div><div style={{ fontSize: 7, color: cs.dim }}>Vol</div><div style={{ fontSize: 11, fontWeight: 600, fontFamily: mono2 }}>{s.data.vol.toFixed(1)}%</div></div>
+                      <div><div style={{ fontSize: 7, color: cs.dim }}>Sharpe</div><div style={{ fontSize: 11, fontWeight: 600, fontFamily: mono2 }}>{s.data.sharpe.toFixed(2)}</div></div>
+                      <div><div style={{ fontSize: 7, color: cs.dim }}>Max DD</div><div style={{ fontSize: 11, fontWeight: 600, fontFamily: mono2, color: cs.red }}>-{s.data.dd.toFixed(1)}%</div></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Annual Returns Table */}
+              <div style={cardS}>
+                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8 }}>Annual Returns</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid rgba(255,255,255,.08)" }}>
+                        <th style={{ padding: "6px 8px", textAlign: "left", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Year</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.green, fontFamily: mono2, fontSize: 9 }}>Optimized</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.blue, fontFamily: mono2, fontSize: 9 }}>SPY</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.purple, fontFamily: mono2, fontSize: 9 }}>60/40</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Alpha</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {annual.map(a => {
+                        const alpha = a.optRet - a.spyRet;
+                        return (
+                          <tr key={a.year} style={{ borderBottom: "1px solid rgba(255,255,255,.03)" }}>
+                            <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>{a.year}</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.optRet >= 0 ? cs.green : cs.red }}>{a.optRet >= 0 ? "+" : ""}{a.optRet.toFixed(1)}%</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.spyRet >= 0 ? cs.blue : cs.red }}>{a.spyRet >= 0 ? "+" : ""}{a.spyRet.toFixed(1)}%</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.bal60Ret >= 0 ? cs.purple : cs.red }}>{a.bal60Ret >= 0 ? "+" : ""}{a.bal60Ret.toFixed(1)}%</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, fontWeight: 600, color: alpha >= 0 ? cs.green : cs.red }}>{alpha >= 0 ? "+" : ""}{alpha.toFixed(1)}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
+                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective{modSh ? " · VaR Sharpe" : ""}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""} · ½Kelly caps
+              </div>
+            </>;
+          })()}
         </div>}
 
         <div style={{ marginTop: 24, padding: "12px 0", borderTop: "1px solid rgba(255,255,255,.03)", fontSize: 8, color: "#3d4250", textAlign: "center", lineHeight: 1.5 }}>
