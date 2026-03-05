@@ -189,26 +189,28 @@ function calcMetrics(positions, cashDollars, totalVal) {
   const sh = vol > 0 ? (er - RF) / vol : 0;
   // VaR-based Sharpe: mSR = (Rp - Rf) / VaR_95
   const var95 = vol * 1.645;  // 95% parametric VaR (annual %)
-  const msh = var95 > 0 ? (er - RF) / var95 : 0;
+  const varSh = var95 > 0 ? (er - RF) / var95 : 0;
+  // Vol-squared Sharpe: (Rp - Rf) / σ²
+  const vol2Sh = vol > 0 ? (er - RF) / (vol * vol / 100) : 0;
   const so = vol > 0 ? (er - RF) / (vol * .7) : 0;
   const nr = er - wer; const md = vol * 2.1; const cm = md > 0 ? nr / md : 0;
   const dr = vol > 0 ? items.reduce((s, p) => s + p.w * (p.v || 0), 0) / vol : 1;
   // Half Kelly fraction for the overall portfolio: f* = 0.5 × (R - Rf) / σ²
   const hk = vol > 0 ? 0.5 * (er - RF) / ((vol / 100) * (vol / 100)) / 100 : 0;  // as fraction of capital
-  return { er, vol, sh, msh, so, nr, wer, div, md, cm, dr, cashW, var95, hk };
+  return { er, vol, sh, varSh, vol2Sh, so, nr, wer, div, md, cm, dr, cashW, var95, hk };
 }
 
-function optimizeCash(existing, cash, totalVal, candidates, target, useMod, volTarget) {
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly) {
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
 
   // Pre-compute Half Kelly max allocation per candidate: f* = 0.5 × (R - Rf) / σ²
-  // This caps the max % of cash any single ETF can receive
   const kellyMaxPct = candidates.map(c => {
+    if (!useKelly) return 1.0; // Kelly disabled → no cap
     const sigSq = (c.v / 100) * (c.v / 100);
     if (sigSq <= 0) return 1.0;
     const fStar = 0.5 * ((c.r - RF) / 100) / sigSq;
-    return Math.max(0.01, Math.min(fStar, 1.0)); // clamp between 1% and 100%
+    return Math.max(0.01, Math.min(fStar, 1.0));
   });
 
   for (let t = 0; t < 6000; t++) {
@@ -219,8 +221,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, useMod, volT
     const deployAmt = cash * deployPct;
     let alloc = ws.map((w, i) => {
       let pct = w / s;
-      // Apply Half Kelly cap: no single position exceeds its Kelly fraction
-      pct = Math.min(pct, kellyMaxPct[i]);
+      if (useKelly) pct = Math.min(pct, kellyMaxPct[i]);
       return pct;
     });
     // Renormalize after Kelly caps
@@ -237,11 +238,12 @@ function optimizeCash(existing, cash, totalVal, candidates, target, useMod, volT
       for (let j = 0; j < items.length; j++) vr += items[i].w * items[j].w * (items[i].vol / 100) * (items[j].vol / 100) * gc(items[i].cat, items[j].cat); }
     const vol = Math.sqrt(Math.max(0, vr)) * 100;
 
-    // VaR-based Sharpe: mSR = (Rp - Rf) / VaR_95
+    // Sharpe variants
     const var95 = vol * 1.645;
-    const varSh = var95 > 0 ? (ret - RF) / var95 : 0;
     const stdSh = vol > 0 ? (ret - RF) / vol : 0;
-    const sh = useMod ? varSh : stdSh;
+    const varSh = var95 > 0 ? (ret - RF) / var95 : 0;
+    const vol2Sh = vol > 0 ? (ret - RF) / (vol * vol / 100) : 0;
+    const sh = srMode === "var" ? varSh : srMode === "vol2" ? vol2Sh : stdSh;
 
     // Volatility targeting penalty: penalize deviation from target vol
     const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
@@ -254,8 +256,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, useMod, volT
     if (sc > bs) { bs = sc; best = alloc; }
   }
   const raw = candidates.map((e, i) => {
-    const hk = kellyMaxPct[i];
-    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: +(hk * 100).toFixed(1) };
+    const hk = useKelly ? kellyMaxPct[i] : null;
+    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null };
   }).filter(e => e.dollars > 10).sort((a, b) => b.dollars - a.dollars).slice(0, 10);
   // Ensure total deployment is at least 90% of cash
   const deployed = raw.reduce((s, r) => s + r.dollars, 0);
@@ -466,9 +468,10 @@ export default function App() {
 
   const [tab, setTab] = useState("My Holdings");
   const [sq, setSq] = useState(""); const [so, setSo] = useState(false); const [sc, setSc] = useState("All");
-  const [modSh, setModSh] = useState(false);
+  const [srMode, setSrMode] = useState("std"); // "std" | "var" | "vol2"
   const [ot, setOt] = useState("max_sharpe");
   const [volTarget, setVolTarget] = useState(0);  // 0 = off, otherwise target vol %
+  const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
   const [optResult, setOptResult] = useState(null);
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
@@ -491,25 +494,44 @@ export default function App() {
   const runBacktest = useCallback(async () => {
     setBtRunning(true); setBtResult(null); setBtProgress("Fetching historical data...");
 
-    // Core ETFs to include in backtest (top liquid, diverse categories)
-    const btETFs = ["SPY","VTI","QQQ","VEA","VWO","BND","AGG","VNQ","GLD","XLF","XLK","XLV","XLE","SCHD","IWM","EFA","TIP","VIG","ARKK","IJR"];
-    const benchmarks = ["SPY"];  // benchmark comparison
+    // Comprehensive ETF universe for backtest (all major categories, liquid, Schwab-tradable)
+    const btETFs = [
+      // US Broad Market
+      "SPY","VTI","QQQ","IWM","IJR","IWF","IWD","MDY","RSP",
+      // Schwab
+      "SCHD","SCHG","SCHV","SCHX","SCHB","SCHF","SCHE",
+      // International
+      "VEA","VWO","EFA","IEFA","IEMG","EWJ","MCHI","INDA","EWZ","EWG","EWU",
+      // Sector SPDRs
+      "XLK","XLF","XLV","XLE","XLI","XLY","XLP","XLU","XLB","XLC","XLRE",
+      // Sector Vanguard
+      "VGT","VHT","VFH","VDE","VNQ",
+      // Thematic
+      "ARKK","SOXX","SMH","BOTZ","ICLN","TAN","HACK","XBI","IBB","IGV",
+      // Factor
+      "VIG","MTUM","QUAL","USMV","VLUE",
+      // Fixed Income
+      "BND","AGG","TIP","IEF","SHY","LQD","HYG","JNK","EMB","VCIT","VCSH",
+      // Commodity
+      "GLD","IAU","SLV","GDX","USO","DBC",
+      // Dividend / Income
+      "JEPI","JEPQ","DVY","HDV","DGRO","NOBL","SPHD",
+    ];
+    const benchmarks = ["SPY"];
 
-    // Fetch all historical data
     const allSymbols = [...new Set([...btETFs, ...benchmarks])];
     setBtProgress(`Fetching ${allSymbols.length} ETFs (2015-2025)...`);
 
     let histData = {};
     try {
-      // Batch in groups of 8 to stay within rate limits
+      // Batch in groups of 8 to stay within rate limits (8 req/min free tier)
       for (let i = 0; i < allSymbols.length; i += 8) {
         const batch = allSymbols.slice(i, i + 8);
         setBtProgress(`Fetching batch ${Math.floor(i/8)+1}/${Math.ceil(allSymbols.length/8)}: ${batch.join(", ")}...`);
         const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2015-01-01&end=2025-12-31`);
         const json = await resp.json();
         if (json.data) Object.assign(histData, json.data);
-        // Delay between batches for rate limit
-        if (i + 8 < allSymbols.length) await new Promise(r => setTimeout(r, 2500));
+        if (i + 8 < allSymbols.length) await new Promise(r => setTimeout(r, 8000)); // 8s between batches for free tier
       }
     } catch (e) {
       setBtProgress("Error fetching historical data: " + e.message);
@@ -580,7 +602,7 @@ export default function App() {
       // Run optimizer with trailing stats as candidates
       const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
       if (candidates.length >= 3) {
-        const result = optimizeCash([], optValue, 0, candidates, ot, modSh, volTarget);
+        const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly);
         optAlloc = {};
         const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
         result.forEach(r => { optAlloc[r.ticker] = r.dollars / totalDeployed; });
@@ -667,7 +689,7 @@ export default function App() {
       etfsUsed: available.length,
     });
     setBtProgress(""); setBtRunning(false);
-  }, [ot, modSh, volTarget, btStartCash]);
+  }, [ot, srMode, volTarget, useKelly, btStartCash]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -684,9 +706,10 @@ useEffect(() => {
     if (typeof saved.cashBalance === "number") setCashBalance(saved.cashBalance);
 
     if (typeof saved.tab === "string") setTab(saved.tab);
-    if (typeof saved.modSh === "boolean") setModSh(saved.modSh);
+    if (typeof saved.srMode === "string") setSrMode(saved.srMode);
     if (typeof saved.ot === "string") setOt(saved.ot);
     if (typeof saved.volTarget === "number") setVolTarget(saved.volTarget);
+    if (typeof saved.useKelly === "boolean") setUseKelly(saved.useKelly);
 
     if (typeof saved.sc === "string") setSc(saved.sc);
     if (typeof saved.so === "boolean") setSo(saved.so);
@@ -705,15 +728,16 @@ useEffect(() => {
       stocks,
       cashBalance,
       tab,
-      modSh,
+      srMode,
       ot,
       volTarget,
+      useKelly,
       sc,
       so,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [etfs, stocks, cashBalance, tab, modSh, ot, volTarget, sc, so]);
+  }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, sc, so]);
 
   // ─── Computed ───
   const etfV = useMemo(() => etfs.map(e => {
@@ -806,19 +830,18 @@ useEffect(() => {
     if (!sf.t) return;
     const ticker = sf.t.toUpperCase(); const shares = +sf.sh || 0; const costBasis = +sf.cb || 0;
     const price = sf.livePrice || costBasis; const mktValue = price * shares;
+    const purchaseDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     if (addType === "etf") {
       if (etfs.find(e => e.ticker === ticker)) return;
-      // Look up in local DB first; if not found, create entry from search result
       let etfData = ETF_DB.find(e => e.t === ticker);
       if (!etfData) {
-        // ETF from live search — assign reasonable defaults for category from sf.sec
         const cat = sf.sec || "US Large Cap";
         etfData = { t: ticker, n: sf.n || ticker, c: cat, h: 50, er: .20, r: 8.0, v: 18.0, d: 1.0 };
       }
-      setEtfs(p => [...p, { ticker, data: etfData, shares, costBasis, mktValue, type: "etf" }]);
+      setEtfs(p => [...p, { ticker, data: etfData, shares, costBasis, mktValue, type: "etf", purchaseDate }]);
     } else {
       if (stocks.find(s => s.ticker === ticker)) return;
-      setStocks(p => [...p, { ticker, name: sf.n || ticker, shares, costBasis, mktValue, sector: sf.sec || "Technology", type: "stock", locked: true }]);
+      setStocks(p => [...p, { ticker, name: sf.n || ticker, shares, costBasis, mktValue, sector: sf.sec || "Technology", type: "stock", locked: true, purchaseDate }]);
     }
     setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology" });
   }, [sf, addType, etfs, stocks]);
@@ -851,7 +874,7 @@ useEffect(() => {
       if (!etfData) {
         etfData = { t: rec.ticker, n: rec.name, c: rec.cat, h: 50, er: rec.er || .20, r: rec.r || 8.0, v: rec.v || 18.0, d: rec.d || 0 };
       }
-      setEtfs(p => [...p, { ticker: rec.ticker, data: etfData, shares, costBasis: price || 0, mktValue: actualCost, type: "etf" }]);
+      setEtfs(p => [...p, { ticker: rec.ticker, data: etfData, shares, costBasis: price || 0, mktValue: actualCost, type: "etf", purchaseDate: new Date().toISOString().slice(0, 10) }]);
       setCashBalance(prev => Math.max(0, prev - actualCost));
       setAccepted(prev => new Set([...prev, rec.ticker]));
     }
@@ -885,10 +908,10 @@ useEffect(() => {
   // ─── Optimizer ───
   const runOptimizer = useCallback(() => {
     if (cashBalance <= 0) return;
-    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, modSh, volTarget);
+    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, srMode, volTarget, useKelly);
     setOptResult(result);
     setAccepted(new Set());
-  }, [allPos, cashBalance, holdingsVal, ot, modSh, volTarget]);
+  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly]);
 
   // ─── AI Advisor (via serverless proxy) ───
   const getAI = useCallback(async (ctx) => {
@@ -926,6 +949,27 @@ useEffect(() => {
   // ─── Price info line ───
   const priceInfo = sf.livePrice ? `${sf.t.toUpperCase()} @ $${sf.livePrice.toFixed(2)}` + (+sf.sh > 0 ? ` → ${+sf.sh} shares = $${(sf.livePrice * +sf.sh).toLocaleString()}` : "") : null;
 
+  // ─── SR mode helpers ───
+  const getSR = (m) => m ? (srMode === "var" ? m.varSh : srMode === "vol2" ? m.vol2Sh : m.sh) : 0;
+  const srLabel = srMode === "var" ? "VaR Sharpe" : srMode === "vol2" ? "σ² Sharpe" : "Sharpe";
+  const srSub = srMode === "var" ? "(R-Rf)/VaR₉₅" : srMode === "vol2" ? "(R-Rf)/σ²" : "(R-Rf)/σ";
+  const srMax = srMode === "vol2" ? 1 : srMode === "var" ? 1 : 2;
+
+  // ─── Holding period helper ───
+  const holdingPeriod = (purchaseDate) => {
+    if (!purchaseDate) return null;
+    const now = new Date(), pd = new Date(purchaseDate);
+    const days = Math.floor((now - pd) / 86400000);
+    const months = Math.floor(days / 30.44);
+    const daysToLT = Math.max(0, 366 - days); // days until long-term (>1 year)
+    const isLT = days >= 366;
+    let label;
+    if (months >= 12) { const yrs = Math.floor(months / 12); const mo = months % 12; label = mo > 0 ? `${yrs}y ${mo}m` : `${yrs}y`; }
+    else if (months > 0) label = `${months}m ${days % 30}d`;
+    else label = `${days}d`;
+    return { days, months, daysToLT, isLT, label };
+  };
+
   // ═══ RENDER ═══
   return (
     <div style={{ minHeight: "100vh", background: cs.bg, color: cs.text, fontFamily: sans2 }}>
@@ -941,7 +985,7 @@ useEffect(() => {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {totalVal > 0 && <span style={{ fontSize: 11, fontFamily: mono2, color: cs.green, fontWeight: 700 }}>{fmt$(totalVal)}</span>}
-          <button onClick={() => setModSh(v => !v)} style={{ padding: "4px 8px", borderRadius: 5, border: `1px solid ${modSh ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.08)"}`, background: modSh ? "rgba(244,114,182,.1)" : "transparent", color: modSh ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{modSh ? "VaR" : "Std"} SR</button>
+          <button onClick={() => setSrMode(m => m === "std" ? "var" : m === "var" ? "vol2" : "std")} style={{ padding: "4px 8px", borderRadius: 5, border: `1px solid ${srMode !== "std" ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.08)"}`, background: srMode !== "std" ? "rgba(244,114,182,.1)" : "transparent", color: srMode !== "std" ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{srMode === "var" ? "VaR" : srMode === "vol2" ? "σ²" : "Std"} SR</button>
           {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()}</span>}
           <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: liveL ? "rgba(110,231,183,.05)" : "rgba(110,231,183,.1)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "..." : "⟳ Live"}</button>
         </div>
@@ -963,7 +1007,7 @@ useEffect(() => {
             <MC label="Holdings Value" value={fmt$(holdingsVal)} accent={cs.green} sub="Auto-calculated from shares × price" />
             <MC label="Cash to Deploy" value={fmt$(cashBalance)} accent={cs.blue} sub="New contributions" />
             <MC label="Total Portfolio" value={fmt$(totalVal)} accent={cs.text} sub="Holdings + Cash" />
-            {metrics && <MC label={modSh ? "VaR Sharpe" : "Sharpe"} value={(modSh ? metrics.msh : metrics.sh).toFixed(2)} accent={(modSh ? metrics.msh : metrics.sh) > .5 ? cs.green : cs.yellow} sub={modSh ? "(R-Rf)/VaR₉₅" : "(R-Rf)/σ"} />}
+            {metrics && <MC label={srLabel} value={getSR(metrics).toFixed(2)} accent={getSR(metrics) > .5 ? cs.green : cs.yellow} sub={srSub} />}
           </div>
 
           {/* Allocation bar */}
@@ -987,7 +1031,12 @@ useEffect(() => {
               <input id="cashContribInput" type="number" placeholder="10,000" style={{ ...inpS, flex: 1, fontSize: 13, fontWeight: 600, color: cs.blue, borderColor: "rgba(96,165,250,.15)", textAlign: "right" }} onKeyDown={e => { if (e.key === "Enter") { const v = +e.target.value || 0; if (v > 0) { setCashBalance(prev => prev + v); e.target.value = ""; } } }} />
               <button onClick={() => { const inp = document.getElementById("cashContribInput"); const v = +(inp?.value) || 0; if (v > 0) { setCashBalance(prev => prev + v); inp.value = ""; } }} style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(96,165,250,.2)", background: "rgba(96,165,250,.1)", color: cs.blue, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>+ Add</button>
             </div>
-            <div style={{ fontSize: 8, color: cs.dim, marginTop: 4 }}>Enter amount and click "+ Add" or press Enter. Contributions stack on your existing balance.</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", background: "rgba(248,113,113,.02)", borderRadius: 6, border: "1px solid rgba(248,113,113,.08)", marginTop: 6 }}>
+              <span style={{ fontSize: 10, color: cs.red, whiteSpace: "nowrap" }}>Withdraw $</span>
+              <input id="cashWithdrawInput" type="number" placeholder="0" style={{ ...inpS, flex: 1, fontSize: 13, fontWeight: 600, color: cs.red, borderColor: "rgba(248,113,113,.15)", textAlign: "right" }} onKeyDown={e => { if (e.key === "Enter") { const v = +e.target.value || 0; if (v > 0) { setCashBalance(prev => Math.max(0, prev - v)); e.target.value = ""; } } }} />
+              <button onClick={() => { const inp = document.getElementById("cashWithdrawInput"); const v = +(inp?.value) || 0; if (v > 0) { setCashBalance(prev => Math.max(0, prev - v)); inp.value = ""; } }} style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(248,113,113,.15)", background: "rgba(248,113,113,.06)", color: cs.red, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>− Withdraw</button>
+            </div>
+            <div style={{ fontSize: 8, color: cs.dim, marginTop: 4 }}>Contribute or withdraw cash. Balance cannot go below $0.</div>
           </div>
 
           {/* Add holding form */}
@@ -1045,6 +1094,7 @@ useEffect(() => {
                     {s.livePrice && <span style={{ color: cs.green }}> · ${s.livePrice.toFixed(2)}</span>}
                     {live[s.ticker] && <span style={{ color: live[s.ticker].change >= 0 ? cs.green : cs.red }}> ({live[s.ticker].change > 0 ? "+" : ""}{live[s.ticker].change}%)</span>}
                     {totalVal > 0 && <span style={{ color: cs.dim }}> · {((s.mktValue / totalVal) * 100).toFixed(1)}%</span>}
+                    {(() => { const hp = holdingPeriod(s.purchaseDate); return hp ? <span style={{ color: hp.isLT ? cs.green : cs.yellow }}> · {hp.label} {hp.isLT ? "LT" : `(${hp.daysToLT}d→LT)`}</span> : null; })()}
                   </div>
                 </div>
                 <button onClick={() => removeHolding(s.ticker, "stock")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e => e.currentTarget.style.color = cs.red} onMouseLeave={e => e.currentTarget.style.color = cs.muted}>×</button>
@@ -1065,6 +1115,7 @@ useEffect(() => {
                     {e.shares} sh · Cost ${e.costBasis} · Mkt {fmt$(e.mktValue)} · R:{e.data?.r}% · V:{e.data?.v}%
                     {live[e.ticker] && <span style={{ color: live[e.ticker].change >= 0 ? cs.green : cs.red }}> · ${live[e.ticker].price} ({live[e.ticker].change > 0 ? "+" : ""}{live[e.ticker].change}%)</span>}
                     {totalVal > 0 && <span style={{ color: cs.dim }}> · {((e.mktValue / totalVal) * 100).toFixed(1)}%</span>}
+                    {(() => { const hp = holdingPeriod(e.purchaseDate); return hp ? <span style={{ color: hp.isLT ? cs.green : cs.yellow }}> · {hp.label} {hp.isLT ? "LT" : `(${hp.daysToLT}d→LT)`}</span> : null; })()}
                   </div>
                 </div>
                 <button onClick={() => removeHolding(e.ticker, "etf")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e2 => e2.currentTarget.style.color = cs.red} onMouseLeave={e2 => e2.currentTarget.style.color = cs.muted}>×</button>
@@ -1109,13 +1160,14 @@ useEffect(() => {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", borderRadius: 6, border: "1px solid rgba(244,114,182,.1)", background: "rgba(244,114,182,.02)" }}>
                   <span style={{ fontSize: 9, color: cs.pink, fontWeight: 600, whiteSpace: "nowrap" }}>SR Mode</span>
-                  <button onClick={() => setModSh(false)} style={{ padding: "3px 7px", borderRadius: 4, border: `1px solid ${!modSh ? "rgba(110,231,183,.3)" : "rgba(255,255,255,.06)"}`, background: !modSh ? "rgba(110,231,183,.08)" : "transparent", color: !modSh ? cs.green : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>(R-Rf)/σ</button>
-                  <button onClick={() => setModSh(true)} style={{ padding: "3px 7px", borderRadius: 4, border: `1px solid ${modSh ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.06)"}`, background: modSh ? "rgba(244,114,182,.1)" : "transparent", color: modSh ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>(R-Rf)/VaR</button>
+                  {[{k:"std",l:"(R-Rf)/σ"},{k:"var",l:"(R-Rf)/VaR"},{k:"vol2",l:"(R-Rf)/σ²"}].map(m => (
+                    <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "3px 7px", borderRadius: 4, border: `1px solid ${srMode === m.k ? (m.k === "std" ? "rgba(110,231,183,.3)" : "rgba(244,114,182,.3)") : "rgba(255,255,255,.06)"}`, background: srMode === m.k ? (m.k === "std" ? "rgba(110,231,183,.08)" : "rgba(244,114,182,.1)") : "transparent", color: srMode === m.k ? (m.k === "std" ? cs.green : cs.pink) : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
+                  ))}
                 </div>
-                <div style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid rgba(167,139,250,.1)", background: "rgba(167,139,250,.02)", display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ fontSize: 9, color: cs.purple, fontWeight: 600 }}>½K</span>
-                  <span style={{ fontSize: 8, color: cs.dim }}>Kelly caps active</span>
-                </div>
+                <button onClick={() => setUseKelly(v => !v)} style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${useKelly ? "rgba(167,139,250,.2)" : "rgba(255,255,255,.06)"}`, background: useKelly ? "rgba(167,139,250,.05)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: useKelly ? cs.purple : cs.dim, fontWeight: 600 }}>½K</span>
+                  <span style={{ fontSize: 8, color: useKelly ? cs.purple : cs.dim }}>{useKelly ? "ON" : "OFF"}</span>
+                </button>
               </div>
 
               <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
@@ -1184,7 +1236,7 @@ useEffect(() => {
               return <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
                 <MC sm label="New Return" value={`${nm.er.toFixed(2)}%`} accent={cs.green} sub={`was ${metrics?.er.toFixed(2) || "?"}%`} />
                 <MC sm label="New Vol" value={`${nm.vol.toFixed(2)}%`} accent={cs.blue} sub={`was ${metrics?.vol.toFixed(2) || "?"}%`} />
-                <MC sm label={modSh ? "New VaR SR" : "New Sharpe"} value={(modSh ? nm.msh : nm.sh).toFixed(3)} accent={(modSh ? nm.msh : nm.sh) > (modSh ? metrics?.msh : metrics?.sh || 0) ? cs.green : cs.red} sub={`was ${(modSh ? metrics?.msh : metrics?.sh)?.toFixed(3) || "?"}`} />
+                <MC sm label={`New ${srLabel}`} value={getSR(nm).toFixed(3)} accent={getSR(nm) > getSR(metrics) ? cs.green : cs.red} sub={`was ${getSR(metrics)?.toFixed(3) || "?"}`} />
               </div>;
             })()}
           </div>}
@@ -1195,7 +1247,7 @@ useEffect(() => {
           {!metrics ? <div style={{ textAlign: "center", padding: 45, color: cs.muted }}><div style={{ fontSize: 24, marginBottom: 5 }}>📈</div><div style={{ fontSize: 11 }}>Add holdings first</div></div>
             : <>
               <div style={{ display: "flex", justifyContent: "center", gap: 18, flexWrap: "wrap", padding: "14px 0 18px", borderBottom: "1px solid rgba(255,255,255,.04)", marginBottom: 14 }}>
-                <GR value={modSh ? metrics.msh : metrics.sh} max={modSh ? 1 : 2} label={modSh ? "VaR Sharpe" : "Sharpe"} color={(modSh ? metrics.msh : metrics.sh) > .5 ? cs.green : cs.yellow} />
+                <GR value={getSR(metrics)} max={srMax} label={srLabel} color={getSR(metrics) > .5 ? cs.green : cs.yellow} />
                 <GR value={metrics.so} max={3} label="Sortino" color={cs.blue} />
                 <GR value={metrics.dr} max={2} label="Div Ratio" color={cs.purple} />
                 <GR value={metrics.cm} max={1} label="Calmar" color={cs.pink} />
@@ -1284,9 +1336,9 @@ useEffect(() => {
               </div>
               <div style={{ fontSize: 9, color: cs.dim }}>
                 Strategy: <span style={{ color: cs.green, fontWeight: 600 }}>{ot.replace("_", " ")}</span>
-                {modSh && <span style={{ color: cs.pink }}> · VaR SR</span>}
+                {srMode !== "std" && <span style={{ color: cs.pink }}> · {srMode === "var" ? "VaR" : "σ²"} SR</span>}
                 {volTarget > 0 && <span style={{ color: cs.blue }}> · Vol {volTarget}%</span>}
-                <span style={{ color: cs.purple }}> · ½Kelly</span>
+                {useKelly && <span style={{ color: cs.purple }}> · ½Kelly</span>}
               </div>
             </div>
 
@@ -1388,7 +1440,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective{modSh ? " · VaR Sharpe" : ""}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""} · ½Kelly caps
+                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly caps" : ""}
               </div>
             </>;
           })()}
