@@ -1,64 +1,130 @@
-// api/ai.js — Vercel Serverless Function
-// Proxies AI advisor requests to Anthropic Claude API
-//
-// SETUP: In Vercel dashboard → Settings → Environment Variables:
-//   ANTHROPIC_API_KEY = "your_anthropic_api_key_here"
-//
-// Usage: POST /api/ai  { prompt: "..." }
+// api/history.js — Vercel Serverless Function
+// Historical monthly prices: Yahoo Finance (primary) → Twelve Data (fallback)
 
-module.exports = async function handler(req, res) {
+import yahooFinance from "yahoo-finance2";
+
+export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({
-      error: "ANTHROPIC_API_KEY not set. Add it in Vercel → Settings → Environment Variables.",
-    });
-  }
+  const { symbols, start, end, provider } = req.query;
+  if (!symbols) return res.status(400).json({ error: "Missing ?symbols= param" });
 
-  const { prompt } = req.body || {};
-  if (!prompt) return res.status(400).json({ error: "Missing prompt in request body" });
+  const tickers = symbols.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 100);
+  if (!tickers.length) return res.status(400).json({ error: "No valid symbols" });
 
-  try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1500,
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
+  const startDate = start || "2015-01-01";
+  const endDate = end || new Date().toISOString().slice(0, 10);
+  const forceTD = provider === "twelvedata";
+  const forceYahoo = provider === "yahoo";
 
-    if (!resp.ok) {
-      const text = await resp.text();
-      return res.status(resp.status).json({
-        error: "Anthropic API error",
-        status: resp.status,
-        detail: text,
+  const data = {};
+  const errors = [];
+
+  // ── Try Yahoo Finance first ──
+  if (!forceTD) {
+    let yahooSuccess = 0;
+    for (const sym of tickers) {
+      try {
+        const result = await yahooFinance.historical(sym, {
+          period1: startDate,
+          period2: endDate,
+          interval: "1mo",
+        });
+
+        if (result && result.length > 0) {
+          data[sym] = result
+            .filter((q) => q.close != null && q.date != null)
+            .map((q) => ({
+              date: q.date instanceof Date ? q.date.toISOString().slice(0, 10) : String(q.date).slice(0, 10),
+              close: +q.close.toFixed(2),
+            }));
+          yahooSuccess++;
+        } else {
+          errors.push({ symbol: sym, message: "No Yahoo data", provider: "yahoo" });
+        }
+      } catch (err) {
+        errors.push({ symbol: sym, message: err.message, provider: "yahoo" });
+      }
+    }
+
+    if (yahooSuccess > 0 && (yahooSuccess >= tickers.length * 0.5 || forceYahoo)) {
+      return res.status(200).json({
+        data,
+        errors: errors.filter((e) => !data[e.symbol]),
+        provider: "yahoo",
+        fetched: yahooSuccess,
+        requested: tickers.length,
       });
     }
 
-    const data = await resp.json();
-    const text = data.content
-      ?.map((b) => (b.type === "text" ? b.text : ""))
-      .filter(Boolean)
-      .join("\n\n") || "Unable to generate advice.";
+    if (forceYahoo) {
+      return res.status(500).json({ error: "Yahoo Finance failed for most symbols", errors, provider: "yahoo" });
+    }
+  }
 
-    return res.status(200).json({ text, model: data.model });
-  } catch (err) {
+  // ── Fallback: Twelve Data ──
+  const apiKey = process.env.TWELVEDATA_API_KEY;
+  if (!apiKey) {
+    if (Object.keys(data).length > 0) {
+      return res.status(200).json({
+        data,
+        errors,
+        provider: "yahoo-partial",
+        fetched: Object.keys(data).length,
+        requested: tickers.length,
+      });
+    }
     return res.status(500).json({
-      error: "Failed to call Anthropic API",
-      detail: err.message,
+      error: "Yahoo Finance unavailable and TWELVEDATA_API_KEY not set",
+      hint: "Check that yahoo-finance2 is installed, or add TWELVEDATA_API_KEY in Vercel env vars",
     });
+  }
+
+  try {
+    const url =
+      "https://api.twelvedata.com/time_series?symbol=" +
+      tickers.join(",") +
+      "&interval=1month&start_date=" + startDate +
+      "&end_date=" + endDate +
+      "&apikey=" + apiKey;
+
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      return res.status(resp.status).json({ error: "Twelve Data API error", status: resp.status });
+    }
+    const tdData = await resp.json();
+
+    const parseSeries = (series) => {
+      if (!series?.values || !Array.isArray(series.values)) return null;
+      return series.values
+        .filter((v) => v.close)
+        .map((v) => ({ date: v.datetime, close: parseFloat(v.close) }))
+        .reverse();
+    };
+
+    if (tickers.length === 1) {
+      const parsed = parseSeries(tdData);
+      if (parsed) data[tickers[0]] = parsed;
+      else errors.push({ symbol: tickers[0], message: "No Twelve Data data" });
+    } else {
+      for (const sym of tickers) {
+        const parsed = parseSeries(tdData[sym]);
+        if (parsed) data[sym] = parsed;
+        else errors.push({ symbol: sym, message: "No Twelve Data data" });
+      }
+    }
+
+    return res.status(200).json({
+      data,
+      errors: errors.filter((e) => !data[e.symbol]),
+      provider: "twelvedata",
+      fetched: Object.keys(data).length,
+      requested: tickers.length,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Both providers failed", detail: err.message });
   }
 }
