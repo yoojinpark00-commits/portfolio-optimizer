@@ -736,6 +736,9 @@ export default function App() {
   const [btResult, setBtResult] = useState(null);
   const [btStartCash, setBtStartCash] = useState(100000);
   const [btExpandedYear, setBtExpandedYear] = useState(null);
+  const [simRunning, setSimRunning] = useState(false);
+  const [simProgress, setSimProgress] = useState("");
+  const [simResult, setSimResult] = useState(null);
 
   // ── Regime state ──
   const [regimeData, setRegimeData] = useState(null);
@@ -1149,6 +1152,175 @@ export default function App() {
     });
     setBtProgress(""); setBtRunning(false);
   }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash]);
+
+  // ═══ SIMULATION: Run backtest N times to measure win rate vs SPY ═══
+  const runSimulation = useCallback(async () => {
+    if (!btResult) return; // Must run backtest first to have data
+    setSimRunning(true); setSimResult(null); setSimProgress("Preparing simulation...");
+
+    const NUM_SIMS = 100;
+    const startCash = btStartCash;
+
+    // ── Fetch historical data (same as backtest) ──
+    const btETFs = [
+      "SPY","VTI","QQQ","IWM","SCHD","SCHG","SCHF","VEA","VWO","EFA","MCHI",
+      "XLK","XLF","XLV","XLE","XLU","XLRE","SOXX","ARKK","ICLN",
+      "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","HDV","DGRO",
+    ];
+    const btStocks = includeStocks ? STOCK_OPT.map(s => s.t).slice(0, 15) : [];
+    const allSymbols = [...new Set([...btETFs, "SPY", ...btStocks])];
+
+    setSimProgress(`Fetching ${allSymbols.length} symbols...`);
+    let histData = {};
+    try {
+      for (let i = 0; i < allSymbols.length; i += 15) {
+        const batch = allSymbols.slice(i, i + 15);
+        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2015-01-01&end=2025-12-31`);
+        const json = await resp.json();
+        if (json.data) Object.assign(histData, json.data);
+      }
+    } catch (e) { setSimProgress("Error: " + e.message); setSimRunning(false); return; }
+
+    const available = Object.keys(histData).filter(k => histData[k]?.length >= 12);
+    if (available.length < 3) { setSimProgress("Not enough data"); setSimRunning(false); return; }
+
+    // Build indexed data structures (same as backtest)
+    const returnsByDateSym = {};
+    const allDateKeys = new Set();
+    for (const sym of available) {
+      const prices = histData[sym];
+      for (let i = 1; i < prices.length; i++) {
+        const dk = prices[i].date.slice(0, 7);
+        const entry = { ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close };
+        if (!returnsByDateSym[dk]) returnsByDateSym[dk] = {};
+        returnsByDateSym[dk][sym] = entry;
+        allDateKeys.add(dk);
+      }
+    }
+    const sortedDates = [...allDateKeys].sort();
+    const dateToIdx = {}; sortedDates.forEach((d, i) => { dateToIdx[d] = i; });
+    const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
+    const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12" && spyDates.has(d));
+    const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
+
+    // Compute SPY final value (same for all sims)
+    let spyFinal = startCash;
+    for (const mk of simDates) {
+      const spyRet = returnsByDateSym[mk]?.["SPY"]?.ret || 0;
+      spyFinal *= (1 + spyRet);
+    }
+    const spyCAGR = (Math.pow(spyFinal / startCash, 1 / Math.max(1, simDates.length / 12)) - 1) * 100;
+
+    // ── Run N simulations ──
+    const results = [];
+    for (let sim = 0; sim < NUM_SIMS; sim++) {
+      if (sim % 5 === 0) {
+        setSimProgress(`Simulation ${sim + 1} / ${NUM_SIMS}...`);
+        await new Promise(r => setTimeout(r, 0)); // yield to UI
+      }
+
+      let optValue = startCash;
+      let optAlloc = {};
+      let lastRebalMonth = null;
+
+      for (let mi = 0; mi < simDates.length; mi++) {
+        const monthKey = simDates[mi];
+        const mIdx = dateToIdx[monthKey];
+        const mMonth = parseInt(monthKey.slice(5, 7)) - 1;
+        const monthData = returnsByDateSym[monthKey] || {};
+
+        // Apply returns
+        if (Object.keys(optAlloc).length > 0) {
+          let mRet = 0;
+          for (const [sym, wt] of Object.entries(optAlloc)) {
+            mRet += wt * (monthData[sym]?.ret || 0);
+          }
+          optValue *= (1 + mRet);
+        }
+
+        // Only evaluate quarterly
+        if (mMonth % 3 !== 0) continue;
+        const prevTickers = Object.keys(optAlloc);
+        const isFirst = prevTickers.length === 0;
+        const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
+        if (!isFirst && mSinceRebal < 2) continue;
+
+        // Trailing stats
+        const trailingStats = {};
+        const trailStart = Math.max(0, mIdx - 12);
+        for (const sym of available) {
+          let sR = 0, sR2 = 0, cnt = 0;
+          for (let ti = trailStart; ti < mIdx; ti++) {
+            const e = returnsByDateSym[sortedDates[ti]]?.[sym];
+            if (e) { sR += e.ret; sR2 += e.ret * e.ret; cnt++; }
+          }
+          if (cnt < 6) continue;
+          const avg = sR / cnt;
+          const db = etfDbMap[sym];
+          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: avg * 12 * 100, v: Math.max(Math.sqrt(Math.max(0, sR2 / cnt - avg * avg)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: 0, lev: db?.lev || null };
+        }
+
+        const cands = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50)
+          .sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 12);
+        if (cands.length < 3) continue;
+
+        // Lightweight optimizer (100 iterations — speed over precision)
+        const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, null, 100);
+        if (!result || result.length === 0) continue;
+
+        const newAlloc = {};
+        const totalDep = result.reduce((s, r) => s + r.dollars, 0) || optValue;
+        result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDep; });
+
+        // Simple rebalance decision (no tax computation for speed)
+        const spyExp = trailingStats["SPY"]?.r || 10;
+        let currExp = 0; for (const [sym, wt] of Object.entries(optAlloc)) currExp += wt * (trailingStats[sym]?.r || spyExp);
+        let propExp = 0; for (const [sym, wt] of Object.entries(newAlloc)) if (trailingStats[sym]) propExp += wt * trailingStats[sym].r;
+
+        if (isFirst || propExp - currExp > 2) { // simple threshold
+          optAlloc = newAlloc;
+          lastRebalMonth = monthKey;
+        }
+      }
+
+      const optCAGR = (Math.pow(optValue / startCash, 1 / Math.max(1, simDates.length / 12)) - 1) * 100;
+      results.push({
+        finalValue: optValue,
+        cagr: optCAGR,
+        beatsSPY: optValue > spyFinal,
+        alpha: optCAGR - spyCAGR,
+      });
+    }
+
+    // ── Aggregate results ──
+    const wins = results.filter(r => r.beatsSPY).length;
+    const alphas = results.map(r => r.alpha).sort((a, b) => a - b);
+    const cagrs = results.map(r => r.cagr).sort((a, b) => a - b);
+    const finals = results.map(r => r.finalValue).sort((a, b) => a - b);
+    const avg = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
+    const pctl = (arr, p) => arr[Math.floor(arr.length * p / 100)] || 0;
+
+    setSimResult({
+      numSims: NUM_SIMS,
+      winRate: wins,
+      winPct: +(wins / NUM_SIMS * 100).toFixed(1),
+      spyFinal: Math.round(spyFinal),
+      spyCAGR: +spyCAGR.toFixed(1),
+      avgFinal: Math.round(avg(finals)),
+      avgCAGR: +avg(cagrs).toFixed(1),
+      avgAlpha: +avg(alphas).toFixed(1),
+      medianAlpha: +pctl(alphas, 50).toFixed(1),
+      p10Alpha: +pctl(alphas, 10).toFixed(1),
+      p90Alpha: +pctl(alphas, 90).toFixed(1),
+      p10Final: Math.round(pctl(finals, 10)),
+      p50Final: Math.round(pctl(finals, 50)),
+      p90Final: Math.round(pctl(finals, 90)),
+      minFinal: Math.round(finals[0]),
+      maxFinal: Math.round(finals[finals.length - 1]),
+      distribution: results, // for histogram
+    });
+    setSimProgress(""); setSimRunning(false);
+  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -2548,6 +2720,99 @@ useEffect(() => {
               </div>
             </>;
           })()}
+        </div>}
+
+        {/* ═══ SIMULATION: 100x Monte Carlo ═══ */}
+        {tab === "Backtest" && <div style={{ marginTop: 14 }}>
+          <div style={cardS}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700 }}>🎲 Monte Carlo Simulation</div>
+                <div style={{ fontSize: 9, color: cs.dim }}>Run the backtest 100 times with different random optimizer seeds to measure consistency of outperformance vs S&P 500</div>
+              </div>
+              <button onClick={runSimulation} disabled={simRunning || !btResult} style={{ padding: "9px 18px", borderRadius: 7, border: "none", background: (!btResult || simRunning) ? "rgba(255,255,255,.05)" : "linear-gradient(135deg,#a78bfa,#60a5fa)", color: (!btResult || simRunning) ? cs.dim : cs.bg, fontSize: 11, fontWeight: 700, cursor: (!btResult || simRunning) ? "default" : "pointer", fontFamily: "inherit", opacity: simRunning ? 0.6 : 1 }}>
+                {simRunning ? simProgress || "Running..." : !btResult ? "Run Backtest First" : "Run 100 Simulations"}
+              </button>
+            </div>
+            {!btResult && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Run a backtest first — simulation reuses the same parameters and time period.</div>}
+          </div>
+
+          {simResult && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: cs.purple, marginBottom: 10 }}>🎲 Simulation Results ({simResult.numSims} runs)</div>
+
+            {/* Win Rate */}
+            <div style={{ textAlign: "center", padding: "14px 0 18px", marginBottom: 14, background: "rgba(255,255,255,.015)", borderRadius: 8 }}>
+              <div style={{ fontSize: 10, color: cs.dim, marginBottom: 4 }}>Win Rate vs S&P 500</div>
+              <div style={{ fontSize: 42, fontWeight: 800, fontFamily: mono2, color: simResult.winPct >= 60 ? cs.green : simResult.winPct >= 40 ? cs.yellow : cs.red }}>
+                {simResult.winPct}%
+              </div>
+              <div style={{ fontSize: 11, color: cs.dim }}>{simResult.winRate} of {simResult.numSims} backtests beat SPY</div>
+            </div>
+
+            {/* Stats grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 8, marginBottom: 14 }}>
+              {[
+                { l: "SPY Final", v: fmt$(simResult.spyFinal), c: cs.blue },
+                { l: "Avg Final", v: fmt$(simResult.avgFinal), c: simResult.avgFinal > simResult.spyFinal ? cs.green : cs.red },
+                { l: "Avg Alpha", v: `${simResult.avgAlpha > 0 ? "+" : ""}${simResult.avgAlpha}%`, c: simResult.avgAlpha > 0 ? cs.green : cs.red },
+                { l: "Median Alpha", v: `${simResult.medianAlpha > 0 ? "+" : ""}${simResult.medianAlpha}%`, c: simResult.medianAlpha > 0 ? cs.green : cs.red },
+                { l: "SPY CAGR", v: `${simResult.spyCAGR}%`, c: cs.blue },
+                { l: "Avg CAGR", v: `${simResult.avgCAGR}%`, c: simResult.avgCAGR > simResult.spyCAGR ? cs.green : cs.red },
+              ].map(s => (
+                <div key={s.l} style={{ textAlign: "center", padding: "8px 4px", background: "rgba(255,255,255,.015)", borderRadius: 6 }}>
+                  <div style={{ fontSize: 7, color: cs.dim }}>{s.l}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: s.c }}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Distribution bar */}
+            <div style={{ padding: "10px 12px", background: "rgba(255,255,255,.015)", borderRadius: 6, marginBottom: 10 }}>
+              <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>Distribution of Final Portfolio Values</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: mono2, fontSize: 10 }}>
+                <span style={{ color: cs.red, minWidth: 60 }}>{fmt$(simResult.minFinal)}</span>
+                <div style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(255,255,255,.04)", position: "relative", overflow: "hidden" }}>
+                  {(() => {
+                    const range = simResult.maxFinal - simResult.minFinal || 1;
+                    const p10L = ((simResult.p10Final - simResult.minFinal) / range) * 100;
+                    const p90L = ((simResult.p90Final - simResult.minFinal) / range) * 100;
+                    const spyL = ((simResult.spyFinal - simResult.minFinal) / range) * 100;
+                    const medL = ((simResult.p50Final - simResult.minFinal) / range) * 100;
+                    return <><div style={{ position: "absolute", left: `${p10L}%`, right: `${100 - p90L}%`, top: 0, bottom: 0, background: "rgba(110,231,183,.2)", borderRadius: 4 }} /><div style={{ position: "absolute", left: `${spyL}%`, top: -2, width: 2, height: 12, background: cs.blue, borderRadius: 1 }} title={`SPY: ${fmt$(simResult.spyFinal)}`} /><div style={{ position: "absolute", left: `${medL}%`, top: -2, width: 2, height: 12, background: cs.green, borderRadius: 1 }} title={`Median: ${fmt$(simResult.p50Final)}`} /></>;
+                  })()}
+                </div>
+                <span style={{ color: cs.green, minWidth: 60, textAlign: "right" }}>{fmt$(simResult.maxFinal)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: cs.dim, marginTop: 4 }}>
+                <span>P10: {fmt$(simResult.p10Final)}</span>
+                <span><span style={{ color: cs.green }}>●</span> Median: {fmt$(simResult.p50Final)}</span>
+                <span><span style={{ color: cs.blue }}>●</span> SPY: {fmt$(simResult.spyFinal)}</span>
+                <span>P90: {fmt$(simResult.p90Final)}</span>
+              </div>
+            </div>
+
+            {/* Alpha histogram */}
+            <div style={{ padding: "10px 12px", background: "rgba(255,255,255,.015)", borderRadius: 6 }}>
+              <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>Alpha Distribution (CAGR vs SPY)</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 50 }}>
+                {(() => {
+                  const alphas = simResult.distribution.map(r => r.alpha);
+                  const mn = Math.min(...alphas), mx = Math.max(...alphas);
+                  const rng = mx - mn || 1;
+                  const bk = new Array(20).fill(0);
+                  alphas.forEach(a => { bk[Math.min(19, Math.floor(((a - mn) / rng) * 20))]++; });
+                  const mxB = Math.max(...bk) || 1;
+                  const zi = Math.min(19, Math.max(0, Math.floor(((0 - mn) / rng) * 20)));
+                  return bk.map((c, i) => <div key={i} style={{ flex: 1, height: `${(c / mxB) * 100}%`, minHeight: c > 0 ? 2 : 0, background: i >= zi ? "rgba(110,231,183,.4)" : "rgba(248,113,113,.4)", borderRadius: "2px 2px 0 0" }} />);
+                })()}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.dim, marginTop: 6 }}>
+                <span>P10: {simResult.p10Alpha > 0 ? "+" : ""}{simResult.p10Alpha}%</span>
+                <span style={{ color: simResult.avgAlpha > 0 ? cs.green : cs.red }}>Avg: {simResult.avgAlpha > 0 ? "+" : ""}{simResult.avgAlpha}%</span>
+                <span>P90: {simResult.p90Alpha > 0 ? "+" : ""}{simResult.p90Alpha}%</span>
+              </div>
+            </div>
+          </div>}
         </div>}
 
         <div style={{ marginTop: 24, padding: "12px 0", borderTop: "1px solid rgba(255,255,255,.03)", fontSize: 8, color: "#3d4250", textAlign: "center", lineHeight: 1.5 }}>
