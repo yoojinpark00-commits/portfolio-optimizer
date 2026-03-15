@@ -8,22 +8,27 @@
 // SETUP: npm install yahoo-finance2
 //        (Optional) TWELVEDATA_API_KEY for fallback
 
-import YahooFinance from "yahoo-finance2";
+let yahooFinance = null;
+try {
+  yahooFinance = require("yahoo-finance2").default || require("yahoo-finance2");
+} catch (e) {
+  console.warn("yahoo-finance2 not installed, will use Twelve Data only");
+}
 
-const yahooFinance = new YahooFinance();
-
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const { symbols, start, end, provider } = req.query;
-  if (!symbols) return res.status(400).json({ error: "Missing symbols parameter" });
+  if (!symbols) return res.status(400).json({ error: "Missing ?symbols= param" });
 
-  const tickers = symbols.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+  const tickers = symbols.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 100);
+  if (!tickers.length) return res.status(400).json({ error: "No valid symbols" });
+
   const startDate = start || "2015-01-01";
-  const endDate = end || "2025-12-31";
+  const endDate = end || new Date().toISOString().slice(0, 10);
   const forceTD = provider === "twelvedata";
   const forceYahoo = provider === "yahoo";
 
@@ -31,18 +36,20 @@ export default async function handler(req, res) {
   const errors = [];
 
   // ── Try Yahoo Finance first (unless forced to Twelve Data) ──
-  if (!forceTD) {
+  if (!forceTD && yahooFinance) {
     let yahooSuccess = 0;
     for (const sym of tickers) {
       try {
-        const result = await yahooFinance.chart(sym, {
+        // Use historical() — the most stable method across yahoo-finance2 versions
+        const result = await yahooFinance.historical(sym, {
           period1: startDate,
           period2: endDate,
           interval: "1mo",
         });
 
-        if (result?.quotes?.length > 0) {
-          data[sym] = result.quotes
+        // historical() returns array of { date, open, high, low, close, volume, adjClose }
+        if (result && result.length > 0) {
+          data[sym] = result
             .filter((q) => q.close != null && q.date != null)
             .map((q) => ({
               date: q.date instanceof Date ? q.date.toISOString().slice(0, 10) : String(q.date).slice(0, 10),
@@ -89,47 +96,53 @@ export default async function handler(req, res) {
     }
     return res.status(500).json({
       error: "Yahoo Finance unavailable and TWELVEDATA_API_KEY not set",
-      errors,
+      hint: "Run: npm install yahoo-finance2 — or add TWELVEDATA_API_KEY in Vercel env vars",
     });
   }
 
-  // Only fetch from Twelve Data for symbols Yahoo missed
-  const missingSymbols = tickers.filter((s) => !data[s]);
+  try {
+    // Twelve Data: fetch all symbols in one call
+    const url =
+      "https://api.twelvedata.com/time_series?symbol=" +
+      tickers.join(",") +
+      "&interval=1month&start_date=" + startDate +
+      "&end_date=" + endDate +
+      "&apikey=" + apiKey;
 
-  for (const sym of missingSymbols) {
-    try {
-      const url = `https://api.twelvedata.com/time_series?symbol=${sym}&interval=1month&start_date=${startDate}&end_date=${endDate}&apikey=${apiKey}&format=JSON&order=ASC`;
-      const resp = await fetch(url);
-      const json = await resp.json();
-
-      if (json.status === "error") {
-        errors.push({ symbol: sym, message: json.message || "Unknown error", provider: "twelvedata" });
-        continue;
-      }
-
-      if (json.values && Array.isArray(json.values)) {
-        data[sym] = json.values.map((v) => ({
-          date: v.datetime,
-          close: parseFloat(v.close),
-        }));
-      } else {
-        errors.push({ symbol: sym, message: "No data returned", provider: "twelvedata" });
-      }
-
-      // Rate limit delay for Twelve Data
-      if (missingSymbols.indexOf(sym) < missingSymbols.length - 1) {
-        await new Promise((r) => setTimeout(r, 250));
-      }
-    } catch (err) {
-      errors.push({ symbol: sym, message: err.message, provider: "twelvedata" });
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      return res.status(resp.status).json({ error: "Twelve Data API error", status: resp.status });
     }
-  }
+    const tdData = await resp.json();
 
-  return res.status(200).json({
-    data,
-    errors: errors.filter((e) => !data[e.symbol]),
-    provider: missingSymbols.length > 0 ? "yahoo+twelvedata" : "yahoo",
-    fetched: Object.keys(data).length,
-    requested: tickers.length,
-  });
-}
+    const parseSeries = (series) => {
+      if (!series?.values || !Array.isArray(series.values)) return null;
+      return series.values
+        .filter((v) => v.close)
+        .map((v) => ({ date: v.datetime, close: parseFloat(v.close) }))
+        .reverse(); // Twelve Data returns newest first
+    };
+
+    if (tickers.length === 1) {
+      const parsed = parseSeries(tdData);
+      if (parsed) data[tickers[0]] = parsed;
+      else errors.push({ symbol: tickers[0], message: "No Twelve Data data" });
+    } else {
+      for (const sym of tickers) {
+        const parsed = parseSeries(tdData[sym]);
+        if (parsed) data[sym] = parsed;
+        else errors.push({ symbol: sym, message: "No Twelve Data data" });
+      }
+    }
+
+    return res.status(200).json({
+      data,
+      errors: errors.filter((e) => !data[e.symbol]),
+      provider: "twelvedata",
+      fetched: Object.keys(data).length,
+      requested: tickers.length,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Both providers failed", detail: err.message });
+  }
+};
