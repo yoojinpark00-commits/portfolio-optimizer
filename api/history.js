@@ -24,8 +24,8 @@ export default async function handler(req, res) {
   const errors = [];
   let yahooSuccess = 0;
 
-  // ── Fetch from Yahoo Finance chart endpoint — one symbol at a time ──
-  for (const sym of tickers) {
+  // ── Fetch from Yahoo Finance chart endpoint — ALL symbols in parallel ──
+  await Promise.all(tickers.map(async (sym) => {
     try {
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1mo&period1=${period1}&period2=${period2}`;
       const resp = await fetch(url, {
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
 
       if (!resp.ok) {
         errors.push({ symbol: sym, message: `Yahoo returned ${resp.status}`, provider: "yahoo" });
-        continue;
+        return;
       }
 
       const json = await resp.json();
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
 
       if (!result || !result.timestamp || !result.indicators?.quote?.[0]?.close) {
         errors.push({ symbol: sym, message: "No data in Yahoo response", provider: "yahoo" });
-        continue;
+        return;
       }
 
       const timestamps = result.timestamp;
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
     } catch (err) {
       errors.push({ symbol: sym, message: err.message, provider: "yahoo" });
     }
-  }
+  }));
 
   if (yahooSuccess > 0) {
     return res.status(200).json({
