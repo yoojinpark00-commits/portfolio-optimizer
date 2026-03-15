@@ -876,6 +876,7 @@ export default function App() {
     const bal60Curve = [{ date: "2016-01", value: startCash }];
     let optValue = startCash, spyValue = startCash, bal60Value = startCash;
     let optAlloc = {};
+    let costBasisMap = {}; // ticker → total dollar cost basis (actual purchase cost)
     let totalTaxPaid = 0, totalRebalances = 0;
     let totalTaxSaved = 0; // tax saved via loss offsets
     let lossCarryover = 0; // unused losses carried forward to future periods
@@ -982,45 +983,65 @@ export default function App() {
       const allTkrs = [...new Set([...prevTickers, ...Object.keys(newAlloc)])];
       const trades = allTkrs.map(ticker => { const ow = prevAlloc[ticker] || 0, nw = newAlloc[ticker] || 0, ch = nw - ow; if (Math.abs(ch) < 0.005) return null; const rc = result.find(r => r.ticker === ticker); return { ticker, name: rc?.name || candidates.find(c => c.t === ticker)?.n || ticker, cat: rc?.cat || candidates.find(c => c.t === ticker)?.c || "", oldWt: +(ow * 100).toFixed(1), newWt: +(nw * 100).toFixed(1), change: +(ch * 100).toFixed(1), action: ch > 0.005 ? "BUY" : "SELL", dollars: Math.abs(ch) * optValue }; }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
 
-      // Compute realized gains AND losses separately
+      // Compute realized gains AND losses using ACTUAL cost basis
       let grossGains = 0, grossLosses = 0;
+      const prevAlloc2 = { ...optAlloc }; // snapshot before changes
       for (const sell of trades.filter(t => t.action === "SELL")) {
-        const tr = trailingStats[sell.ticker]?.r / 100 || 0;
-        const costBasis = tr > -0.99 ? sell.dollars / (1 + tr) : sell.dollars;
-        const gl = sell.dollars - costBasis;
+        const ticker = sell.ticker;
+        const oldWt = prevAlloc2[ticker] || 0;
+        if (oldWt <= 0) continue;
+        const sellWt = Math.abs(sell.change / 100); // weight being sold
+        const proportionSold = Math.min(1, sellWt / oldWt); // fraction of position being liquidated
+        const sellProceeds = sellWt * optValue; // current market value of sold portion
+        const positionCostBasis = costBasisMap[ticker] || 0;
+        const soldCostBasis = positionCostBasis * proportionSold; // cost basis of sold portion
+        const gl = sellProceeds - soldCostBasis;
         if (gl > 0) grossGains += gl;
-        else grossLosses += Math.abs(gl); // track as positive number
+        else grossLosses += Math.abs(gl);
       }
 
       // Net gains/losses: losses offset gains dollar-for-dollar
-      // Plus apply any carried-over losses from prior periods
       const availableLosses = grossLosses + lossCarryover;
       const netGains = Math.max(0, grossGains - availableLosses);
       const excessLosses = Math.max(0, availableLosses - grossGains);
-
-      // Up to $3,000/year of excess losses can offset ordinary income
-      // (simplified: we count this as a tax benefit at the ST rate)
-      const mYearForCap = parseInt(monthKey.slice(0, 4));
       const ordinaryIncomeOffset = Math.min(excessLosses, 3000);
       const ordinaryTaxSaved = ordinaryIncomeOffset * (btTaxRates.st / 100);
-
-      // Remaining excess losses carry forward
       const newCarryover = excessLosses - ordinaryIncomeOffset;
 
       const appRate = monthsSinceRebal >= 12 ? btTaxRates.lt : btTaxRates.st;
-      const grossTax = grossGains * (appRate / 100); // what tax WOULD be without offsets
-      const netTax = netGains * (appRate / 100); // actual tax after loss offset
+      const grossTax = grossGains * (appRate / 100);
+      const netTax = netGains * (appRate / 100);
       const taxSaved = grossTax - netTax + ordinaryTaxSaved;
-      const estTC = netTax; // actual tax owed
+      const estTC = netTax;
       const tcPct = optValue > 0 ? (estTC / optValue) * 100 : 0;
 
-      // Step 7: Decision (uses net tax cost, which is lower thanks to loss offsets)
+      // Step 7: Decision
       const retImp = propExpRet - currExpRet; const curAlpha = currExpRet - spyExpRet;
       let hurdle; if (isFirstAllocation) hurdle = -999; else if (btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8) hurdle = tcPct * 1.0; else if (curAlpha > 3) hurdle = tcPct * 2.5; else if (curAlpha < -2) hurdle = tcPct * 1.2; else hurdle = tcPct * 1.5;
 
       if (isFirstAllocation || retImp > hurdle) {
+        // ── Update cost basis map ──
+        const newCostBasis = {};
+        for (const [ticker, newWt] of Object.entries(newAlloc)) {
+          if (newWt <= 0.005) continue;
+          const oldWt = prevAlloc2[ticker] || 0;
+          if (oldWt <= 0.005) {
+            // New position: cost basis = current market value (buying at today's price)
+            newCostBasis[ticker] = newWt * optValue;
+          } else if (newWt <= oldWt) {
+            // Reduced/kept position: remaining cost basis = original × proportion kept
+            const proportionKept = newWt / oldWt;
+            newCostBasis[ticker] = (costBasisMap[ticker] || 0) * proportionKept;
+          } else {
+            // Increased position: old cost basis + new dollars added at current price
+            const addedWt = newWt - oldWt;
+            newCostBasis[ticker] = (costBasisMap[ticker] || 0) + addedWt * optValue;
+          }
+        }
+
         optAlloc = newAlloc; optValue -= estTC; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
-        lossCarryover = newCarryover; // update carryover
+        costBasisMap = newCostBasis;
+        lossCarryover = newCarryover;
         rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({ ticker: r.ticker, name: r.name, cat: r.cat, weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1), dollars: Math.round((newAlloc[r.ticker] || 0) * optValue) })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
           taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
           grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
@@ -1222,6 +1243,10 @@ export default function App() {
       let optValue = startCash;
       let optAlloc = {};
       let lastRebalMonth = null;
+      let simTaxPaid = 0;
+      let simLossCarry = 0;
+      let simCostBasis = {}; // ticker → actual dollar cost basis
+      const simTaxRates = getTaxRates(taxState);
 
       for (let mi = 0; mi < simDates.length; mi++) {
         const monthKey = simDates[mi];
@@ -1272,23 +1297,70 @@ export default function App() {
         const totalDep = result.reduce((s, r) => s + r.dollars, 0) || optValue;
         result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDep; });
 
-        // Simple rebalance decision (no tax computation for speed)
+        // ── Tax-aware rebalance decision (matches main backtest logic) ──
         const spyExp = trailingStats["SPY"]?.r || 10;
         let currExp = 0; for (const [sym, wt] of Object.entries(optAlloc)) currExp += wt * (trailingStats[sym]?.r || spyExp);
         let propExp = 0; for (const [sym, wt] of Object.entries(newAlloc)) if (trailingStats[sym]) propExp += wt * trailingStats[sym].r;
 
-        if (isFirst || propExp - currExp > 2) { // simple threshold
+        // Compute tax cost using ACTUAL cost basis
+        let grossGains = 0, grossLosses = 0;
+        for (const ticker of prevTickers) {
+          const oldWt = optAlloc[ticker] || 0;
+          const newWt = newAlloc[ticker] || 0;
+          if (newWt < oldWt - 0.005) { // selling
+            const sellWt = oldWt - newWt;
+            const sellProceeds = sellWt * optValue;
+            const proportionSold = Math.min(1, sellWt / oldWt);
+            const soldCostBasis = (simCostBasis[ticker] || 0) * proportionSold;
+            const gl = sellProceeds - soldCostBasis;
+            if (gl > 0) grossGains += gl; else grossLosses += Math.abs(gl);
+          }
+        }
+
+        const availLoss = grossLosses + simLossCarry;
+        const netGains = Math.max(0, grossGains - availLoss);
+        const excessLoss = Math.max(0, availLoss - grossGains);
+        const ordOffset = Math.min(excessLoss, 3000);
+
+        const taxRate = mSinceRebal >= 12 ? simTaxRates.lt : simTaxRates.st;
+        const estTax = netGains * (taxRate / 100);
+        const tcPct = optValue > 0 ? (estTax / optValue) * 100 : 0;
+
+        // Hurdle: same logic as main backtest
+        const retImp = propExp - currExp;
+        const curAlpha = currExp - spyExp;
+        let hurdle;
+        if (isFirst) hurdle = -999;
+        else if (curAlpha > 3) hurdle = tcPct * 2.5;
+        else if (curAlpha < -2) hurdle = tcPct * 1.2;
+        else hurdle = tcPct * 1.5;
+
+        if (isFirst || retImp > hurdle) {
+          // Update cost basis map
+          const newCB = {};
+          for (const [ticker, newWt] of Object.entries(newAlloc)) {
+            if (newWt <= 0.005) continue;
+            const oldWt = optAlloc[ticker] || 0;
+            if (oldWt <= 0.005) newCB[ticker] = newWt * optValue;
+            else if (newWt <= oldWt) newCB[ticker] = (simCostBasis[ticker] || 0) * (newWt / oldWt);
+            else newCB[ticker] = (simCostBasis[ticker] || 0) + (newWt - oldWt) * optValue;
+          }
           optAlloc = newAlloc;
+          optValue -= estTax;
+          simTaxPaid += estTax;
+          simCostBasis = newCB;
+          simLossCarry = excessLoss - ordOffset;
           lastRebalMonth = monthKey;
         }
       }
 
-      const optCAGR = (Math.pow(optValue / startCash, 1 / Math.max(1, simDates.length / 12)) - 1) * 100;
+      const optCAGR = (Math.pow(Math.max(0, optValue) / startCash, 1 / Math.max(1, simDates.length / 12)) - 1) * 100;
       results.push({
         finalValue: optValue,
         cagr: optCAGR,
         beatsSPY: optValue > spyFinal,
         alpha: optCAGR - spyCAGR,
+        taxPaid: simTaxPaid,
       });
     }
 
@@ -1297,6 +1369,7 @@ export default function App() {
     const alphas = results.map(r => r.alpha).sort((a, b) => a - b);
     const cagrs = results.map(r => r.cagr).sort((a, b) => a - b);
     const finals = results.map(r => r.finalValue).sort((a, b) => a - b);
+    const taxes = results.map(r => r.taxPaid || 0);
     const avg = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
     const pctl = (arr, p) => arr[Math.floor(arr.length * p / 100)] || 0;
 
@@ -1318,6 +1391,7 @@ export default function App() {
       minFinal: Math.round(finals[0]),
       maxFinal: Math.round(finals[finals.length - 1]),
       distribution: results, // for histogram
+      avgTaxPaid: Math.round(avg(taxes)),
     });
     setSimProgress(""); setSimRunning(false);
   }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks]);
@@ -2758,6 +2832,7 @@ useEffect(() => {
                 { l: "Median Alpha", v: `${simResult.medianAlpha > 0 ? "+" : ""}${simResult.medianAlpha}%`, c: simResult.medianAlpha > 0 ? cs.green : cs.red },
                 { l: "SPY CAGR", v: `${simResult.spyCAGR}%`, c: cs.blue },
                 { l: "Avg CAGR", v: `${simResult.avgCAGR}%`, c: simResult.avgCAGR > simResult.spyCAGR ? cs.green : cs.red },
+                { l: "Avg Tax Drag", v: fmt$(simResult.avgTaxPaid), c: cs.red },
               ].map(s => (
                 <div key={s.l} style={{ textAlign: "center", padding: "8px 4px", background: "rgba(255,255,255,.015)", borderRadius: 6 }}>
                   <div style={{ fontSize: 7, color: cs.dim }}>{s.l}</div>
