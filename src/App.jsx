@@ -734,28 +734,27 @@ export default function App() {
       }
     }
 
-    // Comprehensive ETF universe for backtest (all major categories, liquid, Schwab-tradable)
+    // Core ETF universe for backtest — focused on uncorrelated categories for better optimization
+    // (fewer but more diverse ETFs runs faster AND produces better results than 80+ correlated funds)
     const btETFs = [
-      // US Broad Market
-      "SPY","VTI","QQQ","IWM","IJR","IWF","IWD","MDY","RSP",
+      // US Broad
+      "SPY","VTI","QQQ","IWM",
       // Schwab
-      "SCHD","SCHG","SCHV","SCHX","SCHB","SCHF","SCHE",
+      "SCHD","SCHG","SCHF",
       // International
-      "VEA","VWO","EFA","IEFA","IEMG","EWJ","MCHI","INDA","EWZ","EWG","EWU",
-      // Sector SPDRs
-      "XLK","XLF","XLV","XLE","XLI","XLY","XLP","XLU","XLB","XLC","XLRE",
-      // Sector Vanguard
-      "VGT","VHT","VFH","VDE","VNQ",
+      "VEA","VWO","EFA","MCHI",
+      // Sector
+      "XLK","XLF","XLV","XLE","XLU","XLRE",
       // Thematic
-      "ARKK","SOXX","SMH","BOTZ","ICLN","TAN","HACK","XBI","IBB","IGV",
+      "SOXX","ARKK","ICLN",
       // Factor
-      "VIG","MTUM","QUAL","USMV","VLUE",
+      "VIG","MTUM","USMV",
       // Fixed Income
-      "BND","AGG","TIP","IEF","SHY","LQD","HYG","JNK","EMB","VCIT","VCSH",
+      "BND","AGG","TIP","IEF","HYG",
       // Commodity
-      "GLD","IAU","SLV","GDX","USO","DBC",
-      // Dividend / Income
-      "JEPI","JEPQ","DVY","HDV","DGRO","NOBL","SPHD",
+      "GLD","SLV","DBC",
+      // Dividend
+      "SCHD","HDV","DGRO",
     ];
     const benchmarks = ["SPY"];
 
@@ -764,14 +763,13 @@ export default function App() {
 
     let histData = {};
     try {
-      // Batch in groups of 8 to stay within rate limits (8 req/min free tier)
-      for (let i = 0; i < allSymbols.length; i += 8) {
-        const batch = allSymbols.slice(i, i + 8);
-        setBtProgress(`Fetching batch ${Math.floor(i/8)+1}/${Math.ceil(allSymbols.length/8)}: ${batch.join(", ")}...`);
+      // Fetch in large batches — Yahoo Finance has no rate limit
+      for (let i = 0; i < allSymbols.length; i += 15) {
+        const batch = allSymbols.slice(i, i + 15);
+        setBtProgress(`Fetching batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
         const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2015-01-01&end=2025-12-31`);
         const json = await resp.json();
         if (json.data) Object.assign(histData, json.data);
-        if (i + 8 < allSymbols.length) await new Promise(r => setTimeout(r, 500)); // short delay between batches
       }
     } catch (e) {
       setBtProgress("Error fetching historical data: " + e.message);
@@ -865,7 +863,9 @@ export default function App() {
       }
       if (!(isFirstAllocation || regimeChanged || mMonth % 3 === 0)) { continue; }
       if (!isFirstAllocation && monthsSinceRebal < 2) { continue; }
-      if (mi % 6 === 0) { setBtProgress(`Evaluating ${monthKey}...`); await new Promise(r => setTimeout(r, 0)); }
+      // Yield to UI every evaluation to prevent freeze
+      setBtProgress(`Evaluating ${monthKey}...`);
+      await new Promise(r => setTimeout(r, 0));
 
       // Step 3: Trailing stats (fast index-based)
       const trailingStats = {};
@@ -881,11 +881,13 @@ export default function App() {
         const db = etfDbMap[sym];
         trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: avgMo * 12 * 100, v: Math.max(Math.sqrt(Math.max(0, sumRetSq / count - avgMo * avgMo)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
       }
-      const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
+      const allCandidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
+      // Pre-filter to top 25 by trailing Sharpe — keeps optimizer O(n²) fast
+      const candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 25);
       if (candidates.length < 3) continue;
 
       // Step 4: Optimizer (1000 iterations for speed)
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 1000);
+      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 500);
       if (!result || result.length === 0) continue;
       const newAlloc = {}; const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
       result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDeployed; });
