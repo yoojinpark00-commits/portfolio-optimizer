@@ -1061,6 +1061,8 @@ export default function App() {
     let optValue = startCash, spyValue = startCash, bal60Value = startCash;
     let optAlloc = {};
     let costBasisMap = {}; // ticker → total dollar cost basis (actual purchase cost)
+    let sharesMap = {}; // ticker → shares held
+    let costPerShareMap = {}; // ticker → average cost per share
     let totalTaxPaid = 0, totalRebalances = 0;
     let totalTaxSaved = 0; // tax saved via loss offsets
     let lossCarryover = 0; // unused losses carried forward to future periods
@@ -1174,7 +1176,36 @@ export default function App() {
 
       // Step 6: Tax cost with loss offset
       const allTkrs = [...new Set([...prevTickers, ...Object.keys(newAlloc)])];
-      const trades = allTkrs.map(ticker => { const ow = prevAlloc[ticker] || 0, nw = newAlloc[ticker] || 0, ch = nw - ow; if (Math.abs(ch) < 0.005) return null; const rc = result.find(r => r.ticker === ticker); return { ticker, name: rc?.name || candidates.find(c => c.t === ticker)?.n || ticker, cat: rc?.cat || candidates.find(c => c.t === ticker)?.c || "", oldWt: +(ow * 100).toFixed(1), newWt: +(nw * 100).toFixed(1), change: +(ch * 100).toFixed(1), action: ch > 0.005 ? "BUY" : "SELL", dollars: Math.abs(ch) * optValue }; }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+      const monthPrices = returnsByDateSym[monthKey] || {};
+      const trades = allTkrs.map(ticker => {
+        const ow = prevAlloc[ticker] || 0, nw = newAlloc[ticker] || 0, ch = nw - ow;
+        if (Math.abs(ch) < 0.005) return null;
+        const rc = result.find(r => r.ticker === ticker);
+        const closePrice = monthPrices[ticker]?.close || 0;
+        const action = ch > 0.005 ? "BUY" : "SELL";
+        const tradeDollars = Math.abs(ch) * optValue;
+        const tradeShares = closePrice > 0 ? +(tradeDollars / closePrice).toFixed(2) : 0;
+
+        // Per-trade cost basis and G/L (for sells)
+        let costPerShare = 0, tradeGL = 0;
+        if (action === "SELL" && ow > 0) {
+          costPerShare = costPerShareMap[ticker] || 0;
+          if (costPerShare > 0 && closePrice > 0) {
+            tradeGL = +((closePrice - costPerShare) * tradeShares).toFixed(0);
+          }
+        }
+
+        return {
+          ticker, name: rc?.name || candidates.find(c => c.t === ticker)?.n || ticker,
+          cat: rc?.cat || candidates.find(c => c.t === ticker)?.c || "",
+          oldWt: +(ow * 100).toFixed(1), newWt: +(nw * 100).toFixed(1), change: +(ch * 100).toFixed(1),
+          action, dollars: tradeDollars,
+          price: closePrice > 0 ? +closePrice.toFixed(2) : null,
+          shares: tradeShares,
+          costPerShare: action === "SELL" && costPerShare > 0 ? +costPerShare.toFixed(2) : null,
+          gl: action === "SELL" ? tradeGL : null,
+        };
+      }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
 
       // Compute realized gains AND losses using ACTUAL cost basis
       let grossGains = 0, grossLosses = 0;
@@ -1213,27 +1244,40 @@ export default function App() {
       let hurdle; if (isFirstAllocation) hurdle = -999; else if (btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8) hurdle = tcPct * 1.0; else if (curAlpha > 3) hurdle = tcPct * 2.5; else if (curAlpha < -2) hurdle = tcPct * 1.2; else hurdle = tcPct * 1.5;
 
       if (isFirstAllocation || retImp > hurdle) {
-        // ── Update cost basis map ──
-        const newCostBasis = {};
+        // ── Update cost basis, shares, and cost-per-share maps ──
+        const newCostBasis = {}, newShares = {}, newCostPerShare = {};
+        const monthPrices2 = returnsByDateSym[monthKey] || {};
         for (const [ticker, newWt] of Object.entries(newAlloc)) {
           if (newWt <= 0.005) continue;
+          const closePrice = monthPrices2[ticker]?.close || 0;
           const oldWt = prevAlloc2[ticker] || 0;
           if (oldWt <= 0.005) {
-            // New position: cost basis = current market value (buying at today's price)
-            newCostBasis[ticker] = newWt * optValue;
+            // New position: buying at current close price
+            const dollars = newWt * optValue;
+            newCostBasis[ticker] = dollars;
+            newShares[ticker] = closePrice > 0 ? dollars / closePrice : 0;
+            newCostPerShare[ticker] = closePrice;
           } else if (newWt <= oldWt) {
-            // Reduced/kept position: remaining cost basis = original × proportion kept
+            // Reduced/kept position: proportional
             const proportionKept = newWt / oldWt;
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) * proportionKept;
+            newShares[ticker] = (sharesMap[ticker] || 0) * proportionKept;
+            newCostPerShare[ticker] = costPerShareMap[ticker] || closePrice; // avg cost unchanged
           } else {
-            // Increased position: old cost basis + new dollars added at current price
+            // Increased position: old basis + new at current price
             const addedWt = newWt - oldWt;
-            newCostBasis[ticker] = (costBasisMap[ticker] || 0) + addedWt * optValue;
+            const addedDollars = addedWt * optValue;
+            const addedShares = closePrice > 0 ? addedDollars / closePrice : 0;
+            const oldShares = sharesMap[ticker] || 0;
+            const totalShares = oldShares + addedShares;
+            newCostBasis[ticker] = (costBasisMap[ticker] || 0) + addedDollars;
+            newShares[ticker] = totalShares;
+            newCostPerShare[ticker] = totalShares > 0 ? newCostBasis[ticker] / totalShares : closePrice;
           }
         }
 
         optAlloc = newAlloc; optValue -= estTC; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
-        costBasisMap = newCostBasis;
+        costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare;
         lossCarryover = newCarryover;
         rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({ ticker: r.ticker, name: r.name, cat: r.cat, weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1), dollars: Math.round((newAlloc[r.ticker] || 0) * optValue) })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
           taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
@@ -2945,11 +2989,16 @@ useEffect(() => {
                                           {(evt.lossCarryover || 0) > 0 && <span style={{ color: cs.blue }}>Carry: {fmt$(evt.lossCarryover)}</span>}
                                         </div>
                                         {evt.trades?.map((t2, i) => (
-                                          <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 4px", fontSize: 9 }}>
+                                          <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 4px", fontSize: 9, borderBottom: i < evt.trades.length - 1 ? "1px solid rgba(255,255,255,.03)" : "none" }}>
                                             <Badge color={t2.action === "BUY" ? cs.green : cs.red}>{t2.action}</Badge>
                                             <span style={{ fontFamily: mono2, fontWeight: 600, color: t2.action === "BUY" ? cs.green : cs.red, minWidth: 36 }}>{t2.ticker}</span>
-                                            <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t2.name}</span>
-                                            <span style={{ fontFamily: mono2, fontSize: 9, fontWeight: 600, color: t2.change > 0 ? cs.green : cs.red, minWidth: 40, textAlign: "right" }}>{t2.change > 0 ? "+" : ""}{t2.change}%</span>
+                                            <span style={{ fontSize: 8, color: cs.dim, minWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t2.name}</span>
+                                            {t2.shares > 0 && <span style={{ fontFamily: mono2, fontSize: 8, color: cs.text, minWidth: 40, textAlign: "right" }}>{t2.shares.toLocaleString(undefined,{maximumFractionDigits:1})} sh</span>}
+                                            {t2.price && <span style={{ fontFamily: mono2, fontSize: 8, color: cs.dim, minWidth: 44, textAlign: "right" }}>@ ${t2.price.toLocaleString(undefined,{maximumFractionDigits:2})}</span>}
+                                            {t2.action === "SELL" && t2.costPerShare != null && <span style={{ fontFamily: mono2, fontSize: 8, color: cs.dim, minWidth: 50, textAlign: "right" }}>cost ${t2.costPerShare.toLocaleString(undefined,{maximumFractionDigits:2})}</span>}
+                                            <span style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: t2.change > 0 ? cs.green : cs.red, minWidth: 34, textAlign: "right" }}>{t2.change > 0 ? "+" : ""}{t2.change}%</span>
+                                            {t2.action === "SELL" && t2.gl != null && <span style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: t2.gl >= 0 ? cs.green : cs.red, minWidth: 50, textAlign: "right" }}>{t2.gl >= 0 ? "+" : ""}{fmt$(t2.gl)}</span>}
+                                            {t2.action === "BUY" && <span style={{ fontFamily: mono2, fontSize: 8, color: cs.dim, minWidth: 50, textAlign: "right" }}>{fmt$(Math.round(t2.dollars))}</span>}
                                           </div>
                                         ))}
                                       </div>
