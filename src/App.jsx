@@ -159,6 +159,38 @@ const ETF_DB = [
   {t:"SSO",n:"ProShares 2x S&P 500",c:"US Large Cap",h:503,er:.89,r:18.0,v:30.0,d:0,lev:2},
 ];
 
+// ── Individual Stocks for optimization (major liquid names, all existed 2015-2025) ──
+// Category mapping uses same system as ETFs for correlation matrix compatibility
+// r/v are approximate annualized figures — backtest uses actual trailing data, these are defaults only
+const STOCK_DB = [
+  // Mega-cap Tech
+  {t:"AAPL",n:"Apple",c:"Sector Tech",r:28,v:28,er:0,d:0.5,h:1,type:"stock"},
+  {t:"MSFT",n:"Microsoft",c:"Sector Tech",r:30,v:27,er:0,d:0.7,h:1,type:"stock"},
+  {t:"GOOGL",n:"Alphabet",c:"Sector Comms",r:22,v:30,er:0,d:0,h:1,type:"stock"},
+  {t:"AMZN",n:"Amazon",c:"Sector Consumer",r:25,v:32,er:0,d:0,h:1,type:"stock"},
+  {t:"NVDA",n:"NVIDIA",c:"Sector Tech",r:55,v:50,er:0,d:0.02,h:1,type:"stock"},
+  {t:"META",n:"Meta Platforms",c:"Sector Comms",r:20,v:40,er:0,d:0.4,h:1,type:"stock"},
+  {t:"TSLA",n:"Tesla",c:"Sector Consumer",r:40,v:60,er:0,d:0,h:1,type:"stock"},
+  // Financials
+  {t:"JPM",n:"JPMorgan Chase",c:"Sector Finance",r:18,v:25,er:0,d:2.3,h:1,type:"stock"},
+  {t:"V",n:"Visa",c:"Sector Finance",r:20,v:22,er:0,d:0.8,h:1,type:"stock"},
+  {t:"BRK-B",n:"Berkshire Hathaway B",c:"Sector Finance",r:16,v:20,er:0,d:0,h:1,type:"stock"},
+  // Healthcare
+  {t:"UNH",n:"UnitedHealth",c:"Sector Health",r:22,v:22,er:0,d:1.3,h:1,type:"stock"},
+  {t:"JNJ",n:"Johnson & Johnson",c:"Sector Health",r:8,v:16,er:0,d:2.8,h:1,type:"stock"},
+  {t:"LLY",n:"Eli Lilly",c:"Sector Health",r:35,v:28,er:0,d:0.7,h:1,type:"stock"},
+  // Energy
+  {t:"XOM",n:"Exxon Mobil",c:"Sector Energy",r:12,v:25,er:0,d:3.2,h:1,type:"stock"},
+  {t:"CVX",n:"Chevron",c:"Sector Energy",r:10,v:24,er:0,d:3.5,h:1,type:"stock"},
+  // Consumer
+  {t:"WMT",n:"Walmart",c:"Sector Consumer",r:14,v:18,er:0,d:1.4,h:1,type:"stock"},
+  {t:"COST",n:"Costco",c:"Sector Consumer",r:22,v:22,er:0,d:0.6,h:1,type:"stock"},
+  {t:"HD",n:"Home Depot",c:"Sector Consumer",r:18,v:24,er:0,d:2.3,h:1,type:"stock"},
+  // Industrial / Defensive
+  {t:"CAT",n:"Caterpillar",c:"Sector Indust",r:18,v:28,er:0,d:1.5,h:1,type:"stock"},
+  {t:"PG",n:"Procter & Gamble",c:"Sector Consumer",r:10,v:16,er:0,d:2.4,h:1,type:"stock"},
+];
+
 const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
 function gc(a,b){if(a===b)return 1;return CORR[a]?.[b]??CORR[b]?.[a]??.5}
 
@@ -472,7 +504,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const lev = e.lev && Math.abs(e.lev) > 1 ? e.lev : null;
     const decay = lev ? getLevDecay(e.v, lev) : null;
     const ar = adjRet[i];
-    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null, lev, decay: decay != null ? +decay.toFixed(1) : null, adjR: lev ? +ar.toFixed(1) : null };
+    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null, lev, decay: decay != null ? +decay.toFixed(1) : null, adjR: lev ? +ar.toFixed(1) : null, isStock: e.type === "stock" };
   }).filter(e => e.dollars >= minAlloc).sort((a, b) => b.dollars - a.dollars);
   // Ensure total deployment is at least 90% of cash
   const deployed = raw.reduce((s, r) => s + r.dollars, 0);
@@ -689,6 +721,7 @@ export default function App() {
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
   const [useRegime, setUseRegime] = useState(true); // Regime-adaptive toggle
   const [taxState, setTaxState] = useState("None"); // State for tax calc
+  const [includeStocks, setIncludeStocks] = useState(false); // ETF+Stocks toggle
   const [optResult, setOptResult] = useState(null);
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
@@ -787,8 +820,9 @@ export default function App() {
       "SCHD","HDV","DGRO",
     ];
     const benchmarks = ["SPY"];
+    const btStocks = includeStocks ? STOCK_DB.map(s => s.t) : [];
 
-    const allSymbols = [...new Set([...btETFs, ...benchmarks])];
+    const allSymbols = [...new Set([...btETFs, ...benchmarks, ...btStocks])];
     setBtProgress(`Fetching ${allSymbols.length} ETFs (2015-2025)...`);
 
     let histData = {};
@@ -848,7 +882,7 @@ export default function App() {
     let lastBestWeights = null; // for warm-starting optimizer
     const btTaxRates = getTaxRates(taxState);
     const rebalanceEvents = [];
-    const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; });
+    const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_DB.forEach(s => { etfDbMap[s.t] = s; });
     // Only simulate months where SPY data actually exists
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
     const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12" && spyDates.has(d));
@@ -1116,7 +1150,7 @@ export default function App() {
       },
     });
     setBtProgress(""); setBtRunning(false);
-  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, btStartCash]);
+  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -1139,6 +1173,7 @@ useEffect(() => {
     if (typeof saved.useKelly === "boolean") setUseKelly(saved.useKelly);
     if (typeof saved.useRegime === "boolean") setUseRegime(saved.useRegime);
     if (typeof saved.taxState === "string") setTaxState(saved.taxState);
+    if (typeof saved.includeStocks === "boolean") setIncludeStocks(saved.includeStocks);
 
     if (typeof saved.sc === "string") setSc(saved.sc);
     if (typeof saved.so === "boolean") setSo(saved.so);
@@ -1163,12 +1198,13 @@ useEffect(() => {
       useKelly,
       useRegime,
       taxState,
+      includeStocks,
       sc,
       so,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, useRegime, taxState, sc, so]);
+  }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, useRegime, taxState, includeStocks, sc, so]);
 
   // ─── Computed ───
   const etfV = useMemo(() => etfs.map(e => {
@@ -1207,7 +1243,7 @@ useEffect(() => {
   }), [sq, sc]);
 
   const frontier = useMemo(() => {
-    try { if (cashBalance <= 0) return null; return genFrontier(allPos, cashBalance, holdingsVal, ETF_DB.slice(0, 30)); } catch (e) { return null }
+    try { if (cashBalance <= 0) return null; const fCands = includeStocks ? [...ETF_DB, ...STOCK_DB].slice(0, 40) : ETF_DB.slice(0, 30); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
   }, [allPos, cashBalance, holdingsVal]);
 
   // ─── Ticker search ───
@@ -1287,10 +1323,17 @@ useEffect(() => {
     const alreadyAdded = accepted.has(rec.ticker);
     if (alreadyAdded) {
       // DESELECT: remove from holdings, refund cash
-      const existing = etfs.find(e => e.ticker === rec.ticker);
-      const refund = existing ? existing.mktValue || 0 : rec.dollars;
-      setEtfs(p => p.filter(e => e.ticker !== rec.ticker));
-      setCashBalance(prev => prev + refund);
+      if (rec.isStock) {
+        const existing = stocks.find(s => s.ticker === rec.ticker);
+        const refund = existing ? existing.mktValue || 0 : rec.dollars;
+        setStocks(p => p.filter(s => s.ticker !== rec.ticker));
+        setCashBalance(prev => prev + refund);
+      } else {
+        const existing = etfs.find(e => e.ticker === rec.ticker);
+        const refund = existing ? existing.mktValue || 0 : rec.dollars;
+        setEtfs(p => p.filter(e => e.ticker !== rec.ticker));
+        setCashBalance(prev => prev + refund);
+      }
       setAccepted(prev => { const next = new Set(prev); next.delete(rec.ticker); return next; });
     } else {
       // SELECT: add to holdings, deduct cash
@@ -1301,15 +1344,22 @@ useEffect(() => {
       } catch (e) { }
       const shares = price > 0 ? Math.floor(rec.dollars / price) : 0;
       const actualCost = price > 0 ? shares * price : rec.dollars;
-      let etfData = ETF_DB.find(e => e.t === rec.ticker);
-      if (!etfData) {
-        etfData = { t: rec.ticker, n: rec.name, c: rec.cat, h: 50, er: rec.er || .20, r: rec.r || 8.0, v: rec.v || 18.0, d: rec.d || 0 };
+
+      if (rec.isStock) {
+        // Add as individual stock
+        setStocks(p => [...p, { ticker: rec.ticker, name: rec.name, shares, costBasis: price || 0, mktValue: actualCost, sector: rec.cat.replace("Sector ", ""), locked: false, purchaseDate: new Date().toISOString().slice(0, 10) }]);
+      } else {
+        // Add as ETF
+        let etfData = ETF_DB.find(e => e.t === rec.ticker);
+        if (!etfData) {
+          etfData = { t: rec.ticker, n: rec.name, c: rec.cat, h: 50, er: rec.er || .20, r: rec.r || 8.0, v: rec.v || 18.0, d: rec.d || 0 };
+        }
+        setEtfs(p => [...p, { ticker: rec.ticker, data: etfData, shares, costBasis: price || 0, mktValue: actualCost, type: "etf", purchaseDate: new Date().toISOString().slice(0, 10) }]);
       }
-      setEtfs(p => [...p, { ticker: rec.ticker, data: etfData, shares, costBasis: price || 0, mktValue: actualCost, type: "etf", purchaseDate: new Date().toISOString().slice(0, 10) }]);
       setCashBalance(prev => Math.max(0, prev - actualCost));
       setAccepted(prev => new Set([...prev, rec.ticker]));
     }
-  }, [accepted, etfs]);
+  }, [accepted, etfs, stocks]);
 
   // ─── Fetch live prices via Twelve Data (serverless proxy) ───
   const fetchLive = useCallback(async () => {
@@ -1355,10 +1405,11 @@ useEffect(() => {
         regimeCtx.transition = regimeAnalytics.current.transition || null;
       }
     }
-    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, srMode, volTarget, useKelly, regimeCtx);
+    const candidates = includeStocks ? [...ETF_DB, ...STOCK_DB] : ETF_DB;
+    const result = optimizeCash(allPos, cashBalance, holdingsVal, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
     setOptResult(result);
     setAccepted(new Set());
-  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData, regimeAnalytics]);
+  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData, regimeAnalytics, includeStocks]);
 
   // ─── AI Advisor (via serverless proxy) ───
   const getAI = useCallback(async (ctx) => {
@@ -1646,7 +1697,7 @@ useEffect(() => {
           <div style={{ ...cardS, background: "rgba(96,165,250,.03)", borderColor: "rgba(96,165,250,.12)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer finds the highest-performing ETF allocation (up to 10 positions). Concentrated portfolios are preferred when they outperform diversified ones.</div></div>
+                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer finds the highest-performing {includeStocks ? "ETF + individual stock" : "ETF"} allocation (up to 10 positions). Concentrated portfolios are preferred when they outperform diversified ones.</div></div>
               {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Holdings" tab first</div>}
             </div>
 
@@ -1683,10 +1734,14 @@ useEffect(() => {
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
                   <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
                 </button>
+                <button onClick={() => setIncludeStocks(v => !v)} style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${includeStocks ? "rgba(96,165,250,.2)" : "rgba(255,255,255,.06)"}`, background: includeStocks ? "rgba(96,165,250,.05)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: includeStocks ? cs.blue : cs.dim, fontWeight: 600 }}>📈</span>
+                  <span style={{ fontSize: 8, color: includeStocks ? cs.blue : cs.dim }}>{includeStocks ? "ETF+Stocks" : "ETF Only"}</span>
+                </button>
               </div>
 
               <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                Run Optimizer — Deploy ${cashBalance.toLocaleString()}{useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""} (6,000 simulations)
+                Run Optimizer — Deploy ${cashBalance.toLocaleString()}{includeStocks ? " (ETF+Stocks)" : ""}{useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}
               </button>
               {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime enabled but no data fetched — go to Analysis tab → "Fetch Live Data" first, or optimizer runs without regime tilt.</div>}
 
@@ -1704,7 +1759,7 @@ useEffect(() => {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {optResult.map(r => {
-                const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker);
+                const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
                 return (
                 <div key={r.ticker} onClick={() => toggleRec(r)}
                   style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 7,
@@ -1719,6 +1774,7 @@ useEffect(() => {
                       <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
                       <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
                       <Badge color={cs.dim}>{r.cat}</Badge>
+                      {r.isStock && <Badge color={cs.blue}>📈 STOCK</Badge>}
                       {r.lev && <Badge color={cs.red}>⚠ {r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
                     </div>
                     <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
@@ -1741,7 +1797,7 @@ useEffect(() => {
 
             {/* Accept all / Remove all buttons */}
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              {accepted.size < optResult.length && <button onClick={() => { optResult.forEach(r => { if (!accepted.has(r.ticker) && !etfs.find(e => e.ticker === r.ticker)) toggleRec(r) }) }}
+              {accepted.size < optResult.length && <button onClick={() => { optResult.forEach(r => { if (!accepted.has(r.ticker) && !etfs.find(e => e.ticker === r.ticker) && !stocks.find(s => s.ticker === r.ticker)) toggleRec(r) }) }}
                 style={{ flex: 1, padding: "9px", borderRadius: 7, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Add All {optResult.length - accepted.size} to Holdings
               </button>}
@@ -2240,6 +2296,7 @@ useEffect(() => {
                 {volTarget > 0 && <span style={{ color: cs.blue }}> · Vol {volTarget}%</span>}
                 {useKelly && <span style={{ color: cs.purple }}> · ½Kelly</span>}
                 {useRegime && <span style={{ color: cs.yellow }}> · Regime-Adaptive</span>}
+                {includeStocks && <span style={{ color: cs.blue }}> · ETF+Stocks</span>}
                 <span style={{ color: cs.purple }}> · Tax: {taxRates.lt.toFixed(1)}% LT</span>
               </div>
             </div>
@@ -2490,7 +2547,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs · Monthly monitoring, tax-aware rebalancing · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
+                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Monthly monitoring, tax-aware rebalancing · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
               </div>
             </>;
           })()}
