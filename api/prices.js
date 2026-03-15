@@ -1,21 +1,9 @@
 // api/prices.js — Vercel Serverless Function
 // Live quotes: Yahoo Finance (primary, free, no key) → Twelve Data (fallback)
-//
-// Usage: GET /api/prices?tickers=AAPL,MSFT,VOO
-//        GET /api/prices?tickers=AAPL&provider=twelvedata  (force Twelve Data)
-//        GET /api/prices?tickers=AAPL&provider=yahoo       (force Yahoo)
-//
-// SETUP: npm install yahoo-finance2
-//        (Optional) TWELVEDATA_API_KEY env var for fallback
 
-let yahooFinance = null;
-try {
-  yahooFinance = require("yahoo-finance2").default || require("yahoo-finance2");
-} catch (e) {
-  console.warn("yahoo-finance2 not installed, will use Twelve Data only");
-}
+import yahooFinance from "yahoo-finance2";
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   if (req.method === "OPTIONS") return res.status(200).end();
@@ -29,12 +17,11 @@ module.exports = async function handler(req, res) {
   const forceTD = provider === "twelvedata";
   const forceYahoo = provider === "yahoo";
 
-  // ── Try Yahoo Finance first (unless forced to Twelve Data) ──
-  if (!forceTD && yahooFinance) {
+  // ── Try Yahoo Finance first ──
+  if (!forceTD) {
     try {
       const results = {};
 
-      // Fetch quotes one at a time for maximum compatibility
       await Promise.all(
         symbols.map(async (sym) => {
           try {
@@ -83,7 +70,7 @@ module.exports = async function handler(req, res) {
   if (!apiKey) {
     return res.status(500).json({
       error: "Yahoo Finance unavailable and TWELVEDATA_API_KEY not set",
-      hint: "Run: npm install yahoo-finance2 — or add TWELVEDATA_API_KEY in Vercel env vars",
+      hint: "Check that yahoo-finance2 is installed, or add TWELVEDATA_API_KEY in Vercel env vars",
     });
   }
 
@@ -134,4 +121,4 @@ module.exports = async function handler(req, res) {
   } catch (err) {
     return res.status(500).json({ error: "Both providers failed", detail: err.message });
   }
-};
+}
