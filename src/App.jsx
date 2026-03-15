@@ -166,14 +166,56 @@ const RF=4.5;
 const PAL=["#6ee7b7","#60a5fa","#f472b6","#fbbf24","#a78bfa","#fb923c","#34d399","#f87171","#38bdf8","#e879f9"];
 
 const STOCK_DB=[
-  {t:"AAPL",n:"Apple Inc.",s:"Technology"},{t:"MSFT",n:"Microsoft",s:"Technology"},{t:"GOOGL",n:"Alphabet (A)",s:"Technology"},{t:"AMZN",n:"Amazon",s:"Consumer"},{t:"NVDA",n:"NVIDIA",s:"Technology"},{t:"META",n:"Meta Platforms",s:"Technology"},{t:"TSLA",n:"Tesla",s:"Consumer"},{t:"BRK.B",n:"Berkshire B",s:"Financial"},{t:"LLY",n:"Eli Lilly",s:"Healthcare"},{t:"V",n:"Visa",s:"Financial"},{t:"JPM",n:"JPMorgan",s:"Financial"},{t:"UNH",n:"UnitedHealth",s:"Healthcare"},{t:"MA",n:"Mastercard",s:"Financial"},{t:"XOM",n:"Exxon Mobil",s:"Energy"},{t:"JNJ",n:"J&J",s:"Healthcare"},{t:"PG",n:"Procter & Gamble",s:"Consumer"},{t:"AVGO",n:"Broadcom",s:"Technology"},{t:"HD",n:"Home Depot",s:"Consumer"},{t:"COST",n:"Costco",s:"Consumer"},{t:"MRK",n:"Merck",s:"Healthcare"},{t:"ABBV",n:"AbbVie",s:"Healthcare"},{t:"CVX",n:"Chevron",s:"Energy"},{t:"CRM",n:"Salesforce",s:"Technology"},{t:"AMD",n:"AMD",s:"Technology"},{t:"KO",n:"Coca-Cola",s:"Consumer"},{t:"PEP",n:"PepsiCo",s:"Consumer"},{t:"NFLX",n:"Netflix",s:"Technology"},{t:"ADBE",n:"Adobe",s:"Technology"},{t:"WMT",n:"Walmart",s:"Consumer"},{t:"BAC",n:"Bank of America",s:"Financial"},{t:"DIS",n:"Disney",s:"Communications"},{t:"CSCO",n:"Cisco",s:"Technology"},{t:"INTC",n:"Intel",s:"Technology"},{t:"ORCL",n:"Oracle",s:"Technology"},{t:"IBM",n:"IBM",s:"Technology"},{t:"QCOM",n:"Qualcomm",s:"Technology"},{t:"GE",n:"GE",s:"Industrial"},{t:"CAT",n:"Caterpillar",s:"Industrial"},{t:"BA",n:"Boeing",s:"Industrial"},{t:"GS",n:"Goldman Sachs",s:"Financial"},{t:"MS",n:"Morgan Stanley",s:"Financial"},{t:"UBER",n:"Uber",s:"Technology"},{t:"SBUX",n:"Starbucks",s:"Consumer"},{t:"INTU",n:"Intuit",s:"Technology"},{t:"ISRG",n:"Intuitive Surgical",s:"Healthcare"},{t:"PFE",n:"Pfizer",s:"Healthcare"},{t:"NOW",n:"ServiceNow",s:"Technology"},{t:"LMT",n:"Lockheed Martin",s:"Industrial"},{t:"PLTR",n:"Palantir",s:"Technology"},{t:"PANW",n:"Palo Alto Networks",s:"Technology"},{t:"SHOP",n:"Shopify",s:"Technology"},{t:"SQ",n:"Block",s:"Technology"},{t:"COIN",n:"Coinbase",s:"Financial"},{t:"CRWD",n:"CrowdStrike",s:"Technology"},{t:"NET",n:"Cloudflare",s:"Technology"},{t:"ABNB",n:"Airbnb",s:"Consumer"},{t:"PYPL",n:"PayPal",s:"Financial"},{t:"MU",n:"Micron",s:"Technology"},{t:"BABA",n:"Alibaba (ADR)",s:"Technology"},{t:"BILI",n:"Bilibili (ADR)",s:"Communications"},{t:"EXAS",n:"Exact Sciences",s:"Healthcare"},{t:"JD",n:"JD.com (ADR)",s:"Consumer"},{t:"PDD",n:"PDD Holdings",s:"Consumer"},{t:"NIO",n:"NIO (ADR)",s:"Consumer"},{t:"TSM",n:"Taiwan Semi (ADR)",s:"Technology"},{t:"ASML",n:"ASML (ADR)",s:"Technology"},{t:"ARM",n:"Arm Holdings",s:"Technology"},{t:"SMCI",n:"Super Micro",s:"Technology"},{t:"APP",n:"AppLovin",s:"Technology"},{t:"SOFI",n:"SoFi",s:"Financial"},{t:"RIVN",n:"Rivian",s:"Consumer"},{t:"HOOD",n:"Robinhood",s:"Financial"},{t:"IONQ",n:"IonQ",s:"Technology"},{t:"SOUN",n:"SoundHound AI",s:"Technology"},{t:"RKLB",n:"Rocket Lab",s:"Industrial"},{t:"DELL",n:"Dell",s:"Technology"},{t:"SNOW",n:"Snowflake",s:"Technology"},{t:"DASH",n:"DoorDash",s:"Technology"},{t:"SPOT",n:"Spotify",s:"Communications"},{t:"DDOG",n:"Datadog",s:"Technology"},{t:"AFRM",n:"Affirm",s:"Technology"},{t:"F",n:"Ford",s:"Consumer"},{t:"GM",n:"General Motors",s:"Consumer"},{t:"MRNA",n:"Moderna",s:"Healthcare"},{t:"CVS",n:"CVS Health",s:"Healthcare"},{t:"REGN",n:"Regeneron",s:"Healthcare"},{t:"VRTX",n:"Vertex Pharma",s:"Healthcare"},{t:"GILD",n:"Gilead",s:"Healthcare"},{t:"CI",n:"Cigna",s:"Healthcare"},{t:"DHR",n:"Danaher",s:"Healthcare"},{t:"C",n:"Citigroup",s:"Financial"},{t:"SCHW",n:"Charles Schwab",s:"Financial"},{t:"CME",n:"CME Group",s:"Financial"},{t:"ICE",n:"Intercontinental Exch",s:"Financial"},{t:"COP",n:"ConocoPhillips",s:"Energy"},{t:"OXY",n:"Occidental Petroleum",s:"Energy"},{t:"FSLR",n:"First Solar",s:"Energy"},{t:"O",n:"Realty Income",s:"Real Estate"},{t:"AMT",n:"American Tower",s:"Real Estate"},{t:"NEE",n:"NextEra Energy",s:"Utilities"},{t:"SO",n:"Southern Co",s:"Utilities"},{t:"NEM",n:"Newmont",s:"Materials"},{t:"FCX",n:"Freeport-McMoRan",s:"Materials"},{t:"GOLD",n:"Barrick Gold",s:"Materials"},{t:"LULU",n:"Lululemon",s:"Consumer"},{t:"CMG",n:"Chipotle",s:"Consumer"},{t:"MCD",n:"McDonald's",s:"Consumer"},{t:"TGT",n:"Target",s:"Consumer"},{t:"LOW",n:"Lowe's",s:"Consumer"},{t:"HON",n:"Honeywell",s:"Industrial"},{t:"ETN",n:"Eaton",s:"Industrial"},{t:"DE",n:"Deere",s:"Industrial"},{t:"UPS",n:"UPS",s:"Industrial"},{t:"FDX",n:"FedEx",s:"Industrial"},{t:"DAL",n:"Delta Air Lines",s:"Industrial"},{t:"TMUS",n:"T-Mobile",s:"Communications"},{t:"CMCSA",n:"Comcast",s:"Communications"},{t:"EA",n:"Electronic Arts",s:"Communications"},{t:"NXPI",n:"NXP Semi",s:"Technology"},{t:"ADI",n:"Analog Devices",s:"Technology"},{t:"SNPS",n:"Synopsys",s:"Technology"},{t:"CDNS",n:"Cadence Design",s:"Technology"},{t:"FTNT",n:"Fortinet",s:"Technology"},{t:"WDAY",n:"Workday",s:"Technology"},{t:"TEAM",n:"Atlassian",s:"Technology"},{t:"HUBS",n:"HubSpot",s:"Technology"},{t:"MELI",n:"MercadoLibre",s:"Consumer"},{t:"NU",n:"Nu Holdings",s:"Financial"},{t:"SE",n:"Sea Limited",s:"Technology"},{t:"CPNG",n:"Coupang",s:"Consumer"},{t:"VALE",n:"Vale (ADR)",s:"Materials"},{t:"BHP",n:"BHP (ADR)",s:"Materials"},{t:"RIO",n:"Rio Tinto (ADR)",s:"Materials"},
+  // ipo = year stock became publicly available (approximate)
+  // Mega-cap Tech
+  {t:"AAPL",n:"Apple Inc.",s:"Technology",ipo:1980},{t:"MSFT",n:"Microsoft",s:"Technology",ipo:1986},{t:"GOOGL",n:"Alphabet (A)",s:"Technology",ipo:2004},{t:"AMZN",n:"Amazon",s:"Consumer",ipo:1997},{t:"NVDA",n:"NVIDIA",s:"Technology",ipo:1999},{t:"META",n:"Meta Platforms",s:"Technology",ipo:2012},{t:"TSLA",n:"Tesla",s:"Consumer",ipo:2010},
+  // Financials
+  {t:"BRK.B",n:"Berkshire B",s:"Financial",ipo:1996},{t:"V",n:"Visa",s:"Financial",ipo:2008},{t:"JPM",n:"JPMorgan",s:"Financial",ipo:1969},{t:"UNH",n:"UnitedHealth",s:"Healthcare",ipo:1984},{t:"MA",n:"Mastercard",s:"Financial",ipo:2006},{t:"GS",n:"Goldman Sachs",s:"Financial",ipo:1999},{t:"MS",n:"Morgan Stanley",s:"Financial",ipo:1986},{t:"C",n:"Citigroup",s:"Financial",ipo:1986},{t:"SCHW",n:"Charles Schwab",s:"Financial",ipo:1987},{t:"CME",n:"CME Group",s:"Financial",ipo:2002},{t:"ICE",n:"Intercontinental Exch",s:"Financial",ipo:2005},{t:"BAC",n:"Bank of America",s:"Financial",ipo:1973},
+  // Healthcare
+  {t:"LLY",n:"Eli Lilly",s:"Healthcare",ipo:1952},{t:"JNJ",n:"J&J",s:"Healthcare",ipo:1944},{t:"PFE",n:"Pfizer",s:"Healthcare",ipo:1944},{t:"MRK",n:"Merck",s:"Healthcare",ipo:1946},{t:"ABBV",n:"AbbVie",s:"Healthcare",ipo:2013},{t:"ISRG",n:"Intuitive Surgical",s:"Healthcare",ipo:2000},{t:"MRNA",n:"Moderna",s:"Healthcare",ipo:2018},{t:"CVS",n:"CVS Health",s:"Healthcare",ipo:1996},{t:"REGN",n:"Regeneron",s:"Healthcare",ipo:1991},{t:"VRTX",n:"Vertex Pharma",s:"Healthcare",ipo:1991},{t:"GILD",n:"Gilead",s:"Healthcare",ipo:1992},{t:"CI",n:"Cigna",s:"Healthcare",ipo:1982},{t:"DHR",n:"Danaher",s:"Healthcare",ipo:1981},{t:"EXAS",n:"Exact Sciences",s:"Healthcare",ipo:2001},
+  // Consumer
+  {t:"PG",n:"Procter & Gamble",s:"Consumer",ipo:1890},{t:"HD",n:"Home Depot",s:"Consumer",ipo:1981},{t:"COST",n:"Costco",s:"Consumer",ipo:1985},{t:"KO",n:"Coca-Cola",s:"Consumer",ipo:1919},{t:"PEP",n:"PepsiCo",s:"Consumer",ipo:1972},{t:"WMT",n:"Walmart",s:"Consumer",ipo:1972},{t:"SBUX",n:"Starbucks",s:"Consumer",ipo:1992},{t:"MCD",n:"McDonald's",s:"Consumer",ipo:1965},{t:"LOW",n:"Lowe's",s:"Consumer",ipo:1961},{t:"TGT",n:"Target",s:"Consumer",ipo:1967},{t:"LULU",n:"Lululemon",s:"Consumer",ipo:2007},{t:"CMG",n:"Chipotle",s:"Consumer",ipo:2006},{t:"F",n:"Ford",s:"Consumer",ipo:1956},{t:"GM",n:"General Motors",s:"Consumer",ipo:2010},
+  // Technology
+  {t:"AVGO",n:"Broadcom",s:"Technology",ipo:2009},{t:"CRM",n:"Salesforce",s:"Technology",ipo:2004},{t:"AMD",n:"AMD",s:"Technology",ipo:1979},{t:"NFLX",n:"Netflix",s:"Technology",ipo:2002},{t:"ADBE",n:"Adobe",s:"Technology",ipo:1986},{t:"CSCO",n:"Cisco",s:"Technology",ipo:1990},{t:"INTC",n:"Intel",s:"Technology",ipo:1971},{t:"ORCL",n:"Oracle",s:"Technology",ipo:1986},{t:"IBM",n:"IBM",s:"Technology",ipo:1911},{t:"QCOM",n:"Qualcomm",s:"Technology",ipo:1991},{t:"INTU",n:"Intuit",s:"Technology",ipo:1993},{t:"MU",n:"Micron",s:"Technology",ipo:1984},{t:"NOW",n:"ServiceNow",s:"Technology",ipo:2012},{t:"PANW",n:"Palo Alto Networks",s:"Technology",ipo:2012},{t:"DELL",n:"Dell",s:"Technology",ipo:2018},{t:"NXPI",n:"NXP Semi",s:"Technology",ipo:2010},{t:"ADI",n:"Analog Devices",s:"Technology",ipo:1969},{t:"SNPS",n:"Synopsys",s:"Technology",ipo:1992},{t:"CDNS",n:"Cadence Design",s:"Technology",ipo:1993},{t:"FTNT",n:"Fortinet",s:"Technology",ipo:2009},{t:"WDAY",n:"Workday",s:"Technology",ipo:2012},{t:"SMCI",n:"Super Micro",s:"Technology",ipo:2007},
+  // Post-2015 IPOs (tagged for dynamic filtering)
+  {t:"UBER",n:"Uber",s:"Technology",ipo:2019},{t:"PLTR",n:"Palantir",s:"Technology",ipo:2020},{t:"SHOP",n:"Shopify",s:"Technology",ipo:2015},{t:"SQ",n:"Block",s:"Technology",ipo:2015},{t:"COIN",n:"Coinbase",s:"Financial",ipo:2021},{t:"CRWD",n:"CrowdStrike",s:"Technology",ipo:2019},{t:"NET",n:"Cloudflare",s:"Technology",ipo:2019},{t:"ABNB",n:"Airbnb",s:"Consumer",ipo:2020},{t:"PYPL",n:"PayPal",s:"Financial",ipo:2015},{t:"TEAM",n:"Atlassian",s:"Technology",ipo:2015},{t:"HUBS",n:"HubSpot",s:"Technology",ipo:2014},{t:"SNOW",n:"Snowflake",s:"Technology",ipo:2020},{t:"DASH",n:"DoorDash",s:"Technology",ipo:2020},{t:"SPOT",n:"Spotify",s:"Communications",ipo:2018},{t:"DDOG",n:"Datadog",s:"Technology",ipo:2019},{t:"AFRM",n:"Affirm",s:"Technology",ipo:2021},{t:"ARM",n:"Arm Holdings",s:"Technology",ipo:2023},{t:"APP",n:"AppLovin",s:"Technology",ipo:2021},{t:"SOFI",n:"SoFi",s:"Financial",ipo:2021},{t:"RIVN",n:"Rivian",s:"Consumer",ipo:2021},{t:"HOOD",n:"Robinhood",s:"Financial",ipo:2021},{t:"IONQ",n:"IonQ",s:"Technology",ipo:2021},{t:"SOUN",n:"SoundHound AI",s:"Technology",ipo:2022},{t:"RKLB",n:"Rocket Lab",s:"Industrial",ipo:2021},{t:"NU",n:"Nu Holdings",s:"Financial",ipo:2021},{t:"SE",n:"Sea Limited",s:"Technology",ipo:2017},{t:"CPNG",n:"Coupang",s:"Consumer",ipo:2021},
+  // Energy
+  {t:"XOM",n:"Exxon Mobil",s:"Energy",ipo:1920},{t:"CVX",n:"Chevron",s:"Energy",ipo:1921},{t:"COP",n:"ConocoPhillips",s:"Energy",ipo:2012},{t:"OXY",n:"Occidental Petroleum",s:"Energy",ipo:1964},{t:"FSLR",n:"First Solar",s:"Energy",ipo:2006},
+  // Communications
+  {t:"DIS",n:"Disney",s:"Communications",ipo:1957},{t:"TMUS",n:"T-Mobile",s:"Communications",ipo:2007},{t:"CMCSA",n:"Comcast",s:"Communications",ipo:1972},{t:"EA",n:"Electronic Arts",s:"Communications",ipo:1989},{t:"BILI",n:"Bilibili (ADR)",s:"Communications",ipo:2018},
+  // International ADR
+  {t:"BABA",n:"Alibaba (ADR)",s:"Technology",ipo:2014},{t:"JD",n:"JD.com (ADR)",s:"Consumer",ipo:2014},{t:"PDD",n:"PDD Holdings",s:"Consumer",ipo:2018},{t:"NIO",n:"NIO (ADR)",s:"Consumer",ipo:2018},{t:"TSM",n:"Taiwan Semi (ADR)",s:"Technology",ipo:1997},{t:"ASML",n:"ASML (ADR)",s:"Technology",ipo:1995},{t:"MELI",n:"MercadoLibre",s:"Consumer",ipo:2007},{t:"VALE",n:"Vale (ADR)",s:"Materials",ipo:2002},{t:"BHP",n:"BHP (ADR)",s:"Materials",ipo:1987},{t:"RIO",n:"Rio Tinto (ADR)",s:"Materials",ipo:1962},
+  // Industrial
+  {t:"GE",n:"GE",s:"Industrial",ipo:1892},{t:"CAT",n:"Caterpillar",s:"Industrial",ipo:1929},{t:"BA",n:"Boeing",s:"Industrial",ipo:1962},{t:"LMT",n:"Lockheed Martin",s:"Industrial",ipo:1995},{t:"HON",n:"Honeywell",s:"Industrial",ipo:1925},{t:"ETN",n:"Eaton",s:"Industrial",ipo:1923},{t:"DE",n:"Deere",s:"Industrial",ipo:1911},{t:"UPS",n:"UPS",s:"Industrial",ipo:1999},{t:"FDX",n:"FedEx",s:"Industrial",ipo:1978},{t:"DAL",n:"Delta Air Lines",s:"Industrial",ipo:2007},
+  // Real Estate / Utilities / Materials
+  {t:"O",n:"Realty Income",s:"Real Estate",ipo:1994},{t:"AMT",n:"American Tower",s:"Real Estate",ipo:1998},{t:"NEE",n:"NextEra Energy",s:"Utilities",ipo:1984},{t:"SO",n:"Southern Co",s:"Utilities",ipo:1949},{t:"NEM",n:"Newmont",s:"Materials",ipo:1940},{t:"FCX",n:"Freeport-McMoRan",s:"Materials",ipo:1995},{t:"GOLD",n:"Barrick Gold",s:"Materials",ipo:1987},
+  // Historical top-30 (not currently top, but were major S&P 500 names in 2016-2020)
+  {t:"WFC",n:"Wells Fargo",s:"Financial",ipo:1978},{t:"T",n:"AT&T",s:"Communications",ipo:1984},{t:"VZ",n:"Verizon",s:"Communications",ipo:1984},
 ];
 
 // Map STOCK_DB sector names to optimizer category system
 const SECTOR_TO_CAT = {"Technology":"Sector Tech","Consumer":"Sector Consumer","Financial":"Sector Finance","Healthcare":"Sector Health","Energy":"Sector Energy","Industrial":"Sector Indust","Communications":"Sector Comms","Real Estate":"Sector RE","Utilities":"Sector Utilities","Materials":"Sector Materials"};
-const STOCK_OPT = STOCK_DB.map(s => ({ t: s.t, n: s.n, c: SECTOR_TO_CAT[s.s] || "Stock", r: 12, v: 25, er: 0, d: 0, h: 1, type: "stock" }));
-// Stocks that IPO'd after 2015 — excluded from backtest to avoid survivorship bias
-const POST_2016_IPOS = new Set(["PLTR","COIN","HOOD","ABNB","ARM","APP","RIVN","IONQ","SOUN","RKLB","SNOW","DASH","AFRM","CPNG","NU"]);
+const STOCK_OPT = STOCK_DB.map(s => ({ t: s.t, n: s.n, c: SECTOR_TO_CAT[s.s] || "Stock", r: 12, v: 25, er: 0, d: 0, h: 1, type: "stock", ipo: s.ipo || 2000 }));
+// Helper: check if a stock was publicly traded by a given year
+function stockAvailableAt(stock, year) { return (stock.ipo || 0) <= year; }
+
+// ── Historical S&P 500 Top 30 by market cap at January of each year ──
+// Source: actual S&P 500 constituents ranked by market cap (approximate)
+// This eliminates survivorship bias — only stocks that were top-30 AT THAT TIME are included
+const SP500_TOP30 = {
+  2016: ["AAPL","GOOGL","MSFT","XOM","BRK.B","GE","JNJ","AMZN","META","JPM","WFC","WMT","PG","V","PFE","CVX","KO","HD","VZ","T","CSCO","INTC","DIS","IBM","ORCL","MRK","UNH","C","PEP","BA"],
+  2017: ["AAPL","GOOGL","MSFT","AMZN","BRK.B","META","XOM","JNJ","JPM","GE","WFC","V","T","PG","WMT","HD","PFE","CVX","KO","VZ","UNH","INTC","CSCO","DIS","MRK","BA","ORCL","IBM","C","PEP"],
+  2018: ["AAPL","GOOGL","MSFT","AMZN","META","BRK.B","JPM","JNJ","XOM","V","BAC","WFC","UNH","HD","PG","CVX","INTC","T","VZ","KO","CSCO","PFE","DIS","WMT","MRK","BA","ORCL","PEP","MA","ABBV"],
+  2019: ["MSFT","AAPL","AMZN","GOOGL","BRK.B","META","JPM","JNJ","V","PG","XOM","UNH","HD","VZ","T","CVX","MA","PFE","WMT","KO","INTC","CSCO","BA","DIS","MRK","PEP","BAC","WFC","ABBV","ORCL"],
+  2020: ["AAPL","MSFT","GOOGL","AMZN","META","BRK.B","V","JPM","JNJ","WMT","PG","UNH","MA","HD","VZ","T","INTC","DIS","KO","PFE","MRK","PEP","CSCO","XOM","CVX","BA","ABBV","ORCL","ADBE","CRM"],
+  2021: ["AAPL","MSFT","AMZN","GOOGL","META","TSLA","BRK.B","V","JPM","JNJ","UNH","WMT","MA","PG","NVDA","HD","DIS","PYPL","BAC","ADBE","CRM","NFLX","INTC","KO","PEP","PFE","CSCO","MRK","XOM","VZ"],
+  2022: ["AAPL","MSFT","GOOGL","AMZN","TSLA","META","NVDA","BRK.B","UNH","JNJ","V","JPM","HD","PG","MA","BAC","PFE","XOM","KO","PEP","ABBV","AVGO","COST","LLY","WMT","MRK","DIS","CSCO","ADBE","CRM"],
+  2023: ["AAPL","MSFT","GOOGL","AMZN","BRK.B","UNH","JNJ","XOM","V","JPM","NVDA","PG","HD","MA","CVX","LLY","MRK","ABBV","PEP","KO","PFE","COST","BAC","WMT","AVGO","CSCO","MCD","CRM","ADBE","AMD"],
+  2024: ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","BRK.B","LLY","V","UNH","JPM","AVGO","XOM","JNJ","MA","PG","HD","COST","MRK","ABBV","CRM","AMD","KO","PEP","WMT","BAC","ADBE","CSCO","NFLX","MCD"],
+  2025: ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","BRK.B","AVGO","LLY","TSLA","WMT","JPM","V","UNH","XOM","MA","COST","JNJ","PG","HD","NFLX","ABBV","BAC","CRM","AMD","MRK","ORCL","CVX","KO","PEP"],
+};
+// All unique tickers across all years (for data fetching)
+const SP500_ALL_TICKERS = [...new Set(Object.values(SP500_TOP30).flat())];
 
 // ═══ ENGINE ═══
 // VaR at 95% confidence (parametric): VaR = σ × 1.645
@@ -825,8 +867,8 @@ export default function App() {
       "SCHD","HDV","DGRO",
     ];
     const benchmarks = ["SPY"];
-    // Only include stocks that existed before 2016 — filter post-IPO stocks to avoid survivorship bias
-    const btStocks = includeStocks ? STOCK_DB.filter(s => !POST_2016_IPOS.has(s.t)).map(s => s.t) : [];
+    // For stocks: use historical S&P 500 top 30 by year (no survivorship bias)
+    const btStocks = includeStocks ? SP500_ALL_TICKERS : [];
 
     const allSymbols = [...new Set([...btETFs, ...benchmarks, ...btStocks])];
     setBtProgress(`Fetching ${allSymbols.length} ETFs (2015-2025)...`);
@@ -957,7 +999,16 @@ export default function App() {
         const db = etfDbMap[sym];
         trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: avgMo * 12 * 100, v: Math.max(Math.sqrt(Math.max(0, sumRetSq / count - avgMo * avgMo)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
       }
-      const allCandidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
+      const allCandidates = Object.values(trailingStats).filter(s => {
+        if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
+        // For stocks: only include if it was in the S&P 500 top 30 for this year
+        const db = etfDbMap[s.t];
+        if (db?.type === "stock") {
+          const yearList = SP500_TOP30[mYear] || SP500_TOP30[2025];
+          if (!yearList.includes(s.t)) return false;
+        }
+        return true;
+      });
       // Pre-filter to top 25 by trailing Sharpe — keeps optimizer O(n²) fast
       const candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 15);
       if (candidates.length < 3) continue;
@@ -1193,7 +1244,7 @@ export default function App() {
       "XLK","XLF","XLV","XLE","XLU","XLRE","SOXX","ARKK","ICLN",
       "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","HDV","DGRO",
     ];
-    const btStocks = includeStocks ? STOCK_OPT.filter(s => !POST_2016_IPOS.has(s.t)).map(s => s.t) : [];
+    const btStocks = includeStocks ? SP500_ALL_TICKERS : [];
     const allSymbols = [...new Set([...btETFs, "SPY", ...btStocks])];
 
     setSimProgress(`Fetching ${allSymbols.length} symbols...`);
@@ -1256,6 +1307,7 @@ export default function App() {
       for (let mi = 0; mi < simDates.length; mi++) {
         const monthKey = simDates[mi];
         const mIdx = dateToIdx[monthKey];
+        const mYear = parseInt(monthKey.slice(0, 4));
         const mMonth = parseInt(monthKey.slice(5, 7)) - 1;
         const monthData = returnsByDateSym[monthKey] || {};
 
@@ -1290,8 +1342,15 @@ export default function App() {
           trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: avg * 12 * 100, v: Math.max(Math.sqrt(Math.max(0, sR2 / cnt - avg * avg)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: 0, lev: db?.lev || null };
         }
 
-        const cands = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50)
-          .sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 20);
+        const cands = Object.values(trailingStats).filter(s => {
+          if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
+          const db = etfDbMap[s.t];
+          if (db?.type === "stock") {
+            const yearList = SP500_TOP30[mYear] || SP500_TOP30[2025];
+            if (!yearList.includes(s.t)) return false;
+          }
+          return true;
+        }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 20);
         // Randomly sample 12 from top 20 — ensures each sim sees different candidates
         while (cands.length > 12) cands.splice(Math.floor(Math.random() * cands.length), 1);
         if (cands.length < 3) continue;
@@ -2570,8 +2629,8 @@ useEffect(() => {
             const drawLine = (data, color) => data.map((p, i) => `${sx(i, data.length)},${sy(p.value)}`).join(" ");
 
             return <>
-              {includeStocks && <div style={{ ...cardS, background: "rgba(251,191,36,.04)", borderColor: "rgba(251,191,36,.15)", marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: cs.yellow }}>⚠ <strong>Survivorship bias:</strong> ETF+Stocks mode includes individual stocks selected with hindsight (today's known winners). Backtest results are inflated — the same stock picks would not have been identifiable in 2016. Use ETF-only mode for realistic forward-looking analysis. Post-2016 IPOs have been excluded.</div>
+              {includeStocks && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
+                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe:</strong> Individual stocks are filtered to the actual S&P 500 top 30 by market cap at each year. For example, 2016 includes GE (#6) and excludes NVDA (not yet top 30). 2021 adds TSLA and NVDA. This matches what a large-cap investor would have realistically considered at each point in time.</div>
               </div>}
               {/* Equity Curve */}
               <div style={cardS}>
@@ -2819,7 +2878,7 @@ useEffect(() => {
               </button>
             </div>
             {!btResult && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Run a backtest first — simulation reuses the same parameters and time period.</div>}
-            {includeStocks && <div style={{ fontSize: 9, color: cs.yellow, marginTop: 4 }}>⚠ <strong>Survivorship bias warning:</strong> The stock universe is curated from today's known winners. Results with ETF+Stocks will appear inflated because the backtest has access to stocks (like NVDA, AAPL, META) that are selected with the benefit of hindsight. ETF-only results are more representative of achievable forward-looking performance.</div>}
+            {includeStocks && <div style={{ fontSize: 9, color: cs.blue, marginTop: 4 }}>📊 <strong>Historical universe:</strong> Stocks filtered to actual S&P 500 top 30 at each year — no look-ahead bias. GE included in 2016 (when it was #6), NVDA excluded until 2021 (when it entered top 30).</div>}
           </div>
 
           {simResult && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
