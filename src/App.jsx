@@ -519,6 +519,8 @@ export default function App() {
   const [regimeData, setRegimeData] = useState(null);
   const [regimeLoading, setRegimeLoading] = useState(false);
   const [regimeError, setRegimeError] = useState("");
+  const [regimeAnalytics, setRegimeAnalytics] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const fetchRegime = useCallback(async () => {
     setRegimeLoading(true); setRegimeError("");
@@ -529,6 +531,20 @@ export default function App() {
       else { setRegimeError(json.error || "Failed to fetch regime data"); }
     } catch (e) { setRegimeError("Error: " + e.message); }
     setRegimeLoading(false);
+  }, []);
+
+  const fetchRegimeAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
+    try {
+      const resp = await fetch("/api/regime?analytics=true");
+      const json = await resp.json();
+      if (resp.ok && json.analytics) {
+        setRegimeAnalytics(json.analytics);
+        // Also update regime data if we got it
+        if (json.regime) setRegimeData(prev => prev ? { ...prev, regime: json.regime } : { regime: json.regime });
+      }
+    } catch (e) { console.warn("Analytics fetch failed:", e); }
+    setAnalyticsLoading(false);
   }, []);
 
   const didHydrate = useRef(false);
@@ -591,7 +607,7 @@ export default function App() {
         const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2015-01-01&end=2025-12-31`);
         const json = await resp.json();
         if (json.data) Object.assign(histData, json.data);
-        if (i + 8 < allSymbols.length) await new Promise(r => setTimeout(r, 8000)); // 8s between batches for free tier
+        if (i + 8 < allSymbols.length) await new Promise(r => setTimeout(r, 500)); // short delay between batches
       }
     } catch (e) {
       setBtProgress("Error fetching historical data: " + e.message);
@@ -1498,6 +1514,198 @@ useEffect(() => {
                         {r.regime === "neutral" && "Consider: Balanced objective with moderate vol target. Transition periods benefit from diversification. Monitor signals closely for regime shift confirmation."}
                       </div>
                     </div>
+                  </div>;
+                })()}
+              </div>
+
+              {/* ── Regime Duration Analytics ── */}
+              <div style={cardS}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>📊 Regime Duration & Entry Signal Analysis</div>
+                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>Historical regime episodes, transition probabilities, and forward returns by duration. Uses FRED data 2015–2025.</div>
+                  </div>
+                  <button onClick={fetchRegimeAnalytics} disabled={analyticsLoading} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(251,191,36,.2)", background: "rgba(251,191,36,.06)", color: cs.yellow, fontSize: 9, fontWeight: 600, cursor: analyticsLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
+                    {analyticsLoading ? "Computing..." : regimeAnalytics ? "⟳ Refresh" : "Run Analysis"}
+                  </button>
+                </div>
+
+                {!regimeAnalytics && !analyticsLoading && <div style={{ textAlign: "center", padding: 18, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>
+                  Click "Run Analysis" to compute regime episodes, transitions, and optimal entry signals from 10 years of FRED data.
+                </div>}
+
+                {regimeAnalytics && (() => {
+                  const a = regimeAnalytics;
+                  const regColors = { bull: cs.green, neutral: cs.yellow, bear: cs.red };
+
+                  return <div>
+                    {/* Current Position */}
+                    {a.current && <div style={{ padding: "12px 14px", borderRadius: 8, background: `${regColors[a.current.regime]}08`, border: `1px solid ${regColors[a.current.regime]}20`, marginBottom: 12 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: regColors[a.current.regime], marginBottom: 4 }}>Current Position</div>
+                      <div style={{ fontSize: 10, color: cs.dim, lineHeight: 1.7 }}>
+                        <span style={{ color: regColors[a.current.regime], fontWeight: 600 }}>{a.current.regime.toUpperCase()}</span> regime for <span style={{ color: cs.text, fontWeight: 600, fontFamily: mono2 }}>{a.current.runLength}</span> months
+                        {a.current.transition && <span> · Transition: <span style={{ fontFamily: mono2, color: cs.text }}>{a.current.transition}</span></span>}
+                        {a.current.prevDuration && <span> · Previous {a.current.prevRegime} lasted {a.current.prevDuration}m</span>}
+                      </div>
+                      {a.current.signalMatch && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.02)" }}>
+                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.blue, marginBottom: 3 }}>📍 Historical Pattern Match ({a.current.signalMatch.historicalMatches} similar episodes)</div>
+                        <div style={{ display: "flex", gap: 10, fontSize: 9 }}>
+                          {["1m","3m","6m","12m"].map(h => {
+                            const v = a.current.signalMatch.avgForwardReturns[h];
+                            return v != null ? <span key={h} style={{ fontFamily: mono2 }}>{h}: <span style={{ color: v >= 0 ? cs.green : cs.red, fontWeight: 600 }}>{v > 0 ? "+" : ""}{v}%</span></span> : null;
+                          })}
+                        </div>
+                        <div style={{ fontSize: 8, color: cs.muted, marginTop: 3 }}>Avg SPY forward returns when {a.current.transition} lasted ~{a.current.runLength}m historically</div>
+                      </div>}
+                    </div>}
+
+                    {/* Regime Timeline */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Regime Timeline ({a.episodes?.length} episodes, {a.totalMonths} months)</div>
+                    <div style={{ display: "flex", height: 28, borderRadius: 4, overflow: "hidden", marginBottom: 12, border: "1px solid rgba(255,255,255,.04)" }}>
+                      {a.episodes?.map((ep, i) => {
+                        const widthPct = (ep.months / a.totalMonths) * 100;
+                        return <div key={i} title={`${ep.regime}: ${ep.start} → ${ep.end} (${ep.months}m)`}
+                          style={{ width: `${widthPct}%`, minWidth: widthPct > 2 ? 0 : 2, background: `${regColors[ep.regime]}30`, borderRight: "1px solid rgba(0,0,0,.3)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "default" }}>
+                          {widthPct > 5 && <span style={{ fontSize: 7, color: regColors[ep.regime], fontFamily: mono2, fontWeight: 600 }}>{ep.months}m</span>}
+                        </div>;
+                      })}
+                    </div>
+
+                    {/* Duration Statistics */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 12 }}>
+                      {["bull","neutral","bear"].map(regime => {
+                        const s = a.durationStats?.[regime];
+                        if (!s) return null;
+                        return <div key={regime} style={{ padding: "10px 12px", borderRadius: 7, background: "rgba(255,255,255,.015)", border: `1px solid ${regColors[regime]}12` }}>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: regColors[regime], marginBottom: 4 }}>{regime.toUpperCase()}</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, fontSize: 9 }}>
+                            <div><span style={{ color: cs.dim }}>Episodes:</span> <span style={{ fontFamily: mono2 }}>{s.count}</span></div>
+                            <div><span style={{ color: cs.dim }}>Total:</span> <span style={{ fontFamily: mono2 }}>{s.totalMonths}m</span></div>
+                            <div><span style={{ color: cs.dim }}>Avg:</span> <span style={{ fontFamily: mono2 }}>{s.avg}m</span></div>
+                            <div><span style={{ color: cs.dim }}>Median:</span> <span style={{ fontFamily: mono2 }}>{s.median}m</span></div>
+                            <div><span style={{ color: cs.dim }}>Min:</span> <span style={{ fontFamily: mono2 }}>{s.min}m</span></div>
+                            <div><span style={{ color: cs.dim }}>Max:</span> <span style={{ fontFamily: mono2 }}>{s.max}m</span></div>
+                          </div>
+                        </div>;
+                      })}
+                    </div>
+
+                    {/* Transition Probability Matrix */}
+                    {a.transitionProb && <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Transition Probability Matrix (monthly)</div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                          <thead><tr>
+                            <th style={{ padding: "5px 8px", textAlign: "left", color: cs.dim, fontSize: 8 }}>From ↓ / To →</th>
+                            {["bull","neutral","bear"].map(to => <th key={to} style={{ padding: "5px 8px", textAlign: "center", color: regColors[to], fontSize: 8, fontWeight: 600 }}>{to.toUpperCase()}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {["bull","neutral","bear"].map(from => <tr key={from} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                              <td style={{ padding: "5px 8px", color: regColors[from], fontWeight: 600 }}>{from.toUpperCase()}</td>
+                              {["bull","neutral","bear"].map(to => {
+                                const pct = a.transitionProb[from]?.[to] || 0;
+                                const isHigh = pct > 50;
+                                return <td key={to} style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, fontWeight: isHigh ? 700 : 400, color: isHigh ? cs.text : cs.muted, background: isHigh ? "rgba(255,255,255,.03)" : "transparent" }}>{pct}%</td>;
+                              })}
+                            </tr>)}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>}
+
+                    {/* Forward Returns by Regime + Duration Heatmap */}
+                    {a.durationReturns && <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Forward SPY Returns by Regime & Duration</div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                          <thead><tr>
+                            <th style={{ padding: "5px 6px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Regime</th>
+                            <th style={{ padding: "5px 6px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Duration</th>
+                            <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>N</th>
+                            {["1m","3m","6m","12m"].map(h => <th key={h} style={{ padding: "5px 6px", textAlign: "center", color: cs.blue, fontSize: 8 }}>Fwd {h}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {["bull","neutral","bear"].map(regime =>
+                              Object.entries(a.durationReturns[regime] || {}).map(([bucket, d], i) =>
+                                <tr key={`${regime}-${bucket}`} style={{ borderTop: i === 0 ? `1px solid ${regColors[regime]}20` : "1px solid rgba(255,255,255,.02)" }}>
+                                  {i === 0 && <td rowSpan={Object.keys(a.durationReturns[regime] || {}).length} style={{ padding: "5px 6px", color: regColors[regime], fontWeight: 600, verticalAlign: "top" }}>{regime.toUpperCase()}</td>}
+                                  <td style={{ padding: "5px 6px", fontFamily: mono2, color: cs.dim }}>{bucket}</td>
+                                  <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, color: cs.muted }}>{d.n}</td>
+                                  {["1m","3m","6m","12m"].map(h => {
+                                    const v = d.avg[h];
+                                    return <td key={h} style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, fontWeight: 600, color: v == null ? cs.muted : v >= 0 ? cs.green : cs.red }}>{v != null ? `${v > 0 ? "+" : ""}${v}%` : "—"}</td>;
+                                  })}
+                                </tr>
+                              )
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>}
+
+                    {/* Optimal Entry Signals — ranked by 6m forward return */}
+                    {a.entrySignals?.length > 0 && <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>🎯 Optimal Entry Signals (ranked by 6m forward return)</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        {a.entrySignals.slice(0, 8).map((sig, i) => {
+                          const [from, to] = sig.pattern.split("→");
+                          const isBest = i === 0;
+                          return <div key={sig.pattern} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 6, background: isBest ? "rgba(110,231,183,.04)" : "rgba(255,255,255,.01)", border: `1px solid ${isBest ? "rgba(110,231,183,.15)" : "rgba(255,255,255,.03)"}` }}>
+                            <div style={{ fontSize: 12, width: 20, textAlign: "center" }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i+1}`}</div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                                <span style={{ fontSize: 10, fontWeight: 600, color: regColors[from] }}>{from.toUpperCase()}</span>
+                                <span style={{ fontSize: 8, color: cs.muted }}>→</span>
+                                <span style={{ fontSize: 10, fontWeight: 600, color: regColors[to] }}>{to.toUpperCase()}</span>
+                                <span style={{ fontSize: 8, color: cs.muted, marginLeft: 4 }}>({sig.count} occurrences, avg {sig.avgDuration}m)</span>
+                              </div>
+                              <div style={{ display: "flex", gap: 8, fontSize: 9 }}>
+                                {["1m","3m","6m","12m"].map(h => {
+                                  const v = sig[`fwd${h}`];
+                                  return v != null ? <span key={h} style={{ fontFamily: mono2 }}>{h}: <span style={{ color: v >= 0 ? cs.green : cs.red, fontWeight: 600 }}>{v > 0 ? "+" : ""}{v}%</span></span> : null;
+                                })}
+                              </div>
+                            </div>
+                          </div>;
+                        })}
+                      </div>
+                      <div style={{ fontSize: 8, color: cs.muted, marginTop: 6 }}>Entry signals show avg SPY forward returns after each regime transition. Best entries historically: switch from bear → bull or bear → neutral with 3+ months persistence.</div>
+                    </div>}
+
+                    {/* Transition Patterns Detail */}
+                    {a.transitionPatterns && <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Transition Pattern Forward Returns</div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                          <thead><tr>
+                            <th style={{ padding: "5px 6px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Transition</th>
+                            <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>N</th>
+                            <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Avg Dur</th>
+                            {["1m","3m","6m","12m"].map(h => <th key={h} style={{ padding: "5px 6px", textAlign: "center", color: cs.blue, fontSize: 8 }}>Fwd {h}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {Object.entries(a.transitionPatterns).sort(([,a2],[,b2]) => (b2.avgFwd["6m"]||0) - (a2.avgFwd["6m"]||0)).map(([pattern, p]) => {
+                              const [from, to] = pattern.split("→");
+                              const isActive = pattern === a.current?.transition;
+                              return <tr key={pattern} style={{ borderTop: "1px solid rgba(255,255,255,.03)", background: isActive ? "rgba(251,191,36,.04)" : "transparent" }}>
+                                <td style={{ padding: "5px 6px" }}>
+                                  <span style={{ color: regColors[from], fontWeight: 600 }}>{from}</span>
+                                  <span style={{ color: cs.muted }}> → </span>
+                                  <span style={{ color: regColors[to], fontWeight: 600 }}>{to}</span>
+                                  {isActive && <span style={{ fontSize: 7, color: cs.yellow, marginLeft: 4 }}>● NOW</span>}
+                                </td>
+                                <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, color: cs.muted }}>{p.count}</td>
+                                <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, color: cs.muted }}>{p.avgDuration}m</td>
+                                {["1m","3m","6m","12m"].map(h => {
+                                  const v = p.avgFwd[h];
+                                  return <td key={h} style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, fontWeight: 600, color: v == null ? cs.muted : v >= 0 ? cs.green : cs.red }}>{v != null ? `${v > 0 ? "+" : ""}${v}%` : "—"}</td>;
+                                })}
+                              </tr>;
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>}
                   </div>;
                 })()}
               </div>
