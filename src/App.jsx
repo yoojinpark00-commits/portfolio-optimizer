@@ -378,7 +378,13 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   for (let t = 0; t < numIterations; t++) {
-    const numActive = Math.min(n, 3 + Math.floor(Math.random() * Math.min(8, Math.max(1, n - 2))));
+    // Position count distribution: favor 4-7 (sweet spot), explore 3 and 8-10
+    let numActive;
+    const rnd = Math.random();
+    if (rnd < 0.10) numActive = 3;                                          // 10%: concentrated
+    else if (rnd < 0.70) numActive = 4 + Math.floor(Math.random() * 4);     // 60%: 4-7 sweet spot
+    else numActive = 8 + Math.floor(Math.random() * 3);                     // 30%: 8-10 diversified
+    numActive = Math.min(numActive, n);
 
     // Warm-start: 70% of iterations mutate the best-so-far, 30% random exploration
     const warmStart = best && t > 10 && Math.random() < 0.7;
@@ -458,15 +464,35 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     let regimeBonus = 0;
     if (hasRegimeTilt) for (let i = 0; i < n; i++) regimeBonus += (alloc[i] / deployAmt) * regimeTilt[i];
 
+    // ── Diversification-aware position count scoring ──
+    // Idiosyncratic risk decreases as ~1/√n. Below 3 positions, unsystematic risk dominates.
+    // Sweet spot is 4-7: enough diversification without diluting alpha.
     let activeCount = 0;
-    for (let i = 0; i < n; i++) if (alloc[i] > deployAmt * 0.03) activeCount++;
-    const concBonus = activeCount <= 3 ? 0.06 : activeCount <= 5 ? 0.04 : activeCount <= 7 ? 0.02 : 0;
+    let maxSingleWt = 0;
+    for (let i = 0; i < n; i++) {
+      const wt = alloc[i] / (deployAmt || 1);
+      if (alloc[i] > deployAmt * 0.03) activeCount++;
+      if (wt > maxSingleWt) maxSingleWt = wt;
+    }
+    // Position count curve: penalty for 1-2, bonus for 4-7, neutral at 3 and 8+
+    let divScore;
+    if (activeCount <= 1) divScore = -0.10;       // extreme concentration — single stock risk
+    else if (activeCount === 2) divScore = -0.04;  // still very concentrated
+    else if (activeCount === 3) divScore = 0.0;    // acceptable but borderline
+    else if (activeCount <= 5) divScore = 0.03;    // sweet spot: high conviction + diversified
+    else if (activeCount <= 7) divScore = 0.02;    // good diversification
+    else divScore = 0.0;                           // 8+: no bonus, let performance decide
+
+    // Single-position concentration penalty: if any one position > 40%, penalize
+    // (even a 5-position portfolio with one 60% position has too much idiosyncratic risk)
+    const concPenalty = maxSingleWt > 0.40 ? -0.05 * (maxSingleWt - 0.40) / 0.60 : 0;
 
     let sc;
-    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + concBonus + levPenalty;
-    else if (target === "min_vol") sc = -vol + regimeBonus + concBonus + levPenalty;
-    else if (target === "max_return") sc = ret + volPenalty + regimeBonus + concBonus + levPenalty;
-    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + concBonus + levPenalty;
+    const divAdj = divScore + concPenalty;
+    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty;
+    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty;
+    else if (target === "max_return") sc = ret + volPenalty + regimeBonus + divAdj + levPenalty;
+    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + divAdj + levPenalty;
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
