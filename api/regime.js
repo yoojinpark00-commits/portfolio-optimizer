@@ -22,6 +22,7 @@ export default async function handler(req, res) {
   }
 
   const isHistory = req.query.history === "true";
+  const isAnalytics = req.query.analytics === "true";
 
   const series = {
     hy_oas: "BAMLH0A0HYM2",
@@ -32,9 +33,8 @@ export default async function handler(req, res) {
     t10y2y: "T10Y2Y",
   };
 
-  // For history mode, go back to 2012 (3yr lookback before 2015 for z-scores)
-  // For live mode, just 3 years
-  const startDate = isHistory ? "2012-01-01" : new Date(Date.now() - 3 * 365.25 * 86400000).toISOString().slice(0, 10);
+  // For history/analytics mode, go back to 2012 (3yr lookback before 2015)
+  const startDate = (isHistory || isAnalytics) ? "2012-01-01" : new Date(Date.now() - 3 * 365.25 * 86400000).toISOString().slice(0, 10);
 
   const data = {};
   const errors = [];
@@ -66,11 +66,23 @@ export default async function handler(req, res) {
 
   // If history mode, compute monthly regime for every month from 2015-01 to 2025-12
   let monthlyRegimes = null;
-  if (isHistory) {
+  if (isHistory || isAnalytics) {
     monthlyRegimes = computeMonthlyRegimes(data);
   }
 
-  return res.status(200).json({ data: isHistory ? undefined : data, regime, monthlyRegimes, errors });
+  // If analytics mode, compute regime episodes, transitions, and forward returns
+  let analytics = null;
+  if (isAnalytics && monthlyRegimes) {
+    analytics = computeRegimeAnalytics(monthlyRegimes, data);
+  }
+
+  return res.status(200).json({
+    data: (isHistory || isAnalytics) ? undefined : data,
+    regime,
+    monthlyRegimes: isHistory ? monthlyRegimes : undefined,
+    analytics,
+    errors,
+  });
 }
 
 // ─── Z-score over a rolling window of values ───
@@ -173,6 +185,258 @@ function computeMonthlyRegimes(data) {
   }
 
   return results;
+}
+
+// ─── Regime Analytics: episodes, transitions, forward returns, entry signals ───
+function computeRegimeAnalytics(monthlyRegimes, data) {
+  if (!monthlyRegimes || monthlyRegimes.length < 12) return null;
+
+  // ── 1. Extract regime episodes (continuous periods of same regime) ──
+  const episodes = [];
+  let currentEp = { regime: monthlyRegimes[0].regime, start: monthlyRegimes[0].date, months: 1, startScore: monthlyRegimes[0].score };
+  
+  for (let i = 1; i < monthlyRegimes.length; i++) {
+    if (monthlyRegimes[i].regime === currentEp.regime) {
+      currentEp.months++;
+    } else {
+      currentEp.end = monthlyRegimes[i - 1].date;
+      currentEp.endScore = monthlyRegimes[i - 1].score;
+      currentEp.nextRegime = monthlyRegimes[i].regime;
+      episodes.push({ ...currentEp });
+      currentEp = { regime: monthlyRegimes[i].regime, start: monthlyRegimes[i].date, months: 1, startScore: monthlyRegimes[i].score };
+    }
+  }
+  // Close final episode
+  currentEp.end = monthlyRegimes[monthlyRegimes.length - 1].date;
+  currentEp.endScore = monthlyRegimes[monthlyRegimes.length - 1].score;
+  currentEp.nextRegime = null; // still ongoing
+  episodes.push(currentEp);
+
+  // ── 2. Compute monthly SPY returns from FRED data ──
+  const spyMonthly = {};
+  if (data.sp500?.length > 0) {
+    // Group SP500 daily data into monthly close prices
+    const byMonth = {};
+    for (const d of data.sp500) {
+      const key = d.date.slice(0, 7); // "YYYY-MM"
+      byMonth[key] = d.value; // last value in month = close
+    }
+    const months = Object.keys(byMonth).sort();
+    for (let i = 1; i < months.length; i++) {
+      spyMonthly[months[i]] = {
+        close: byMonth[months[i]],
+        ret: (byMonth[months[i]] - byMonth[months[i - 1]]) / byMonth[months[i - 1]],
+      };
+    }
+  }
+
+  // ── 3. Forward return computation for each month ──
+  // For each month in the regime series, compute forward 1m, 3m, 6m, 12m SPY returns
+  const regimeDates = monthlyRegimes.map(r => r.date);
+  const forwardReturns = {};
+  for (let i = 0; i < monthlyRegimes.length; i++) {
+    const d = monthlyRegimes[i].date;
+    const spyNow = spyMonthly[d]?.close;
+    if (!spyNow) continue;
+    const fwd = {};
+    for (const [label, offset] of [["1m", 1], ["3m", 3], ["6m", 6], ["12m", 12]]) {
+      if (i + offset < monthlyRegimes.length) {
+        const futureDate = monthlyRegimes[i + offset].date;
+        const spyFuture = spyMonthly[futureDate]?.close;
+        if (spyFuture) fwd[label] = ((spyFuture - spyNow) / spyNow) * 100;
+      }
+    }
+    forwardReturns[d] = fwd;
+  }
+
+  // ── 4. Transition matrix: P(next regime | current regime) ──
+  const transitions = { bull: { bull: 0, neutral: 0, bear: 0 }, neutral: { bull: 0, neutral: 0, bear: 0 }, bear: { bull: 0, neutral: 0, bear: 0 } };
+  for (let i = 1; i < monthlyRegimes.length; i++) {
+    const from = monthlyRegimes[i - 1].regime;
+    const to = monthlyRegimes[i].regime;
+    if (transitions[from]) transitions[from][to]++;
+  }
+  // Normalize to probabilities
+  const transitionProb = {};
+  for (const from of ["bull", "neutral", "bear"]) {
+    const total = transitions[from].bull + transitions[from].neutral + transitions[from].bear;
+    transitionProb[from] = {};
+    for (const to of ["bull", "neutral", "bear"]) {
+      transitionProb[from][to] = total > 0 ? Math.round((transitions[from][to] / total) * 100) : 0;
+    }
+  }
+
+  // ── 5. Duration statistics by regime ──
+  const durationStats = {};
+  for (const regime of ["bull", "neutral", "bear"]) {
+    const eps = episodes.filter(e => e.regime === regime);
+    const durations = eps.map(e => e.months);
+    if (durations.length === 0) { durationStats[regime] = { count: 0, avg: 0, min: 0, max: 0, median: 0 }; continue; }
+    durations.sort((a, b) => a - b);
+    durationStats[regime] = {
+      count: eps.length,
+      avg: Math.round(durations.reduce((s, d) => s + d, 0) / durations.length * 10) / 10,
+      min: durations[0],
+      max: durations[durations.length - 1],
+      median: durations[Math.floor(durations.length / 2)],
+      totalMonths: durations.reduce((s, d) => s + d, 0),
+    };
+  }
+
+  // ── 6. Forward returns by regime AND duration bucket ──
+  // Group: { regime: "bull", durationBucket: "1-3m" } → average forward returns
+  const buckets = [
+    { label: "1-2m", min: 1, max: 2 },
+    { label: "3-5m", min: 3, max: 5 },
+    { label: "6-11m", min: 6, max: 11 },
+    { label: "12m+", min: 12, max: 999 },
+  ];
+  
+  const durationReturns = {};
+  for (const regime of ["bull", "neutral", "bear"]) {
+    durationReturns[regime] = {};
+    for (const bucket of buckets) {
+      const samples = [];
+      // Find all months where regime = X and consecutive duration so far falls in bucket
+      let runLength = 0;
+      let prevRegime = null;
+      for (let i = 0; i < monthlyRegimes.length; i++) {
+        if (monthlyRegimes[i].regime === regime) {
+          runLength = (prevRegime === regime) ? runLength + 1 : 1;
+        } else {
+          runLength = 0;
+        }
+        prevRegime = monthlyRegimes[i].regime;
+        
+        if (monthlyRegimes[i].regime === regime && runLength >= bucket.min && runLength <= bucket.max) {
+          const fwd = forwardReturns[monthlyRegimes[i].date];
+          if (fwd) samples.push(fwd);
+        }
+      }
+      
+      if (samples.length > 0) {
+        const avg = {};
+        for (const horizon of ["1m", "3m", "6m", "12m"]) {
+          const vals = samples.filter(s => s[horizon] != null).map(s => s[horizon]);
+          avg[horizon] = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length * 10) / 10 : null;
+        }
+        durationReturns[regime][bucket.label] = { avg, n: samples.length };
+      }
+    }
+  }
+
+  // ── 7. Transition-based forward returns (key insight for entry signals) ──
+  // "After switching from bear → neutral, how did markets perform at month N of neutral?"
+  const transitionReturns = [];
+  for (let i = 1; i < episodes.length; i++) {
+    const prev = episodes[i - 1];
+    const curr = episodes[i];
+    // Find the monthly index where this episode starts
+    const startIdx = monthlyRegimes.findIndex(m => m.date === curr.start);
+    if (startIdx < 0) continue;
+    
+    const entry = {
+      from: prev.regime,
+      to: curr.regime,
+      duration: curr.months,
+      startDate: curr.start,
+      fwdReturns: {},
+    };
+    
+    // Forward returns from the START of the new regime
+    for (const [label, offset] of [["1m", 1], ["3m", 3], ["6m", 6], ["12m", 12]]) {
+      const fwd = forwardReturns[curr.start];
+      if (fwd?.[label] != null) entry.fwdReturns[label] = fwd[label];
+    }
+    transitionReturns.push(entry);
+  }
+  
+  // Aggregate transition returns by pattern
+  const transitionPatterns = {};
+  for (const tr of transitionReturns) {
+    const key = `${tr.from}→${tr.to}`;
+    if (!transitionPatterns[key]) transitionPatterns[key] = { transitions: [], avgFwd: {} };
+    transitionPatterns[key].transitions.push(tr);
+  }
+  for (const [key, pat] of Object.entries(transitionPatterns)) {
+    for (const horizon of ["1m", "3m", "6m", "12m"]) {
+      const vals = pat.transitions.filter(t => t.fwdReturns[horizon] != null).map(t => t.fwdReturns[horizon]);
+      pat.avgFwd[horizon] = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length * 10) / 10 : null;
+    }
+    pat.count = pat.transitions.length;
+    pat.avgDuration = Math.round(pat.transitions.reduce((s, t) => s + t.duration, 0) / pat.transitions.length * 10) / 10;
+  }
+
+  // ── 8. Current regime position and signal ──
+  const lastRegime = monthlyRegimes[monthlyRegimes.length - 1];
+  let currentRunLength = 0;
+  for (let i = monthlyRegimes.length - 1; i >= 0; i--) {
+    if (monthlyRegimes[i].regime === lastRegime.regime) currentRunLength++;
+    else break;
+  }
+  
+  // Find the transition that led to current regime
+  const lastEpisode = episodes[episodes.length - 1];
+  const prevEpisode = episodes.length > 1 ? episodes[episodes.length - 2] : null;
+  const currentTransition = prevEpisode ? `${prevEpisode.regime}→${lastEpisode.regime}` : null;
+  
+  // Historical pattern match: what happened historically when this transition + duration occurred?
+  let signalMatch = null;
+  if (currentTransition && transitionPatterns[currentTransition]) {
+    const pat = transitionPatterns[currentTransition];
+    // Find episodes with similar duration
+    const similar = pat.transitions.filter(t => Math.abs(t.duration - currentRunLength) <= 2);
+    if (similar.length > 0) {
+      const avgFwd = {};
+      for (const horizon of ["1m", "3m", "6m", "12m"]) {
+        const vals = similar.filter(t => t.fwdReturns[horizon] != null).map(t => t.fwdReturns[horizon]);
+        avgFwd[horizon] = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length * 10) / 10 : null;
+      }
+      signalMatch = {
+        pattern: currentTransition,
+        currentDuration: currentRunLength,
+        historicalMatches: similar.length,
+        avgForwardReturns: avgFwd,
+        dates: similar.map(t => t.startDate),
+      };
+    }
+  }
+
+  // ── 9. Optimal entry signals summary ──
+  // Rank all transition patterns by 6m forward return
+  const entrySignals = Object.entries(transitionPatterns)
+    .filter(([, p]) => p.avgFwd["6m"] != null && p.count >= 2)
+    .map(([pattern, p]) => ({
+      pattern,
+      count: p.count,
+      avgDuration: p.avgDuration,
+      fwd1m: p.avgFwd["1m"],
+      fwd3m: p.avgFwd["3m"],
+      fwd6m: p.avgFwd["6m"],
+      fwd12m: p.avgFwd["12m"],
+    }))
+    .sort((a, b) => (b.fwd6m || 0) - (a.fwd6m || 0));
+
+  return {
+    episodes,
+    durationStats,
+    transitionProb,
+    durationReturns,
+    transitionPatterns: Object.fromEntries(
+      Object.entries(transitionPatterns).map(([k, v]) => [k, { count: v.count, avgDuration: v.avgDuration, avgFwd: v.avgFwd }])
+    ),
+    entrySignals,
+    current: {
+      regime: lastRegime.regime,
+      score: lastRegime.score,
+      runLength: currentRunLength,
+      transition: currentTransition,
+      prevRegime: prevEpisode?.regime || null,
+      prevDuration: prevEpisode?.months || null,
+      signalMatch,
+    },
+    totalMonths: monthlyRegimes.length,
+  };
 }
 
 // ─── Compute latest regime (for live dashboard) ───
