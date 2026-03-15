@@ -159,38 +159,6 @@ const ETF_DB = [
   {t:"SSO",n:"ProShares 2x S&P 500",c:"US Large Cap",h:503,er:.89,r:18.0,v:30.0,d:0,lev:2},
 ];
 
-// ── Individual Stocks for optimization (major liquid names, all existed 2015-2025) ──
-// Category mapping uses same system as ETFs for correlation matrix compatibility
-// r/v are approximate annualized figures — backtest uses actual trailing data, these are defaults only
-const STOCK_DB = [
-  // Mega-cap Tech
-  {t:"AAPL",n:"Apple",c:"Sector Tech",r:28,v:28,er:0,d:0.5,h:1,type:"stock"},
-  {t:"MSFT",n:"Microsoft",c:"Sector Tech",r:30,v:27,er:0,d:0.7,h:1,type:"stock"},
-  {t:"GOOGL",n:"Alphabet",c:"Sector Comms",r:22,v:30,er:0,d:0,h:1,type:"stock"},
-  {t:"AMZN",n:"Amazon",c:"Sector Consumer",r:25,v:32,er:0,d:0,h:1,type:"stock"},
-  {t:"NVDA",n:"NVIDIA",c:"Sector Tech",r:55,v:50,er:0,d:0.02,h:1,type:"stock"},
-  {t:"META",n:"Meta Platforms",c:"Sector Comms",r:20,v:40,er:0,d:0.4,h:1,type:"stock"},
-  {t:"TSLA",n:"Tesla",c:"Sector Consumer",r:40,v:60,er:0,d:0,h:1,type:"stock"},
-  // Financials
-  {t:"JPM",n:"JPMorgan Chase",c:"Sector Finance",r:18,v:25,er:0,d:2.3,h:1,type:"stock"},
-  {t:"V",n:"Visa",c:"Sector Finance",r:20,v:22,er:0,d:0.8,h:1,type:"stock"},
-  {t:"BRK-B",n:"Berkshire Hathaway B",c:"Sector Finance",r:16,v:20,er:0,d:0,h:1,type:"stock"},
-  // Healthcare
-  {t:"UNH",n:"UnitedHealth",c:"Sector Health",r:22,v:22,er:0,d:1.3,h:1,type:"stock"},
-  {t:"JNJ",n:"Johnson & Johnson",c:"Sector Health",r:8,v:16,er:0,d:2.8,h:1,type:"stock"},
-  {t:"LLY",n:"Eli Lilly",c:"Sector Health",r:35,v:28,er:0,d:0.7,h:1,type:"stock"},
-  // Energy
-  {t:"XOM",n:"Exxon Mobil",c:"Sector Energy",r:12,v:25,er:0,d:3.2,h:1,type:"stock"},
-  {t:"CVX",n:"Chevron",c:"Sector Energy",r:10,v:24,er:0,d:3.5,h:1,type:"stock"},
-  // Consumer
-  {t:"WMT",n:"Walmart",c:"Sector Consumer",r:14,v:18,er:0,d:1.4,h:1,type:"stock"},
-  {t:"COST",n:"Costco",c:"Sector Consumer",r:22,v:22,er:0,d:0.6,h:1,type:"stock"},
-  {t:"HD",n:"Home Depot",c:"Sector Consumer",r:18,v:24,er:0,d:2.3,h:1,type:"stock"},
-  // Industrial / Defensive
-  {t:"CAT",n:"Caterpillar",c:"Sector Indust",r:18,v:28,er:0,d:1.5,h:1,type:"stock"},
-  {t:"PG",n:"Procter & Gamble",c:"Sector Consumer",r:10,v:16,er:0,d:2.4,h:1,type:"stock"},
-];
-
 const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
 function gc(a,b){if(a===b)return 1;return CORR[a]?.[b]??CORR[b]?.[a]??.5}
 
@@ -200,6 +168,10 @@ const PAL=["#6ee7b7","#60a5fa","#f472b6","#fbbf24","#a78bfa","#fb923c","#34d399"
 const STOCK_DB=[
   {t:"AAPL",n:"Apple Inc.",s:"Technology"},{t:"MSFT",n:"Microsoft",s:"Technology"},{t:"GOOGL",n:"Alphabet (A)",s:"Technology"},{t:"AMZN",n:"Amazon",s:"Consumer"},{t:"NVDA",n:"NVIDIA",s:"Technology"},{t:"META",n:"Meta Platforms",s:"Technology"},{t:"TSLA",n:"Tesla",s:"Consumer"},{t:"BRK.B",n:"Berkshire B",s:"Financial"},{t:"LLY",n:"Eli Lilly",s:"Healthcare"},{t:"V",n:"Visa",s:"Financial"},{t:"JPM",n:"JPMorgan",s:"Financial"},{t:"UNH",n:"UnitedHealth",s:"Healthcare"},{t:"MA",n:"Mastercard",s:"Financial"},{t:"XOM",n:"Exxon Mobil",s:"Energy"},{t:"JNJ",n:"J&J",s:"Healthcare"},{t:"PG",n:"Procter & Gamble",s:"Consumer"},{t:"AVGO",n:"Broadcom",s:"Technology"},{t:"HD",n:"Home Depot",s:"Consumer"},{t:"COST",n:"Costco",s:"Consumer"},{t:"MRK",n:"Merck",s:"Healthcare"},{t:"ABBV",n:"AbbVie",s:"Healthcare"},{t:"CVX",n:"Chevron",s:"Energy"},{t:"CRM",n:"Salesforce",s:"Technology"},{t:"AMD",n:"AMD",s:"Technology"},{t:"KO",n:"Coca-Cola",s:"Consumer"},{t:"PEP",n:"PepsiCo",s:"Consumer"},{t:"NFLX",n:"Netflix",s:"Technology"},{t:"ADBE",n:"Adobe",s:"Technology"},{t:"WMT",n:"Walmart",s:"Consumer"},{t:"BAC",n:"Bank of America",s:"Financial"},{t:"DIS",n:"Disney",s:"Communications"},{t:"CSCO",n:"Cisco",s:"Technology"},{t:"INTC",n:"Intel",s:"Technology"},{t:"ORCL",n:"Oracle",s:"Technology"},{t:"IBM",n:"IBM",s:"Technology"},{t:"QCOM",n:"Qualcomm",s:"Technology"},{t:"GE",n:"GE",s:"Industrial"},{t:"CAT",n:"Caterpillar",s:"Industrial"},{t:"BA",n:"Boeing",s:"Industrial"},{t:"GS",n:"Goldman Sachs",s:"Financial"},{t:"MS",n:"Morgan Stanley",s:"Financial"},{t:"UBER",n:"Uber",s:"Technology"},{t:"SBUX",n:"Starbucks",s:"Consumer"},{t:"INTU",n:"Intuit",s:"Technology"},{t:"ISRG",n:"Intuitive Surgical",s:"Healthcare"},{t:"PFE",n:"Pfizer",s:"Healthcare"},{t:"NOW",n:"ServiceNow",s:"Technology"},{t:"LMT",n:"Lockheed Martin",s:"Industrial"},{t:"PLTR",n:"Palantir",s:"Technology"},{t:"PANW",n:"Palo Alto Networks",s:"Technology"},{t:"SHOP",n:"Shopify",s:"Technology"},{t:"SQ",n:"Block",s:"Technology"},{t:"COIN",n:"Coinbase",s:"Financial"},{t:"CRWD",n:"CrowdStrike",s:"Technology"},{t:"NET",n:"Cloudflare",s:"Technology"},{t:"ABNB",n:"Airbnb",s:"Consumer"},{t:"PYPL",n:"PayPal",s:"Financial"},{t:"MU",n:"Micron",s:"Technology"},{t:"BABA",n:"Alibaba (ADR)",s:"Technology"},{t:"BILI",n:"Bilibili (ADR)",s:"Communications"},{t:"EXAS",n:"Exact Sciences",s:"Healthcare"},{t:"JD",n:"JD.com (ADR)",s:"Consumer"},{t:"PDD",n:"PDD Holdings",s:"Consumer"},{t:"NIO",n:"NIO (ADR)",s:"Consumer"},{t:"TSM",n:"Taiwan Semi (ADR)",s:"Technology"},{t:"ASML",n:"ASML (ADR)",s:"Technology"},{t:"ARM",n:"Arm Holdings",s:"Technology"},{t:"SMCI",n:"Super Micro",s:"Technology"},{t:"APP",n:"AppLovin",s:"Technology"},{t:"SOFI",n:"SoFi",s:"Financial"},{t:"RIVN",n:"Rivian",s:"Consumer"},{t:"HOOD",n:"Robinhood",s:"Financial"},{t:"IONQ",n:"IonQ",s:"Technology"},{t:"SOUN",n:"SoundHound AI",s:"Technology"},{t:"RKLB",n:"Rocket Lab",s:"Industrial"},{t:"DELL",n:"Dell",s:"Technology"},{t:"SNOW",n:"Snowflake",s:"Technology"},{t:"DASH",n:"DoorDash",s:"Technology"},{t:"SPOT",n:"Spotify",s:"Communications"},{t:"DDOG",n:"Datadog",s:"Technology"},{t:"AFRM",n:"Affirm",s:"Technology"},{t:"F",n:"Ford",s:"Consumer"},{t:"GM",n:"General Motors",s:"Consumer"},{t:"MRNA",n:"Moderna",s:"Healthcare"},{t:"CVS",n:"CVS Health",s:"Healthcare"},{t:"REGN",n:"Regeneron",s:"Healthcare"},{t:"VRTX",n:"Vertex Pharma",s:"Healthcare"},{t:"GILD",n:"Gilead",s:"Healthcare"},{t:"CI",n:"Cigna",s:"Healthcare"},{t:"DHR",n:"Danaher",s:"Healthcare"},{t:"C",n:"Citigroup",s:"Financial"},{t:"SCHW",n:"Charles Schwab",s:"Financial"},{t:"CME",n:"CME Group",s:"Financial"},{t:"ICE",n:"Intercontinental Exch",s:"Financial"},{t:"COP",n:"ConocoPhillips",s:"Energy"},{t:"OXY",n:"Occidental Petroleum",s:"Energy"},{t:"FSLR",n:"First Solar",s:"Energy"},{t:"O",n:"Realty Income",s:"Real Estate"},{t:"AMT",n:"American Tower",s:"Real Estate"},{t:"NEE",n:"NextEra Energy",s:"Utilities"},{t:"SO",n:"Southern Co",s:"Utilities"},{t:"NEM",n:"Newmont",s:"Materials"},{t:"FCX",n:"Freeport-McMoRan",s:"Materials"},{t:"GOLD",n:"Barrick Gold",s:"Materials"},{t:"LULU",n:"Lululemon",s:"Consumer"},{t:"CMG",n:"Chipotle",s:"Consumer"},{t:"MCD",n:"McDonald's",s:"Consumer"},{t:"TGT",n:"Target",s:"Consumer"},{t:"LOW",n:"Lowe's",s:"Consumer"},{t:"HON",n:"Honeywell",s:"Industrial"},{t:"ETN",n:"Eaton",s:"Industrial"},{t:"DE",n:"Deere",s:"Industrial"},{t:"UPS",n:"UPS",s:"Industrial"},{t:"FDX",n:"FedEx",s:"Industrial"},{t:"DAL",n:"Delta Air Lines",s:"Industrial"},{t:"TMUS",n:"T-Mobile",s:"Communications"},{t:"CMCSA",n:"Comcast",s:"Communications"},{t:"EA",n:"Electronic Arts",s:"Communications"},{t:"NXPI",n:"NXP Semi",s:"Technology"},{t:"ADI",n:"Analog Devices",s:"Technology"},{t:"SNPS",n:"Synopsys",s:"Technology"},{t:"CDNS",n:"Cadence Design",s:"Technology"},{t:"FTNT",n:"Fortinet",s:"Technology"},{t:"WDAY",n:"Workday",s:"Technology"},{t:"TEAM",n:"Atlassian",s:"Technology"},{t:"HUBS",n:"HubSpot",s:"Technology"},{t:"MELI",n:"MercadoLibre",s:"Consumer"},{t:"NU",n:"Nu Holdings",s:"Financial"},{t:"SE",n:"Sea Limited",s:"Technology"},{t:"CPNG",n:"Coupang",s:"Consumer"},{t:"VALE",n:"Vale (ADR)",s:"Materials"},{t:"BHP",n:"BHP (ADR)",s:"Materials"},{t:"RIO",n:"Rio Tinto (ADR)",s:"Materials"},
 ];
+
+// Map STOCK_DB sector names to optimizer category system
+const SECTOR_TO_CAT = {"Technology":"Sector Tech","Consumer":"Sector Consumer","Financial":"Sector Finance","Healthcare":"Sector Health","Energy":"Sector Energy","Industrial":"Sector Indust","Communications":"Sector Comms","Real Estate":"Sector RE","Utilities":"Sector Utilities","Materials":"Sector Materials"};
+const STOCK_OPT = STOCK_DB.map(s => ({ t: s.t, n: s.n, c: SECTOR_TO_CAT[s.s] || "Stock", r: 12, v: 25, er: 0, d: 0, h: 1, type: "stock" }));
 
 // ═══ ENGINE ═══
 // VaR at 95% confidence (parametric): VaR = σ × 1.645
@@ -882,7 +854,7 @@ export default function App() {
     let lastBestWeights = null; // for warm-starting optimizer
     const btTaxRates = getTaxRates(taxState);
     const rebalanceEvents = [];
-    const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_DB.forEach(s => { etfDbMap[s.t] = s; });
+    const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
     // Only simulate months where SPY data actually exists
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
     const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12" && spyDates.has(d));
@@ -1243,7 +1215,7 @@ useEffect(() => {
   }), [sq, sc]);
 
   const frontier = useMemo(() => {
-    try { if (cashBalance <= 0) return null; const fCands = includeStocks ? [...ETF_DB, ...STOCK_DB].slice(0, 40) : ETF_DB.slice(0, 30); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
+    try { if (cashBalance <= 0) return null; const fCands = includeStocks ? [...ETF_DB, ...STOCK_OPT].slice(0, 40) : ETF_DB.slice(0, 30); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
   }, [allPos, cashBalance, holdingsVal]);
 
   // ─── Ticker search ───
@@ -1405,7 +1377,7 @@ useEffect(() => {
         regimeCtx.transition = regimeAnalytics.current.transition || null;
       }
     }
-    const candidates = includeStocks ? [...ETF_DB, ...STOCK_DB] : ETF_DB;
+    const candidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
     const result = optimizeCash(allPos, cashBalance, holdingsVal, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
     setOptResult(result);
     setAccepted(new Set());
@@ -2410,7 +2382,6 @@ useEffect(() => {
                   <span style={{ fontSize: 8, color: cs.dim }}>🟧 Mild Risk-Off</span>
                   <span style={{ fontSize: 8, color: cs.dim }}>🔴 Strong Risk-Off</span>
                 </div>}
-                </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
                     <thead>
