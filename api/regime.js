@@ -5,11 +5,13 @@
 // GET /api/regime?history=true → monthly regimes for backtest
 // GET /api/regime?analytics=true → full analytics with episodes, transitions, entry signals
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
+
+  try {
 
   const apiKey = process.env.FRED_API_KEY;
   if (!apiKey) {
@@ -79,6 +81,11 @@ module.exports = async function handler(req, res) {
     errors,
     version: 2,
   });
+
+  } catch (err) {
+    console.error("Regime handler error:", err);
+    return res.status(500).json({ error: "Regime computation failed: " + err.message });
+  }
 }
 
 // ═══ HELPERS ═══
