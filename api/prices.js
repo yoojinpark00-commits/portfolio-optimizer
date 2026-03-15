@@ -1,68 +1,60 @@
 // api/prices.js — Vercel Serverless Function
-// Live quotes: Yahoo Finance (primary, free, no key) → Twelve Data (fallback)
-
-import yahooFinance from "yahoo-finance2";
+// Live quotes via Yahoo Finance public API (no package needed)
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { tickers, provider } = req.query;
+  const { tickers } = req.query;
   if (!tickers) return res.status(400).json({ error: "Missing ?tickers= param" });
 
-  const symbols = tickers.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 50);
+  const symbols = tickers.split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 50);
   if (!symbols.length) return res.status(400).json({ error: "No valid symbols" });
 
-  const forceTD = provider === "twelvedata";
-  const forceYahoo = provider === "yahoo";
+  const results = {};
 
-  // ── Try Yahoo Finance first ──
-  if (!forceTD) {
-    try {
-      const results = {};
+  try {
+    // Yahoo Finance v7 quote endpoint — public, no auth needed
+    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(",")}`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
 
-      await Promise.all(
-        symbols.map(async (sym) => {
-          try {
-            const q = await yahooFinance.quote(sym);
-            if (q && q.regularMarketPrice) {
-              results[sym] = {
-                price: q.regularMarketPrice || 0,
-                change: q.regularMarketChangePercent != null ? +q.regularMarketChangePercent.toFixed(2) : 0,
-                prevClose: q.regularMarketPreviousClose || 0,
-                open: q.regularMarketOpen || 0,
-                dayHigh: q.regularMarketDayHigh || 0,
-                dayLow: q.regularMarketDayLow || 0,
-                volume: q.regularMarketVolume || 0,
-                name: q.shortName || q.longName || "",
-                exchange: q.exchange || "",
-                currency: q.currency || "USD",
-                datetime: q.regularMarketTime instanceof Date ? q.regularMarketTime.toISOString() : "",
-                ts: Date.now(),
-              };
-            }
-          } catch (err) {
-            console.warn("Yahoo quote failed for " + sym + ": " + err.message);
-          }
-        })
-      );
+    if (!resp.ok) throw new Error(`Yahoo returned ${resp.status}`);
 
-      if (Object.keys(results).length > 0) {
-        return res.status(200).json({
-          data: results,
-          fetched: Object.keys(results).length,
-          requested: symbols.length,
-          provider: "yahoo",
-          timestamp: new Date().toISOString(),
-        });
-      }
-    } catch (err) {
-      console.warn("Yahoo Finance quote failed:", err.message);
-      if (forceYahoo) {
-        return res.status(500).json({ error: "Yahoo Finance failed", detail: err.message, provider: "yahoo" });
-      }
+    const json = await resp.json();
+    const quotes = json?.quoteResponse?.result || [];
+
+    for (const q of quotes) {
+      if (!q.symbol) continue;
+      results[q.symbol] = {
+        price: q.regularMarketPrice || 0,
+        change: q.regularMarketChangePercent != null ? +q.regularMarketChangePercent.toFixed(2) : 0,
+        prevClose: q.regularMarketPreviousClose || 0,
+        open: q.regularMarketOpen || 0,
+        dayHigh: q.regularMarketDayHigh || 0,
+        dayLow: q.regularMarketDayLow || 0,
+        volume: q.regularMarketVolume || 0,
+        name: q.shortName || q.longName || "",
+        exchange: q.exchange || "",
+        currency: q.currency || "USD",
+        datetime: "",
+        ts: Date.now(),
+      };
     }
+
+    if (Object.keys(results).length > 0) {
+      return res.status(200).json({
+        data: results,
+        fetched: Object.keys(results).length,
+        requested: symbols.length,
+        provider: "yahoo",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (err) {
+    console.warn("Yahoo Finance quote failed:", err.message);
   }
 
   // ── Fallback: Twelve Data ──
@@ -70,18 +62,13 @@ export default async function handler(req, res) {
   if (!apiKey) {
     return res.status(500).json({
       error: "Yahoo Finance unavailable and TWELVEDATA_API_KEY not set",
-      hint: "Check that yahoo-finance2 is installed, or add TWELVEDATA_API_KEY in Vercel env vars",
     });
   }
 
   try {
-    const url = "https://api.twelvedata.com/quote?symbol=" + symbols.join(",") + "&apikey=" + apiKey;
+    const url = `https://api.twelvedata.com/quote?symbol=${symbols.join(",")}&apikey=${apiKey}`;
     const resp = await fetch(url);
-    if (!resp.ok) {
-      return res.status(resp.status).json({ error: "Twelve Data API error", status: resp.status });
-    }
     const data = await resp.json();
-    const results = {};
 
     const parseQuote = (q) => {
       if (!q || q.status === "error" || !q.symbol) return null;
