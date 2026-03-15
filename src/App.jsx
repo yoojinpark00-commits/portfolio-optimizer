@@ -842,6 +842,8 @@ export default function App() {
     let optValue = startCash, spyValue = startCash, bal60Value = startCash;
     let optAlloc = {};
     let totalTaxPaid = 0, totalRebalances = 0;
+    let totalTaxSaved = 0; // tax saved via loss offsets
+    let lossCarryover = 0; // unused losses carried forward to future periods
     let lastRebalanceMonth = null;
     let lastBestWeights = null; // for warm-starting optimizer
     const btTaxRates = getTaxRates(taxState);
@@ -941,20 +943,54 @@ export default function App() {
       let currExpRet = 0; for (const [sym, wt] of Object.entries(prevAlloc)) currExpRet += wt * (trailingStats[sym]?.r || spyExpRet);
       let propExpRet = 0; for (const [sym, wt] of Object.entries(newAlloc)) if (trailingStats[sym]) propExpRet += wt * trailingStats[sym].r;
 
-      // Step 6: Tax cost
+      // Step 6: Tax cost with loss offset
       const allTkrs = [...new Set([...prevTickers, ...Object.keys(newAlloc)])];
       const trades = allTkrs.map(ticker => { const ow = prevAlloc[ticker] || 0, nw = newAlloc[ticker] || 0, ch = nw - ow; if (Math.abs(ch) < 0.005) return null; const rc = result.find(r => r.ticker === ticker); return { ticker, name: rc?.name || candidates.find(c => c.t === ticker)?.n || ticker, cat: rc?.cat || candidates.find(c => c.t === ticker)?.c || "", oldWt: +(ow * 100).toFixed(1), newWt: +(nw * 100).toFixed(1), change: +(ch * 100).toFixed(1), action: ch > 0.005 ? "BUY" : "SELL", dollars: Math.abs(ch) * optValue }; }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
-      let estRG = 0; for (const sell of trades.filter(t => t.action === "SELL")) { const tr = trailingStats[sell.ticker]?.r / 100 || 0; estRG += Math.max(0, sell.dollars - (tr > -0.99 ? sell.dollars / (1 + tr) : sell.dollars)); }
-      const appRate = monthsSinceRebal >= 12 ? btTaxRates.lt : btTaxRates.st;
-      const estTC = estRG * (appRate / 100); const tcPct = optValue > 0 ? (estTC / optValue) * 100 : 0;
 
-      // Step 7: Decision
+      // Compute realized gains AND losses separately
+      let grossGains = 0, grossLosses = 0;
+      for (const sell of trades.filter(t => t.action === "SELL")) {
+        const tr = trailingStats[sell.ticker]?.r / 100 || 0;
+        const costBasis = tr > -0.99 ? sell.dollars / (1 + tr) : sell.dollars;
+        const gl = sell.dollars - costBasis;
+        if (gl > 0) grossGains += gl;
+        else grossLosses += Math.abs(gl); // track as positive number
+      }
+
+      // Net gains/losses: losses offset gains dollar-for-dollar
+      // Plus apply any carried-over losses from prior periods
+      const availableLosses = grossLosses + lossCarryover;
+      const netGains = Math.max(0, grossGains - availableLosses);
+      const excessLosses = Math.max(0, availableLosses - grossGains);
+
+      // Up to $3,000/year of excess losses can offset ordinary income
+      // (simplified: we count this as a tax benefit at the ST rate)
+      const mYearForCap = parseInt(monthKey.slice(0, 4));
+      const ordinaryIncomeOffset = Math.min(excessLosses, 3000);
+      const ordinaryTaxSaved = ordinaryIncomeOffset * (btTaxRates.st / 100);
+
+      // Remaining excess losses carry forward
+      const newCarryover = excessLosses - ordinaryIncomeOffset;
+
+      const appRate = monthsSinceRebal >= 12 ? btTaxRates.lt : btTaxRates.st;
+      const grossTax = grossGains * (appRate / 100); // what tax WOULD be without offsets
+      const netTax = netGains * (appRate / 100); // actual tax after loss offset
+      const taxSaved = grossTax - netTax + ordinaryTaxSaved;
+      const estTC = netTax; // actual tax owed
+      const tcPct = optValue > 0 ? (estTC / optValue) * 100 : 0;
+
+      // Step 7: Decision (uses net tax cost, which is lower thanks to loss offsets)
       const retImp = propExpRet - currExpRet; const curAlpha = currExpRet - spyExpRet;
       let hurdle; if (isFirstAllocation) hurdle = -999; else if (btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8) hurdle = tcPct * 1.0; else if (curAlpha > 3) hurdle = tcPct * 2.5; else if (curAlpha < -2) hurdle = tcPct * 1.2; else hurdle = tcPct * 1.5;
 
       if (isFirstAllocation || retImp > hurdle) {
-        optAlloc = newAlloc; optValue -= estTC; totalTaxPaid += estTC; totalRebalances++; lastRebalanceMonth = monthKey;
-        rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({ ticker: r.ticker, name: r.name, cat: r.cat, weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1), dollars: Math.round((newAlloc[r.ticker] || 0) * optValue) })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades, taxPaid: Math.round(estTC), realizedGains: Math.round(estRG), returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition });
+        optAlloc = newAlloc; optValue -= estTC; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
+        lossCarryover = newCarryover; // update carryover
+        rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({ ticker: r.ticker, name: r.name, cat: r.cat, weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1), dollars: Math.round((newAlloc[r.ticker] || 0) * optValue) })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
+          taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
+          grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
+          lossOffset: Math.round(Math.min(grossGains, availableLosses)), lossCarryover: Math.round(newCarryover),
+          returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition });
       }
 
       } catch (e) { console.error(`Backtest error at ${monthKey}:`, e); }
@@ -986,6 +1022,10 @@ export default function App() {
       const lastEvent = yearEvents.length > 0 ? yearEvents[yearEvents.length - 1] : null;
       const yearTaxPaid = yearEvents.reduce((s, e) => s + (e.taxPaid || 0), 0);
       const yearRealizedGains = yearEvents.reduce((s, e) => s + (e.realizedGains || 0), 0);
+      const yearGrossGains = yearEvents.reduce((s, e) => s + (e.grossGains || 0), 0);
+      const yearGrossLosses = yearEvents.reduce((s, e) => s + (e.grossLosses || 0), 0);
+      const yearTaxSaved = yearEvents.reduce((s, e) => s + (e.taxSaved || 0), 0);
+      const yearLossOffset = yearEvents.reduce((s, e) => s + (e.lossOffset || 0), 0);
 
       // Get current holdings (from last rebalance event up to this year)
       const allEventsToDate = rebalanceEvents.filter(e => e.date <= `${year}-12`);
@@ -1002,6 +1042,10 @@ export default function App() {
         portfolioValue: Math.round(optYearEnd),
         taxPaid: Math.round(yearTaxPaid),
         realizedGains: Math.round(yearRealizedGains),
+        grossGains: Math.round(yearGrossGains),
+        grossLosses: Math.round(yearGrossLosses),
+        taxSaved: Math.round(yearTaxSaved),
+        lossOffset: Math.round(yearLossOffset),
         decision: yearEvents.length > 0 ? `${yearEvents.length} REBALANCE${yearEvents.length > 1 ? "S" : ""}` : "HOLD",
         rebalanceCount: yearEvents.length,
         rebalanceEvents: yearEvents,
@@ -1061,6 +1105,8 @@ export default function App() {
       regimeSource: historicalRegimes ? "FRED v2 (7-factor, 5-state, daily EMA)" : "Proxy (SPY momentum/vol)",
       tax: {
         totalPaid: Math.round(totalTaxPaid),
+        totalSaved: Math.round(totalTaxSaved),
+        finalCarryover: Math.round(lossCarryover),
         rates: btTaxRates,
         state: taxState,
         effectiveDrag: startCash > 0 ? ((totalTaxPaid / startCash) * 100).toFixed(1) : 0,
@@ -2264,24 +2310,28 @@ useEffect(() => {
               </div>
 
               {/* Tax Impact Summary */}
-              {btResult.tax && btResult.tax.totalPaid > 0 && <div style={{ ...cardS, marginBottom: 14, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
+              {btResult.tax && (btResult.tax.totalPaid > 0 || btResult.tax.totalSaved > 0) && <div style={{ ...cardS, marginBottom: 14, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                   <div>
                     <div style={{ fontSize: 10, fontWeight: 700, color: cs.purple }}>🏛 Tax Impact ({btResult.tax.state === "None" ? "Federal Only" : `${STATE_NAMES[btResult.tax.state]} + Federal`})</div>
-                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Estimated capital gains tax on rebalancing trades (LT rate: {btResult.tax.rates.lt.toFixed(1)}%) · {btResult.tax.rebalances} rebalances, {btResult.tax.holds} holds</div>
+                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Tax on rebalancing (LT: {btResult.tax.rates.lt.toFixed(1)}%, ST: {btResult.tax.rates.st.toFixed(1)}%) · {btResult.tax.rebalances} rebalances · Losses offset gains, carry forward up to $3k/yr ordinary income</div>
                   </div>
-                  <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 7, color: cs.dim }}>Total Tax Paid</div>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Net Tax Paid</div>
                       <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{fmt$(btResult.tax.totalPaid)}</div>
                     </div>
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 7, color: cs.dim }}>Tax Drag</div>
-                      <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{btResult.tax.effectiveDrag}%</div>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Saved via Losses</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: cs.green }}>{fmt$(btResult.tax.totalSaved)}</div>
                     </div>
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 7, color: cs.dim }}>Pre-Tax Value</div>
-                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: cs.dim }}>{fmt$(summary.opt.final + btResult.tax.totalPaid)}</div>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Loss Carryover</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: cs.blue }}>{fmt$(btResult.tax.finalCarryover)}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Tax Drag</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: cs.red }}>{btResult.tax.effectiveDrag}%</div>
                     </div>
                     <div style={{ textAlign: "center" }}>
                       <div style={{ fontSize: 7, color: cs.dim }}>After-Tax Value</div>
@@ -2294,6 +2344,15 @@ useEffect(() => {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                   <div style={{ fontSize: 11, fontWeight: 700 }}>Annual Returns & Rebalancing</div>
                   <div style={{ fontSize: 8, color: cs.dim }}>Click a year to see holdings & trades</div>
+                </div>
+                {useRegime && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6, padding: "5px 8px", borderRadius: 5, background: "rgba(255,255,255,.015)" }}>
+                  <span style={{ fontSize: 8, color: cs.dim, fontWeight: 600 }}>Regime:</span>
+                  <span style={{ fontSize: 8, color: cs.dim }}>🟢 Strong Risk-On</span>
+                  <span style={{ fontSize: 8, color: cs.dim }}>🟩 Mild Risk-On</span>
+                  <span style={{ fontSize: 8, color: cs.dim }}>🟡 Neutral</span>
+                  <span style={{ fontSize: 8, color: cs.dim }}>🟧 Mild Risk-Off</span>
+                  <span style={{ fontSize: 8, color: cs.dim }}>🔴 Strong Risk-Off</span>
+                </div>}
                 </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
@@ -2370,7 +2429,15 @@ useEffect(() => {
                                   {a.rebalanceEvents?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                                     {a.rebalanceEvents.map((evt, ei) => (
                                       <div key={ei} style={{ padding: "6px 8px", borderRadius: 5, background: "rgba(110,231,183,.02)", border: "1px solid rgba(110,231,183,.06)" }}>
-                                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginBottom: 3 }}>📅 {evt.date} · {evt.taxType} rate ({evt.taxRate?.toFixed(1)}%) · Tax: {fmt$(evt.taxPaid)}</div>
+                                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginBottom: 3 }}>📅 {evt.date} · {evt.taxType} rate ({evt.taxRate?.toFixed(1)}%)</div>
+                                        <div style={{ fontSize: 8, fontFamily: mono2, color: cs.dim, marginBottom: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                          <span>Gains: <span style={{ color: cs.green }}>{fmt$(evt.grossGains || 0)}</span></span>
+                                          <span>Losses: <span style={{ color: cs.red }}>{fmt$(evt.grossLosses || 0)}</span></span>
+                                          {(evt.lossOffset || 0) > 0 && <span>Offset: <span style={{ color: cs.blue }}>−{fmt$(evt.lossOffset)}</span></span>}
+                                          <span>Net Tax: <span style={{ color: evt.taxPaid > 0 ? cs.red : cs.green }}>{fmt$(evt.taxPaid)}</span></span>
+                                          {(evt.taxSaved || 0) > 0 && <span style={{ color: cs.green }}>Saved: {fmt$(evt.taxSaved)}</span>}
+                                          {(evt.lossCarryover || 0) > 0 && <span style={{ color: cs.blue }}>Carry: {fmt$(evt.lossCarryover)}</span>}
+                                        </div>
                                         {evt.trades?.map((t2, i) => (
                                           <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 4px", fontSize: 9 }}>
                                             <Badge color={t2.action === "BUY" ? cs.green : cs.red}>{t2.action}</Badge>
@@ -2405,12 +2472,13 @@ useEffect(() => {
                                 {a.rebalanceCount === 0 && <span style={{ fontSize: 8, color: cs.blue }}>Tax cost exceeded expected improvement every month → kept existing positions</span>}
                               </div>
                               {/* Tax Impact for this year */}
-                              {(a.taxPaid > 0 || a.realizedGains > 0) && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(167,139,250,.03)", border: "1px solid rgba(167,139,250,.08)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+                              {(a.taxPaid > 0 || a.grossGains > 0 || a.grossLosses > 0 || a.taxSaved > 0) && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(167,139,250,.03)", border: "1px solid rgba(167,139,250,.08)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 9, fontWeight: 600, color: cs.purple }}>🏛 Tax</span>
-                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Realized Gains: <span style={{ color: a.realizedGains > 0 ? cs.green : cs.dim }}>{fmt$(a.realizedGains)}</span></span>
-                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Tax Rate: <span style={{ color: cs.text }}>{btResult.tax?.rates?.lt?.toFixed(1)}% LT</span></span>
-                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Tax Paid: <span style={{ color: cs.red, fontWeight: 600 }}>-{fmt$(a.taxPaid)}</span></span>
-                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>After-Tax Value: <span style={{ color: cs.green }}>{fmt$(a.portfolioValue)}</span></span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Gross Gains: <span style={{ color: cs.green }}>{fmt$(a.grossGains || 0)}</span></span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Losses: <span style={{ color: cs.red }}>{fmt$(a.grossLosses || 0)}</span></span>
+                                {(a.lossOffset || 0) > 0 && <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Offset: <span style={{ color: cs.blue }}>−{fmt$(a.lossOffset)}</span></span>}
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Net Tax: <span style={{ color: cs.red, fontWeight: 600 }}>{a.taxPaid > 0 ? `-${fmt$(a.taxPaid)}` : "$0"}</span></span>
+                                {(a.taxSaved || 0) > 0 && <span style={{ fontSize: 9, fontFamily: mono2, color: cs.green, fontWeight: 600 }}>Saved: {fmt$(a.taxSaved)}</span>}
                               </div>}
                             </div>
                           </td></tr>}
