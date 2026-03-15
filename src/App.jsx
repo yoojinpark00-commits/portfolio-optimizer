@@ -149,13 +149,14 @@ const ETF_DB = [
   {t:"DBC",n:"Invesco DB Commodity",c:"Commodity",h:14,er:.87,r:2.5,v:15.0,d:0},
   {t:"USO",n:"United States Oil Fund",c:"Commodity",h:1,er:.60,r:1.0,v:30.0,d:0},
   // ── Leveraged / Inverse (popular on Schwab) ──
-  {t:"TQQQ",n:"ProShares 3x QQQ",c:"US Growth",h:101,er:.86,r:35.0,v:55.0,d:0},
-  {t:"SQQQ",n:"ProShares -3x QQQ",c:"US Growth",h:101,er:.86,r:-25.0,v:55.0,d:0},
-  {t:"SPXL",n:"Direxion 3x S&P 500",c:"US Large Cap",h:503,er:.90,r:25.0,v:45.0,d:0},
-  {t:"UPRO",n:"ProShares 3x S&P 500",c:"US Large Cap",h:503,er:.91,r:25.0,v:45.0,d:0},
-  {t:"SOXL",n:"Direxion 3x Semiconductor",c:"Sector Tech",h:30,er:.76,r:40.0,v:70.0,d:0},
-  {t:"QLD",n:"ProShares 2x QQQ",c:"US Growth",h:101,er:.95,r:25.0,v:40.0,d:0},
-  {t:"SSO",n:"ProShares 2x S&P 500",c:"US Large Cap",h:503,er:.89,r:18.0,v:30.0,d:0},
+  // lev: leverage factor. Optimizer applies volatility decay penalty + allocation cap
+  {t:"TQQQ",n:"ProShares 3x QQQ",c:"US Growth",h:101,er:.86,r:35.0,v:55.0,d:0,lev:3},
+  {t:"SQQQ",n:"ProShares -3x QQQ",c:"US Growth",h:101,er:.86,r:-25.0,v:55.0,d:0,lev:-3},
+  {t:"SPXL",n:"Direxion 3x S&P 500",c:"US Large Cap",h:503,er:.90,r:25.0,v:45.0,d:0,lev:3},
+  {t:"UPRO",n:"ProShares 3x S&P 500",c:"US Large Cap",h:503,er:.91,r:25.0,v:45.0,d:0,lev:3},
+  {t:"SOXL",n:"Direxion 3x Semiconductor",c:"Sector Tech",h:30,er:.76,r:40.0,v:70.0,d:0,lev:3},
+  {t:"QLD",n:"ProShares 2x QQQ",c:"US Growth",h:101,er:.95,r:25.0,v:40.0,d:0,lev:2},
+  {t:"SSO",n:"ProShares 2x S&P 500",c:"US Large Cap",h:503,er:.89,r:18.0,v:30.0,d:0,lev:2},
 ];
 
 const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
@@ -237,6 +238,28 @@ function getTaxRates(stateCode) {
   };
 }
 
+// ── Leveraged ETF risk model ──
+// Volatility decay: annual drag ≈ -0.5 × leverage² × σ² (continuous approximation)
+// For SOXL (3x, 70% vol): decay ≈ -0.5 × 9 × 0.49 = -2.205 = -220.5% annual drag
+// For TQQQ (3x, 55% vol): decay ≈ -0.5 × 9 × 0.3025 = -1.36 = -136% annual drag
+// This is the mathematical cost of daily rebalancing that compounds against you
+const LEVERAGED_TICKERS = new Set(["TQQQ","SQQQ","SPXL","UPRO","SOXL","QLD","SSO"]);
+
+function getLevDecay(vol, leverage) {
+  // vol as decimal (0.55 for 55%), leverage as integer (3 for 3x)
+  // Returns annual decay as percentage (negative)
+  const sigma = vol / 100;
+  return -0.5 * (leverage * leverage - Math.abs(leverage)) * sigma * sigma * 100;
+}
+
+function getAdjustedReturn(r, v, leverage) {
+  // Adjust stated return for volatility decay
+  // Also cap unrealistically high returns
+  if (!leverage || Math.abs(leverage) <= 1) return r;
+  const decay = getLevDecay(v, leverage);
+  return r + decay; // decay is negative, so this reduces the return
+}
+
 // 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
 const REGIME_TILTS = {
   strong_risk_on: [-0.12, +0.15, 1.0],
@@ -308,15 +331,30 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     return entryBonus > 0 ? entryBonus * 0.3 : 0; // moderate categories get small entry boost
   });
 
-  // Half Kelly caps with regime-adjusted Kelly multiplier
-  const kellyMaxPct = candidates.map(c => {
-    if (!useKelly) return 1.0;
+  // Pre-compute decay-adjusted returns for leveraged ETFs
+  const adjReturns = candidates.map(c => {
+    if (c.lev && Math.abs(c.lev) > 1) return getAdjustedReturn(c.r, c.v, c.lev);
+    return c.r;
+  });
+
+  // Leveraged ETF max allocation cap: 3x → 10%, 2x → 15%, inverse → 5%
+  const levMaxPct = candidates.map(c => {
+    if (!c.lev || Math.abs(c.lev) <= 1) return 1.0;
+    if (c.lev < 0) return 0.05; // inverse ETFs: max 5%
+    if (Math.abs(c.lev) >= 3) return 0.10; // 3x: max 10%
+    return 0.15; // 2x: max 15%
+  });
+
+  // Half Kelly caps with regime-adjusted Kelly multiplier + leverage cap
+  const kellyMaxPct = candidates.map((c, i) => {
+    if (!useKelly) return levMaxPct[i]; // Still apply leverage cap even without Kelly
     const sigSq = (c.v / 100) * (c.v / 100);
-    if (sigSq <= 0) return 1.0;
-    const fStar = 0.5 * ((c.r - RF) / 100) / sigSq;
-    // Apply regime Kelly multiplier (tighter in risk-off)
+    if (sigSq <= 0) return levMaxPct[i];
+    // Use decay-adjusted return for Kelly calculation
+    const adjR = adjReturns[i];
+    const fStar = 0.5 * ((adjR - RF) / 100) / sigSq;
     const adjMult = AGGRESSIVE_CATS.has(c.c) ? kellyMult : 1.0;
-    return Math.max(0.01, Math.min(fStar * adjMult, 1.0));
+    return Math.max(0.01, Math.min(fStar * adjMult, levMaxPct[i])); // cap by leverage limit
   });
 
   for (let t = 0; t < 6000; t++) {
@@ -346,7 +384,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const newTV = totalVal + cash;
     const items = [
       ...existing.map(p => ({ w: p.dollars / newTV, vol: p.v || 0, cat: p.cat || "Stock", ret: p.r || 0 })),
-      ...alloc.map((d, i) => ({ w: d / newTV, vol: candidates[i].v, cat: candidates[i].c, ret: candidates[i].r })),
+      ...alloc.map((d, i) => ({ w: d / newTV, vol: candidates[i].v, cat: candidates[i].c, ret: adjReturns[i] })), // Use decay-adjusted returns
     ];
     let ret = 0, vr = 0;
     for (let i = 0; i < items.length; i++) { ret += items[i].w * items[i].ret;
@@ -363,6 +401,19 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // Volatility targeting penalty
     const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
 
+    // Leveraged ETF penalty: penalize total leveraged exposure
+    // Path dependency + daily rebalancing drag + extreme drawdown risk
+    let levPenalty = 0;
+    let levExposure = 0;
+    for (let i = 0; i < n; i++) {
+      if (candidates[i].lev && Math.abs(candidates[i].lev) > 1) {
+        const allocPct = alloc[i] / (deployAmt || 1);
+        levExposure += allocPct;
+      }
+    }
+    // Penalty scales quadratically: 5% leveraged = small penalty, 20% = severe
+    levPenalty = -levExposure * levExposure * 0.5;
+
     // Regime tilt: weighted sum of regime bonuses for this allocation
     let regimeBonus = 0;
     if (state5 !== "neutral" || entryBonus > 0) {
@@ -378,16 +429,19 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const concBonus = activeCount <= 3 ? 0.06 : activeCount <= 5 ? 0.04 : activeCount <= 7 ? 0.02 : 0;
 
     let sc;
-    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + concBonus;
-    else if (target === "min_vol") sc = -vol + regimeBonus + concBonus;
-    else if (target === "max_return") sc = ret + volPenalty + regimeBonus + concBonus;
-    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + concBonus;  // balanced
+    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + concBonus + levPenalty;
+    else if (target === "min_vol") sc = -vol + regimeBonus + concBonus + levPenalty;
+    else if (target === "max_return") sc = ret + volPenalty + regimeBonus + concBonus + levPenalty;
+    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + concBonus + levPenalty;  // balanced
     if (sc > bs) { bs = sc; best = alloc; }
   }
   const minAlloc = cash * 0.03; // Minimum 3% of cash per position (meaningful allocation)
   const raw = candidates.map((e, i) => {
     const hk = useKelly ? kellyMaxPct[i] : null;
-    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null };
+    const lev = e.lev && Math.abs(e.lev) > 1 ? e.lev : null;
+    const decay = lev ? getLevDecay(e.v, lev) : null;
+    const adjR = adjReturns[i];
+    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null, lev, decay: decay != null ? +decay.toFixed(1) : null, adjR: lev ? +adjR.toFixed(1) : null };
   }).filter(e => e.dollars >= minAlloc).sort((a, b) => b.dollars - a.dollars); // no hard cap — let performance decide
   // Ensure total deployment is at least 90% of cash
   const deployed = raw.reduce((s, r) => s + r.dollars, 0);
@@ -1607,12 +1661,16 @@ useEffect(() => {
                   onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(110,231,183,.06)" : "rgba(110,231,183,.02)" }}>
                   <Badge color={isAccepted ? cs.green : cs.blue}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
                       <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
                       <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
                       <Badge color={cs.dim}>{r.cat}</Badge>
+                      {r.lev && <Badge color={cs.red}>⚠ {r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
                     </div>
-                    <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>R:{r.r}% · V:{r.v}% · ER:{r.er}% · Div:{r.d}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}</div>
+                    <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
+                      {r.lev ? `Stated R:${r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r}%`} · V:{r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
+                      {r.lev && <span style={{ color: cs.red }}> · ⚠ Vol decay drag, path-dependent, not for buy-and-hold</span>}
+                    </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.green : cs.text }}>${r.dollars.toLocaleString()}</div>
