@@ -985,6 +985,16 @@ export default function App() {
 
   const didHydrate = useRef(false);
 
+  // ── Auto-fetch regime data on mount ──
+  const didFetchRegime = useRef(false);
+  useEffect(() => {
+    if (didFetchRegime.current) return;
+    didFetchRegime.current = true;
+    // Fetch both live regime and full analytics in parallel on app launch
+    fetchRegime();
+    fetchRegimeAnalytics();
+  }, [fetchRegime, fetchRegimeAnalytics]);
+
   // ── Backtest runner ──
   const runBacktest = useCallback(async () => {
     setBtRunning(true); setBtResult(null); setBtProgress("Fetching historical data..."); setBtExpandedYear(null);
@@ -992,7 +1002,7 @@ export default function App() {
     // ── Fetch historical regime data from FRED (if regime enabled) ──
     let historicalRegimes = null;
     if (useRegime) {
-      setBtProgress("Fetching historical regime data from FRED (HY OAS, VIX, NFCI)...");
+      setBtProgress("Fetching historical regime data from FRED (12 macro series)...");
       try {
         const regResp = await fetch("/api/regime?history=true");
         const regJson = await regResp.json();
@@ -1450,7 +1460,7 @@ export default function App() {
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
-      regimeSource: historicalRegimes ? "FRED v2 (7-factor, 5-state, daily EMA)" : "Proxy (SPY momentum/vol)",
+      regimeSource: historicalRegimes ? "FRED (12-series, 5-state, daily EMA)" : "Proxy (SPY momentum/vol)",
       tax: {
         totalPaid: Math.round(totalTaxPaid),
         totalSaved: Math.round(totalTaxSaved),
@@ -2245,7 +2255,7 @@ useEffect(() => {
           <div style={{ ...cardS, background: "rgba(96,165,250,.03)", borderColor: "rgba(96,165,250,.12)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer finds the highest-performing {includeStocks ? "ETF + individual stock" : "ETF"} allocation (up to 10 positions). Concentrated portfolios are preferred when they outperform diversified ones.</div></div>
+                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer runs 6,000 Monte Carlo simulations to find the best risk-adjusted {includeStocks ? "ETF + stock" : "ETF"} allocation. Minimum 3 positions enforced, individual stocks capped at 25%. Return shrinkage dampens extreme trailing momentum. {includeStocks ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
               {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Holdings" tab first</div>}
             </div>
 
@@ -2291,7 +2301,7 @@ useEffect(() => {
               <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Run Optimizer — Deploy ${cashBalance.toLocaleString()}{includeStocks ? " (ETF+Stocks)" : ""}{useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}
               </button>
-              {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime enabled but no data fetched — go to Analysis tab → "Fetch Live Data" first, or optimizer runs without regime tilt.</div>}
+              {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime data loading — fetches automatically on app launch from 12 FRED macro indicators. If this persists, check FRED_API_KEY in Vercel env vars.</div>}
 
               {stocks.length > 0 && <div style={{ marginTop: 7, fontSize: 9, color: cs.yellow }}>🔒 {stocks.map(s => s.ticker).join(", ")} locked — optimizer works around them.</div>}
             </>}
@@ -2437,7 +2447,7 @@ useEffect(() => {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 700 }}>🌊 Market Regime Analysis</div>
-                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>3-signal composite: HY Credit Spreads + VIX Term Structure + NFCI Financial Conditions</div>
+                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>12-factor FRED composite: HY Spreads, VIX, VIX3M, NFCI, yield curves (10Y-2Y, 10Y-3M), TED Spread, Sahm Rule, jobless claims, S&P 500, gold, 10Y yield</div>
                   </div>
                   <button onClick={fetchRegime} disabled={regimeLoading} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 9, fontWeight: 600, cursor: regimeLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
                     {regimeLoading ? "Loading..." : regimeData ? "⟳ Refresh" : "Fetch Live Data"}
@@ -2447,7 +2457,7 @@ useEffect(() => {
                 {regimeError && <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(248,113,113,.04)", border: "1px solid rgba(248,113,113,.12)", fontSize: 9, color: cs.red, marginBottom: 10 }}>{regimeError}</div>}
 
                 {!regimeData && !regimeLoading && !regimeError && <div style={{ textAlign: "center", padding: 20, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>
-                  Click "Fetch Live Data" to pull macro indicators from FRED.<br/>Requires FRED_API_KEY in Vercel env vars (free at fred.stlouisfed.org).
+                  Auto-fetches on app launch. 12 FRED macro series analyzed with rolling z-scores, EMA smoothing, and cross-asset correlation to determine 5-state market regime (strong risk-on → strong risk-off).
                 </div>}
 
                 {regimeData?.regime && (() => {
@@ -2493,7 +2503,7 @@ useEffect(() => {
                     </div>
 
                     {/* 7-Factor Signal Grid */}
-                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Factor Signals (7-factor weighted composite)</div>
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Factor Signals (12-factor weighted composite)</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 5, marginBottom: 12 }}>
                       {[
                         { key: "hy_oas", label: "HY Credit Spread", icon: "📊", fmt: v => `${v?.toFixed(0)} bps` },
@@ -2570,7 +2580,7 @@ useEffect(() => {
                         const on = allSignals.filter(d => d.signal === "risk-on").length;
                         const off = allSignals.filter(d => d.signal === "risk-off").length;
                         const neut = allSignals.filter(d => d.signal === "neutral").length;
-                        return <span>{on} risk-on · {off} risk-off · {neut} neutral of {allSignals.length} factors · 5-state model · Daily EMA(10/60) smoothing · 7 FRED factors + cross-asset correlation</span>;
+                        return <span>{on} risk-on · {off} risk-off · {neut} neutral of {allSignals.length} factors · 5-state model · Daily EMA(10/60) smoothing · 12 FRED series + cross-asset correlation</span>;
                       })()}
                     </div>
 
@@ -2578,11 +2588,11 @@ useEffect(() => {
                     <div style={{ padding: "10px 12px", borderRadius: 7, background: `${s5Color}08`, border: `1px solid ${s5Color}15` }}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: s5Color, marginBottom: 4 }}>Optimizer Guidance: {state5Labels[s5]}{r.momentum ? ` / ${r.momentum}` : ""}</div>
                       <div style={{ fontSize: 9, color: cs.dim, lineHeight: 1.6 }}>
-                        {s5 === "strong_risk_on" && "Full growth allocation. Max Sharpe or Max Return. Aggressive ETFs (tech, growth, small cap, EM) heavily favored. Kelly at full. This is historically the best time for risk assets."}
-                        {s5 === "mild_risk_on" && "Growth-tilted allocation. Max Sharpe recommended. Moderate overweight to aggressive categories. Watch for complacency signals (low VIX + compressed spreads)."}
-                        {s5 === "neutral" && "Balanced allocation. Diversification across categories. Vol target ~12-15%. This is a transition period — monitor acceleration for direction."}
-                        {s5 === "mild_risk_off" && "Shift toward quality and low-vol. Increase bond, dividend, value, utility exposure. Kelly tightened to 80% for aggressive assets. Consider Min Vol objective."}
-                        {s5 === "strong_risk_off" && "Full defensive. Bonds, treasuries, gold, cash favored. Kelly cut to 50% for aggressive positions. Min Volatility objective. Tax-loss harvest aggressively. Historical best entry point is often near the END of this state."}
+                        {s5 === "strong_risk_on" && "Aggressive allocation. Optimizer tilts +15% to growth, tech, small cap, EM. Full Kelly sizing. Historically best environment for risk assets. Return shrinkage still applies — no single-stock dominance."}
+                        {s5 === "mild_risk_on" && "Growth-tilted. Moderate overweight to aggressive categories. Max Sharpe recommended. Duration scaling amplifies tilt over time. Watch for complacency signals (compressed spreads + low VIX)."}
+                        {s5 === "neutral" && "Balanced allocation across sectors. Vol target 12-15%. Minimum 3 positions enforced. Transition state — monitor acceleration and entry signals for directional shift."}
+                        {s5 === "mild_risk_off" && "Defensive tilt. Increase bonds, dividend, quality, utilities. Kelly sizing reduced to 80% for aggressive assets. Tax-loss harvesting opportunities likely. Consider Min Volatility objective."}
+                        {s5 === "strong_risk_off" && "Full defensive. Bonds, treasuries, gold favored. Kelly cut to 50% for aggressive positions. Min Volatility objective. Tax-loss harvest aggressively. Best entry signals often appear near the END of this state — watch for bear→bull transitions."}
                         {r.momentum === "improving" && " The regime is IMPROVING — stress indicators declining. Historically the best risk-adjusted entry window."}
                         {r.momentum === "deteriorating" && " The regime is DETERIORATING — stress indicators rising. Consider waiting for stabilization before adding risk."}
                       </div>
@@ -2596,7 +2606,7 @@ useEffect(() => {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 700 }}>📊 Regime Duration & Entry Signal Analysis</div>
-                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>Historical regime episodes, transition probabilities, and forward returns by duration. Uses FRED data 2015–2025.</div>
+                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>Historical regime episodes, transition probabilities, and forward returns by duration. Auto-fetched from 12 FRED series (2012–2025).</div>
                   </div>
                   <button onClick={fetchRegimeAnalytics} disabled={analyticsLoading} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(251,191,36,.2)", background: "rgba(251,191,36,.06)", color: cs.yellow, fontSize: 9, fontWeight: 600, cursor: analyticsLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
                     {analyticsLoading ? "Computing..." : regimeAnalytics ? "⟳ Refresh" : "Run Analysis"}
@@ -2604,7 +2614,7 @@ useEffect(() => {
                 </div>
 
                 {!regimeAnalytics && !analyticsLoading && <div style={{ textAlign: "center", padding: 18, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>
-                  Click "Run Analysis" to compute regime episodes, transitions, and optimal entry signals from 10 years of FRED data.
+                  Auto-fetches on app launch. Computes regime episodes, transition probabilities, and optimal entry signals from 12+ years of FRED macro data.
                 </div>}
 
                 {regimeAnalytics && (() => {
@@ -2868,7 +2878,7 @@ useEffect(() => {
 
             return <>
               {includeStocks && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (top 10 per sector):</strong> At each year, the optimizer sees the top ~10 S&P 500 stocks by market cap in each GICS sector (Tech, Finance, Healthcare, Consumer, etc.). This captures growth leaders BEFORE they become mega-caps — e.g., NVDA entered Tech top-10 in 2018 at ~$100B, three years before it was overall top-30. ~100 stocks available per year, rotating naturally as sector leadership changes.</div>
+                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (~130-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year, matching the live optimizer's breadth. Growth leaders enter when they become sector-relevant — NVDA in Tech 2017 (GPU dominance), AMD in 2019 (Zen comeback), TSLA in Consumer 2021. GE included in 2016 (Industrial #1) but exits by 2018. ~140 stocks per year, rotating naturally with return shrinkage (50% cap) to prevent momentum bias.</div>
               </div>}
               {/* Equity Curve */}
               <div style={cardS}>
@@ -3102,7 +3112,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Monthly monitoring, tax-aware rebalancing · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
+                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Monthly monitoring, tax-aware conditional rebalancing · Actual cost basis tracking · Return shrinkage (stocks 50%, ETFs 80%) · Min 3 positions, 25% stock cap · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
               </div>
             </>;
           })()}
@@ -3114,14 +3124,14 @@ useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700 }}>🎲 Monte Carlo Simulation</div>
-                <div style={{ fontSize: 9, color: cs.dim }}>Run the backtest 100 times with different random optimizer seeds to measure consistency of outperformance vs S&P 500</div>
+                <div style={{ fontSize: 9, color: cs.dim }}>Run the backtest 100 times with randomized optimizer seeds and candidate selection. Measures consistency of outperformance vs S&P 500, with full tax model, return shrinkage, and diversification constraints matching the main backtest.</div>
               </div>
               <button onClick={runSimulation} disabled={simRunning || !btResult} style={{ padding: "9px 18px", borderRadius: 7, border: "none", background: (!btResult || simRunning) ? "rgba(255,255,255,.05)" : "linear-gradient(135deg,#a78bfa,#60a5fa)", color: (!btResult || simRunning) ? cs.dim : cs.bg, fontSize: 11, fontWeight: 700, cursor: (!btResult || simRunning) ? "default" : "pointer", fontFamily: "inherit", opacity: simRunning ? 0.6 : 1 }}>
                 {simRunning ? simProgress || "Running..." : !btResult ? "Run Backtest First" : "Run 100 Simulations"}
               </button>
             </div>
             {!btResult && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Run a backtest first — simulation reuses the same parameters and time period.</div>}
-            {includeStocks && <div style={{ fontSize: 9, color: cs.blue, marginTop: 4 }}>📊 <strong>Sector-based universe:</strong> Top ~10 stocks per GICS sector at each year. Growth names enter when they become sector leaders (NVDA in Tech 2018, TSLA in Consumer 2021), not when they hit overall top-30.</div>}
+            {includeStocks && <div style={{ fontSize: 9, color: cs.blue, marginTop: 4 }}>📊 <strong>Sector-based universe:</strong> ~130-140 stocks per year (top ~15 per GICS sector). Growth names enter when they become sector leaders. Return shrinkage caps stocks at 50% trailing return to prevent momentum-driven concentration.</div>}
           </div>
 
           {simResult && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
@@ -3204,7 +3214,7 @@ useEffect(() => {
         </div>}
 
         <div style={{ marginTop: 24, padding: "12px 0", borderTop: "1px solid rgba(255,255,255,.03)", fontSize: 8, color: "#3d4250", textAlign: "center", lineHeight: 1.5 }}>
-          Historical data approximate. Past performance ≠ future results. AI recommendations informational only — not financial advice. Portfolio value auto-calculated from shares × price. Consult a professional.
+          Historical data from Yahoo Finance. Backtest uses actual monthly close prices, real cost basis tracking, tax-loss netting with carryover, and return shrinkage to dampen momentum bias. Stock universe filtered to S&P 500 sector leaders at each year (no survivorship bias). Past performance ≠ future results. Not financial advice. Consult a professional.
         </div>
       </div>
       {so && <div onClick={() => setSo(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />}
