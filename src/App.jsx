@@ -172,6 +172,8 @@ const STOCK_DB=[
 // Map STOCK_DB sector names to optimizer category system
 const SECTOR_TO_CAT = {"Technology":"Sector Tech","Consumer":"Sector Consumer","Financial":"Sector Finance","Healthcare":"Sector Health","Energy":"Sector Energy","Industrial":"Sector Indust","Communications":"Sector Comms","Real Estate":"Sector RE","Utilities":"Sector Utilities","Materials":"Sector Materials"};
 const STOCK_OPT = STOCK_DB.map(s => ({ t: s.t, n: s.n, c: SECTOR_TO_CAT[s.s] || "Stock", r: 12, v: 25, er: 0, d: 0, h: 1, type: "stock" }));
+// Stocks that IPO'd after 2015 — excluded from backtest to avoid survivorship bias
+const POST_2016_IPOS = new Set(["PLTR","COIN","HOOD","ABNB","ARM","APP","RIVN","IONQ","SOUN","RKLB","SNOW","DASH","AFRM","CPNG","NU"]);
 
 // ═══ ENGINE ═══
 // VaR at 95% confidence (parametric): VaR = σ × 1.645
@@ -333,6 +335,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const c = candidates[i];
     let levCap = 1.0;
     if (c.lev && Math.abs(c.lev) > 1) { levCap = c.lev < 0 ? 0.05 : Math.abs(c.lev) >= 3 ? 0.10 : 0.15; }
+    // Individual stock cap: max 15% per stock to limit idiosyncratic risk
+    if (c.type === "stock") levCap = Math.min(levCap, 0.15);
     if (!useKelly) { maxPct[i] = levCap; continue; }
     const sigSq = volArr[i] * volArr[i];
     if (sigSq <= 0) { maxPct[i] = levCap; continue; }
@@ -821,7 +825,8 @@ export default function App() {
       "SCHD","HDV","DGRO",
     ];
     const benchmarks = ["SPY"];
-    const btStocks = includeStocks ? STOCK_DB.map(s => s.t) : [];
+    // Only include stocks that existed before 2016 — filter post-IPO stocks to avoid survivorship bias
+    const btStocks = includeStocks ? STOCK_DB.filter(s => !POST_2016_IPOS.has(s.t)).map(s => s.t) : [];
 
     const allSymbols = [...new Set([...btETFs, ...benchmarks, ...btStocks])];
     setBtProgress(`Fetching ${allSymbols.length} ETFs (2015-2025)...`);
@@ -1188,7 +1193,7 @@ export default function App() {
       "XLK","XLF","XLV","XLE","XLU","XLRE","SOXX","ARKK","ICLN",
       "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","HDV","DGRO",
     ];
-    const btStocks = includeStocks ? STOCK_OPT.map(s => s.t).slice(0, 15) : [];
+    const btStocks = includeStocks ? STOCK_OPT.filter(s => !POST_2016_IPOS.has(s.t)).map(s => s.t) : [];
     const allSymbols = [...new Set([...btETFs, "SPY", ...btStocks])];
 
     setSimProgress(`Fetching ${allSymbols.length} symbols...`);
@@ -1286,7 +1291,9 @@ export default function App() {
         }
 
         const cands = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50)
-          .sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 12);
+          .sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 20);
+        // Randomly sample 12 from top 20 — ensures each sim sees different candidates
+        while (cands.length > 12) cands.splice(Math.floor(Math.random() * cands.length), 1);
         if (cands.length < 3) continue;
 
         // Lightweight optimizer (100 iterations — speed over precision)
@@ -2563,6 +2570,9 @@ useEffect(() => {
             const drawLine = (data, color) => data.map((p, i) => `${sx(i, data.length)},${sy(p.value)}`).join(" ");
 
             return <>
+              {includeStocks && <div style={{ ...cardS, background: "rgba(251,191,36,.04)", borderColor: "rgba(251,191,36,.15)", marginBottom: 10 }}>
+                <div style={{ fontSize: 9, color: cs.yellow }}>⚠ <strong>Survivorship bias:</strong> ETF+Stocks mode includes individual stocks selected with hindsight (today's known winners). Backtest results are inflated — the same stock picks would not have been identifiable in 2016. Use ETF-only mode for realistic forward-looking analysis. Post-2016 IPOs have been excluded.</div>
+              </div>}
               {/* Equity Curve */}
               <div style={cardS}>
                 <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Equity Curve — ${(sc2/1000).toFixed(0)}k Starting Capital</div>
@@ -2809,6 +2819,7 @@ useEffect(() => {
               </button>
             </div>
             {!btResult && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Run a backtest first — simulation reuses the same parameters and time period.</div>}
+            {includeStocks && <div style={{ fontSize: 9, color: cs.yellow, marginTop: 4 }}>⚠ <strong>Survivorship bias warning:</strong> The stock universe is curated from today's known winners. Results with ETF+Stocks will appear inflated because the backtest has access to stocks (like NVDA, AAPL, META) that are selected with the benefit of hindsight. ETF-only results are more representative of achievable forward-looking performance.</div>}
           </div>
 
           {simResult && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
