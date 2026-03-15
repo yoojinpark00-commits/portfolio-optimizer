@@ -647,28 +647,35 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     let regimeBonus = 0;
     if (hasRegimeTilt) for (let i = 0; i < n; i++) regimeBonus += (alloc[i] / deployAmt) * regimeTilt[i];
 
-    // ── Diversification-aware position count scoring ──
-    // Idiosyncratic risk decreases as ~1/√n. Below 3 positions, unsystematic risk dominates.
-    // Sweet spot is 4-7: enough diversification without diluting alpha.
+    // ── Diversification: HARD constraints + scoring ──
     let activeCount = 0;
     let maxSingleWt = 0;
     for (let i = 0; i < n; i++) {
       const wt = alloc[i] / (deployAmt || 1);
-      if (alloc[i] > deployAmt * 0.03) activeCount++;
+      if (alloc[i] > deployAmt * 0.02) activeCount++;
       if (wt > maxSingleWt) maxSingleWt = wt;
     }
-    // Position count curve: penalty for 1-2, bonus for 4-7, neutral at 3 and 8+
-    let divScore;
-    if (activeCount <= 1) divScore = -0.10;       // extreme concentration — single stock risk
-    else if (activeCount === 2) divScore = -0.04;  // still very concentrated
-    else if (activeCount === 3) divScore = 0.0;    // acceptable but borderline
-    else if (activeCount <= 5) divScore = 0.03;    // sweet spot: high conviction + diversified
-    else if (activeCount <= 7) divScore = 0.02;    // good diversification
-    else divScore = 0.0;                           // 8+: no bonus, let performance decide
 
-    // Single-position concentration penalty: if any one position > 40%, penalize
-    // (even a 5-position portfolio with one 60% position has too much idiosyncratic risk)
-    const concPenalty = maxSingleWt > 0.40 ? -0.05 * (maxSingleWt - 0.40) / 0.60 : 0;
+    // HARD REJECT: fewer than 3 positions — no single-stock or 2-stock portfolios allowed
+    if (activeCount < 3) continue;
+
+    // HARD CAP: enforce max 25% per individual stock AFTER normalization
+    let hadStockViolation = false;
+    for (let i = 0; i < n; i++) {
+      const wt = alloc[i] / (deployAmt || 1);
+      if (candidates[i].type === "stock" && wt > 0.25) hadStockViolation = true;
+    }
+    if (hadStockViolation) continue; // skip this iteration entirely
+
+    // Position count scoring: reward 4-7 sweet spot
+    let divScore;
+    if (activeCount === 3) divScore = -0.02;      // borderline — slight penalty
+    else if (activeCount <= 5) divScore = 0.04;    // sweet spot
+    else if (activeCount <= 7) divScore = 0.03;    // good diversification
+    else divScore = 0.01;                          // 8+: slight bonus
+
+    // Single-position concentration penalty (even within 3+ portfolio)
+    const concPenalty = maxSingleWt > 0.35 ? -0.15 * (maxSingleWt - 0.35) / 0.65 : 0;
 
     let sc;
     const divAdj = divScore + concPenalty;
@@ -686,20 +693,24 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const decay = lev ? getLevDecay(e.v, lev) : null;
     const ar = adjRet[i];
     return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null, lev, decay: decay != null ? +decay.toFixed(1) : null, adjR: lev ? +ar.toFixed(1) : null, isStock: e.type === "stock" };
-  }).filter(e => e.dollars >= minAlloc).sort((a, b) => b.dollars - a.dollars);
+  }).sort((a, b) => b.dollars - a.dollars);
+  // Keep at least 3 positions: apply minAlloc only to 4th position onward
+  const keepTop3 = raw.slice(0, 3);
+  const rest = raw.slice(3).filter(e => e.dollars >= minAlloc);
+  const filtered = [...keepTop3.filter(e => e.dollars > 0), ...rest];
   // Ensure total deployment is at least 90% of cash
-  const deployed = raw.reduce((s, r) => s + r.dollars, 0);
+  const deployed = filtered.reduce((s, r) => s + r.dollars, 0);
   const minDeploy = cash * 0.9;
-  if (deployed < minDeploy && raw.length > 0) {
+  if (deployed < minDeploy && filtered.length > 0) {
     const shortfall = minDeploy - deployed;
-    const totalRaw = raw.reduce((s, r) => s + r.dollars, 0) || 1;
-    raw.forEach(r => {
+    const totalRaw = filtered.reduce((s, r) => s + r.dollars, 0) || 1;
+    filtered.forEach(r => {
       const extra = Math.round(shortfall * (r.dollars / totalRaw));
       r.dollars += extra;
       r.pct = +((r.dollars / cash) * 100).toFixed(1);
     });
   }
-  return raw;
+  return filtered;
 }
 
 function genFrontier(existing, cash, totalVal, candidates) {
