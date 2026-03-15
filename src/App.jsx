@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 const STORAGE_KEY = "etf_optimizer_state_v1";
 
@@ -531,6 +531,7 @@ export default function App() {
   const [btProgress, setBtProgress] = useState("");
   const [btResult, setBtResult] = useState(null);
   const [btStartCash, setBtStartCash] = useState(100000);
+  const [btExpandedYear, setBtExpandedYear] = useState(null);
 
   // ── Regime state ──
   const [regimeData, setRegimeData] = useState(null);
@@ -568,7 +569,7 @@ export default function App() {
 
   // ── Backtest runner ──
   const runBacktest = useCallback(async () => {
-    setBtRunning(true); setBtResult(null); setBtProgress("Fetching historical data...");
+    setBtRunning(true); setBtResult(null); setBtProgress("Fetching historical data..."); setBtExpandedYear(null);
 
     // ── Fetch historical regime data from FRED (if regime enabled) ──
     let historicalRegimes = null;
@@ -695,20 +696,24 @@ export default function App() {
       // Run optimizer with trailing stats as candidates
       const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
 
-      // Compute regime for this rebalance year
+      // Compute regime for this rebalance year (v2: 5-state + acceleration)
       let btRegime = null;
       let btRegimeScore = null;
       let btRegimeProbBear = null;
+      let btState5 = null;
+      let btAcceleration = null;
       if (useRegime) {
-        // Try real FRED historical data first
+        // Try real FRED historical data first (v2 returns state5 + acceleration)
         const regKey = `${year}-01`; // January of rebalance year
         const regData = historicalRegimes?.[regKey];
         if (regData) {
-          btRegime = regData.regime;
+          btState5 = regData.state5 || null;
+          btRegime = btState5 || regData.regime; // pass 5-state to optimizer (it handles both)
           btRegimeScore = regData.score;
           btRegimeProbBear = regData.probBear;
+          btAcceleration = regData.acceleration || null;
         } else {
-          // Fallback: proxy from trailing SPY data
+          // Fallback: proxy from trailing SPY data (3-state only)
           const spyStats = trailingStats["SPY"] || Object.values(trailingStats).find(s => s.t === "VTI");
           const spyRets = monthlyReturns["SPY"]?.filter(r => new Date(r.date).getFullYear() === year - 1) || [];
           const bndRets = monthlyReturns["BND"]?.filter(r => new Date(r.date).getFullYear() === year - 1) || [];
@@ -727,9 +732,41 @@ export default function App() {
 
       if (candidates.length >= 3) {
         const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime);
+        const prevAlloc = { ...optAlloc };
         optAlloc = {};
         const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
         result.forEach(r => { optAlloc[r.ticker] = r.dollars / totalDeployed; });
+
+        // Compute rebalance trades: what changed from previous year
+        const allTickers = [...new Set([...Object.keys(prevAlloc), ...Object.keys(optAlloc)])];
+        const trades = allTickers.map(ticker => {
+          const oldWt = prevAlloc[ticker] || 0;
+          const newWt = optAlloc[ticker] || 0;
+          const change = newWt - oldWt;
+          if (Math.abs(change) < 0.005) return null; // skip trivial changes
+          const rec = result.find(r => r.ticker === ticker);
+          return {
+            ticker,
+            name: rec?.name || candidates.find(c => c.t === ticker)?.n || ticker,
+            cat: rec?.cat || candidates.find(c => c.t === ticker)?.c || "",
+            oldWt: +(oldWt * 100).toFixed(1),
+            newWt: +(newWt * 100).toFixed(1),
+            change: +(change * 100).toFixed(1),
+            action: change > 0.005 ? "BUY" : "SELL",
+            dollars: Math.abs(change) * optValue,
+          };
+        }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+
+        // Store holdings detail for this year
+        var yearHoldings = result.map(r => ({
+          ticker: r.ticker, name: r.name, cat: r.cat,
+          weight: +((optAlloc[r.ticker] || 0) * 100).toFixed(1),
+          dollars: Math.round((optAlloc[r.ticker] || 0) * optValue),
+        })).sort((a, b) => b.weight - a.weight);
+        var yearTrades = trades;
+      } else {
+        var yearHoldings = [];
+        var yearTrades = [];
       }
 
       // Simulate the year month-by-month
@@ -768,9 +805,14 @@ export default function App() {
         spyRet: spyYearStart > 0 ? ((spyValue - spyYearStart) / spyYearStart * 100) : 0,
         bal60Ret: bal60YearStart > 0 ? ((bal60Value - bal60YearStart) / bal60YearStart * 100) : 0,
         alloc: { ...optAlloc },
+        holdings: yearHoldings,
+        trades: yearTrades,
+        portfolioValue: Math.round(optValue),
         regime: btRegime,
+        state5: btState5,
         regimeScore: btRegimeScore,
         probBear: btRegimeProbBear,
+        acceleration: btAcceleration,
       });
     }
 
@@ -814,7 +856,7 @@ export default function App() {
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
-      regimeSource: historicalRegimes ? "FRED HY OAS + VIX + NFCI" : "Proxy (SPY momentum/vol)",
+      regimeSource: historicalRegimes ? "FRED v2 (7-factor, 5-state, daily EMA)" : "Proxy (SPY momentum/vol)",
     });
     setBtProgress(""); setBtRunning(false);
   }, [ot, srMode, volTarget, useKelly, useRegime, btStartCash]);
@@ -1897,37 +1939,95 @@ useEffect(() => {
                 ))}
               </div>
 
-              {/* Annual Returns Table */}
+              {/* Annual Returns Table — click to expand holdings & rebalance */}
               <div style={cardS}>
-                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8 }}>Annual Returns</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700 }}>Annual Returns & Rebalancing</div>
+                  <div style={{ fontSize: 8, color: cs.dim }}>Click a year to see holdings & trades</div>
+                </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
                     <thead>
                       <tr style={{ borderBottom: "1px solid rgba(255,255,255,.08)" }}>
                         <th style={{ padding: "6px 8px", textAlign: "left", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Year</th>
-                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.green, fontFamily: mono2, fontSize: 9 }}>Optimized</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Value</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.green, fontFamily: mono2, fontSize: 9 }}>Opt</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.blue, fontFamily: mono2, fontSize: 9 }}>SPY</th>
-                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.purple, fontFamily: mono2, fontSize: 9 }}>60/40</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Alpha</th>
+                        <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>ETFs</th>
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.yellow, fontFamily: mono2, fontSize: 9 }}>Regime</th>}
+                        {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Accel</th>}
                       </tr>
                     </thead>
                     <tbody>
                       {annual.map(a => {
                         const alpha = a.optRet - a.spyRet;
-                        return (
-                          <tr key={a.year} style={{ borderBottom: "1px solid rgba(255,255,255,.03)" }}>
-                            <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>{a.year}</td>
+                        const isExp = btExpandedYear === a.year;
+                        const cs2 = 6 + (useRegime ? 2 : 0);
+                        return (<React.Fragment key={a.year}>
+                          <tr onClick={() => setBtExpandedYear(isExp ? null : a.year)}
+                            style={{ borderBottom: isExp ? "none" : "1px solid rgba(255,255,255,.03)", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : "transparent" }}
+                            onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = "rgba(255,255,255,.02)" }}
+                            onMouseLeave={e => { if (!isExp) e.currentTarget.style.background = "transparent" }}>
+                            <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>{isExp ? "▾" : "▸"} {a.year}</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: cs.dim, fontSize: 9 }}>{fmt$(a.portfolioValue || 0)}</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.optRet >= 0 ? cs.green : cs.red }}>{a.optRet >= 0 ? "+" : ""}{a.optRet.toFixed(1)}%</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.spyRet >= 0 ? cs.blue : cs.red }}>{a.spyRet >= 0 ? "+" : ""}{a.spyRet.toFixed(1)}%</td>
-                            <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.bal60Ret >= 0 ? cs.purple : cs.red }}>{a.bal60Ret >= 0 ? "+" : ""}{a.bal60Ret.toFixed(1)}%</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, fontWeight: 600, color: alpha >= 0 ? cs.green : cs.red }}>{alpha >= 0 ? "+" : ""}{alpha.toFixed(1)}%</td>
+                            <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.dim, fontSize: 9 }}>{a.holdings?.length || 0}</td>
                             {useRegime && <td style={{ padding: "5px 8px", textAlign: "center", fontSize: 9 }}>
-                              <span title={a.regimeScore != null ? `Score: ${a.regimeScore?.toFixed(2)} · P(bear): ${((a.probBear || 0) * 100).toFixed(0)}%` : ""}>{a.regime === "bear" ? "🔴" : a.regime === "bull" ? "🟢" : "🟡"}</span>
-                              <div style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{a.regimeScore != null ? a.regimeScore.toFixed(1) : ""}</div>
+                              <span title={a.state5 ? a.state5.replace(/_/g, " ") : a.regime}>{
+                                a.state5 === "strong_risk_on" ? "🟢" : a.state5 === "mild_risk_on" ? "🟩" : a.state5 === "neutral" ? "🟡" : a.state5 === "mild_risk_off" ? "🟧" : a.state5 === "strong_risk_off" ? "🔴" : a.regime === "bear" ? "🔴" : a.regime === "bull" ? "🟢" : "🟡"
+                              }</span>
+                            </td>}
+                            {useRegime && <td style={{ padding: "5px 8px", textAlign: "center", fontSize: 9, fontFamily: mono2, color: a.acceleration > 0.1 ? cs.red : a.acceleration < -0.1 ? cs.green : cs.dim }}>
+                              {a.acceleration != null ? `${a.acceleration > 0 ? "+" : ""}${a.acceleration.toFixed(1)}` : "—"}
                             </td>}
                           </tr>
-                        );
+                          {/* ── Expanded Detail Row ── */}
+                          {isExp && <tr><td colSpan={cs2} style={{ padding: 0 }}>
+                            <div style={{ padding: "10px 12px 14px", background: "rgba(110,231,183,.02)", borderBottom: "1px solid rgba(110,231,183,.08)" }}>
+                              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                {/* Holdings */}
+                                <div style={{ flex: "1 1 250px", minWidth: 200 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: cs.green, marginBottom: 6 }}>📊 Holdings ({a.holdings?.length || 0} ETFs · {fmt$(a.portfolioValue || 0)})</div>
+                                  {a.holdings?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                    {a.holdings.map((h, i) => (
+                                      <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 4, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
+                                        <span style={{ width: 4, height: 14, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
+                                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color: cs.green, minWidth: 40 }}>{h.ticker}</span>
+                                        <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
+                                        <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.weight}%</span>
+                                        <span style={{ fontFamily: mono2, fontSize: 8, color: cs.muted, minWidth: 50, textAlign: "right" }}>{fmt$(h.dollars)}</span>
+                                      </div>
+                                    ))}
+                                    <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 4, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim }}>
+                                      {(() => { const cats = {}; (a.holdings || []).forEach(h => { cats[h.cat] = (cats[h.cat] || 0) + h.weight; }); return Object.entries(cats).sort(([,x],[,y]) => y - x).map(([cat, wt]) => `${cat}: ${wt.toFixed(0)}%`).join(" · "); })()}
+                                    </div>
+                                  </div> : <div style={{ fontSize: 9, color: cs.muted }}>No data</div>}
+                                </div>
+                                {/* Rebalance Trades */}
+                                <div style={{ flex: "1 1 250px", minWidth: 200 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: cs.blue, marginBottom: 6 }}>⚡ Rebalance ({a.trades?.length || 0} trades)</div>
+                                  {a.trades?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                    {a.trades.map((t2, i) => (
+                                      <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 4, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
+                                        <Badge color={t2.action === "BUY" ? cs.green : cs.red}>{t2.action}</Badge>
+                                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color: t2.action === "BUY" ? cs.green : cs.red, minWidth: 40 }}>{t2.ticker}</span>
+                                        <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t2.name}</span>
+                                        <span style={{ fontFamily: mono2, fontSize: 9, fontWeight: 600, color: t2.change > 0 ? cs.green : cs.red, minWidth: 45, textAlign: "right" }}>{t2.change > 0 ? "+" : ""}{t2.change}%</span>
+                                        <span style={{ fontFamily: mono2, fontSize: 8, color: cs.muted, minWidth: 50, textAlign: "right" }}>{fmt$(t2.dollars)}</span>
+                                      </div>
+                                    ))}
+                                    <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 4, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim }}>
+                                      {(() => { const buys = (a.trades || []).filter(t2 => t2.action === "BUY"); const sells = (a.trades || []).filter(t2 => t2.action === "SELL"); const to2 = (a.trades || []).reduce((s, t2) => s + Math.abs(t2.change), 0); return `${buys.length} buys · ${sells.length} sells · ${to2.toFixed(0)}% turnover`; })()}
+                                    </div>
+                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation — no prior holdings" : "No significant changes"}</div>}
+                                </div>
+                              </div>
+                            </div>
+                          </td></tr>}
+                        </React.Fragment>);
                       })}
                     </tbody>
                   </table>
