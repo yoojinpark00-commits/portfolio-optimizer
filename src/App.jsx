@@ -270,9 +270,10 @@ const REGIME_TILTS = {
 };
 
 // regimeCtx: { state5, acceleration, duration, transition } or just a string for backward compat
-function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx) {
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations) {
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
+  const numIterations = iterations || 6000;
 
   // Parse regimeCtx — can be a string ("bull") or object with full context
   let state5 = "neutral", acceleration = 0, duration = 1, transition = null;
@@ -357,7 +358,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     return Math.max(0.01, Math.min(fStar * adjMult, levMaxPct[i])); // cap by leverage limit
   });
 
-  for (let t = 0; t < 6000; t++) {
+  for (let t = 0; t < numIterations; t++) {
     // KEY CHANGE: vary the number of active positions per simulation (3 to 10)
     // This explores concentrated portfolios that may outperform diluted ones
     const numActive = 3 + Math.floor(Math.random() * 8); // 3 to 10 positions
@@ -819,6 +820,10 @@ export default function App() {
     const btTaxRates = getTaxRates(taxState);
     const rebalanceEvents = []; // every rebalance/hold decision with date
 
+    // Cache ETF_DB lookups for speed
+    const etfDbMap = {};
+    ETF_DB.forEach(e => { etfDbMap[e.t] = e; });
+
     // Build flat sorted list of all months from 2016-01 to 2025-12
     const allMonths = (monthlyReturns["SPY"] || [])
       .filter(r => { const y = new Date(r.date).getFullYear(); return y >= 2016 && y <= 2025; })
@@ -855,12 +860,63 @@ export default function App() {
       spyCurve.push({ date: monthKey, value: spyValue });
       bal60Curve.push({ date: monthKey, value: bal60Value });
 
-      // ── Step 2: Monthly rebalance evaluation ──
-      // Compute trailing 12-month stats for this month
+      // ── Step 2: Fast pre-screen — should we even evaluate rebalancing? ──
+      // Skip expensive optimizer call unless there's a reason to look
+      const prevTickers = Object.keys(optAlloc);
+      const isFirstAllocation = prevTickers.length === 0;
+      const monthsSinceRebal = lastRebalanceMonth
+        ? ((mYear - new Date(lastRebalanceMonth).getFullYear()) * 12 + (mMonth - new Date(lastRebalanceMonth).getMonth()))
+        : 999;
+
+      // Quick regime check (cheap — just a lookup)
+      let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
+      let btDuration = 0, btTransition = null, regimeChanged = false;
+      if (useRegime && historicalRegimes) {
+        const regKey = `${mYear}-${String(mMonth + 1).padStart(2, "0")}`;
+        const regData = historicalRegimes[regKey];
+        if (regData) {
+          btState5 = regData.state5 || null;
+          btRegimeScore = regData.score;
+          btAcceleration = regData.acceleration || null;
+          const regime3 = regData.regime;
+          btDuration = 1;
+          for (let lookback = 1; lookback <= 36; lookback++) {
+            const pm = new Date(mYear, mMonth - lookback, 28);
+            const pk = `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, "0")}`;
+            const prev = historicalRegimes[pk];
+            if (prev && prev.regime === regime3) btDuration++;
+            else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
+          }
+          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition };
+          // Did regime change from last month?
+          const lastMonthKey = mi > 0 ? allMonths[mi - 1].date : null;
+          if (lastMonthKey) {
+            const lmKey = lastMonthKey.slice(0, 7).replace(/-(\d)$/, "-0$1");
+            const lm = historicalRegimes[lmKey];
+            if (lm && lm.regime !== regime3) regimeChanged = true;
+          }
+        }
+      }
+
+      // Pre-screen: skip full evaluation unless one of these triggers fires
+      // 1. First allocation — must allocate
+      // 2. Regime just changed — evaluate immediately
+      // 3. Quarterly check (every 3 months) — routine review
+      // 4. Minimum 2 months since last rebalance
+      const isQuarterlyCheck = (mMonth % 3 === 0); // Jan, Apr, Jul, Oct
+      const shouldEvaluate = isFirstAllocation || regimeChanged || isQuarterlyCheck;
+      if (!shouldEvaluate || (!isFirstAllocation && monthsSinceRebal < 2)) { continue; }
+
+      // Yield to UI every 12 months to prevent freeze
+      if (mi % 12 === 0) {
+        setBtProgress(`Evaluating ${monthKey}...`);
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      // ── Full evaluation: compute trailing stats + run optimizer ──
       const trailingStats = {};
       for (const sym of available) {
         const symRets = monthlyReturns[sym]?.filter(r => {
-          // Trailing 12 months ending at current month
           const rd = new Date(r.date);
           const monthsAgo = (mYear - rd.getFullYear()) * 12 + (mMonth - rd.getMonth());
           return monthsAgo >= 1 && monthsAgo <= 12;
@@ -870,7 +926,7 @@ export default function App() {
         const annRet = avgMo * 12 * 100;
         const variance = symRets.reduce((s, r) => s + Math.pow(r.ret - avgMo, 2), 0) / symRets.length;
         const annVol = Math.sqrt(variance) * Math.sqrt(12) * 100;
-        const db = ETF_DB.find(e => e.t === sym);
+        const db = etfDbMap[sym];
         trailingStats[sym] = {
           t: sym, n: db?.n || sym, c: db?.c || "US Large Cap",
           r: annRet, v: Math.max(annVol, 1), er: db?.er || 0.1, d: db?.d || 0,
@@ -881,31 +937,8 @@ export default function App() {
       const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
       if (candidates.length < 3) { continue; }
 
-      // Compute regime context for this month
-      let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
-      let btDuration = 0, btTransition = null;
-      if (useRegime) {
-        const regKey = `${mYear}-${String(mMonth + 1).padStart(2, "0")}`;
-        const regData = historicalRegimes?.[regKey];
-        if (regData) {
-          btState5 = regData.state5 || null;
-          btRegimeScore = regData.score;
-          btAcceleration = regData.acceleration || null;
-          const regime3 = regData.regime;
-          btDuration = 1;
-          for (let lookback = 1; lookback <= 36; lookback++) {
-            const prevMonth = new Date(mYear, mMonth - lookback, 28);
-            const prevKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
-            const prev = historicalRegimes?.[prevKey];
-            if (prev && prev.regime === regime3) btDuration++;
-            else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
-          }
-          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition };
-        }
-      }
-
-      // ── Run optimizer to get proposed allocation ──
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime);
+      // ── Run optimizer (reduced iterations for backtest speed) ──
+      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 2000);
       if (!result || result.length === 0) { continue; }
 
       const newAlloc = {};
@@ -914,8 +947,6 @@ export default function App() {
 
       // ── Compare current vs proposed ──
       const prevAlloc = { ...optAlloc };
-      const prevTickers = Object.keys(prevAlloc);
-      const isFirstAllocation = prevTickers.length === 0;
       const spyTrailing = trailingStats["SPY"];
       const spyExpRet = spyTrailing ? spyTrailing.r : 10;
 
@@ -958,7 +989,6 @@ export default function App() {
         estRealizedGains += Math.max(0, sell.dollars - costBasis);
       }
       // Use LT rate if held >12 months since last rebalance, otherwise ST
-      const monthsSinceRebal = lastRebalanceMonth ? ((mYear - new Date(lastRebalanceMonth).getFullYear()) * 12 + (mMonth - new Date(lastRebalanceMonth).getMonth())) : 13;
       const applicableRate = monthsSinceRebal >= 12 ? btTaxRates.lt : btTaxRates.st;
       estTaxCost = estRealizedGains * (applicableRate / 100);
       const taxCostPct = optValue > 0 ? (estTaxCost / optValue) * 100 : 0;
@@ -986,11 +1016,7 @@ export default function App() {
         hurdle = taxCostPct * 1.5; // default
       }
 
-      // Also: minimum 2 months between rebalances to avoid churning
-      const minMonthsBetween = 2;
-      const tooSoon = !isFirstAllocation && monthsSinceRebal < minMonthsBetween;
-
-      const shouldRebalance = !tooSoon && (isFirstAllocation || returnImprovement > hurdle);
+      const shouldRebalance = isFirstAllocation || returnImprovement > hurdle;
 
       if (shouldRebalance) {
         optAlloc = newAlloc;
