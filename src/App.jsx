@@ -686,7 +686,9 @@ export default function App() {
     setRegimeLoading(true); setRegimeError("");
     try {
       const resp = await fetch("/api/regime");
-      const json = await resp.json();
+      const text = await resp.text();
+      let json;
+      try { json = JSON.parse(text); } catch (e) { throw new Error("Server returned non-JSON: " + text.slice(0, 100)); }
       if (resp.ok && json.regime) { setRegimeData(json); }
       else { setRegimeError(json.error || "Failed to fetch regime data"); }
     } catch (e) { setRegimeError("Error: " + e.message); }
@@ -697,10 +699,11 @@ export default function App() {
     setAnalyticsLoading(true);
     try {
       const resp = await fetch("/api/regime?analytics=true");
-      const json = await resp.json();
+      const text = await resp.text();
+      let json;
+      try { json = JSON.parse(text); } catch (e) { throw new Error("Server returned non-JSON: " + text.slice(0, 100)); }
       if (resp.ok && json.analytics) {
         setRegimeAnalytics(json.analytics);
-        // Also update regime data if we got it
         if (json.regime) setRegimeData(prev => prev ? { ...prev, regime: json.regime } : { regime: json.regime });
       }
     } catch (e) { console.warn("Analytics fetch failed:", e); }
@@ -812,12 +815,14 @@ export default function App() {
     let bal60Value = startCash;
     let optAlloc = {}; // ticker -> weight
     let totalTaxPaid = 0;
+    let totalRebalances = 0;
+    let totalHolds = 0;
     const btTaxRates = getTaxRates(taxState);
     const annualResults = [];
 
     for (const year of years) {
       setBtProgress(`Simulating ${year}...`);
-
+      try {
       // Get trailing 12-month returns/vol for each available ETF (from prior year)
       const trailingStats = {};
       for (const sym of available) {
@@ -834,6 +839,7 @@ export default function App() {
         trailingStats[sym] = {
           t: sym, n: db?.n || sym, c: db?.c || "US Large Cap",
           r: annRet, v: Math.max(annVol, 1), er: db?.er || 0.1, d: db?.d || 0,
+          lev: db?.lev || null,
         };
       }
 
@@ -902,17 +908,39 @@ export default function App() {
       if (candidates.length >= 3) {
         const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime);
         const prevAlloc = { ...optAlloc };
-        optAlloc = {};
+        const newAlloc = {};
         const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
-        result.forEach(r => { optAlloc[r.ticker] = r.dollars / totalDeployed; });
+        result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDeployed; });
 
-        // Compute rebalance trades: what changed from previous year
-        const allTickers = [...new Set([...Object.keys(prevAlloc), ...Object.keys(optAlloc)])];
+        // ── Estimate expected return of CURRENT vs PROPOSED portfolio ──
+        const spyTrailing = trailingStats["SPY"];
+        const spyExpRet = spyTrailing ? spyTrailing.r : 10; // SPY expected return as benchmark
+
+        // Current portfolio expected return (using trailing stats for held positions)
+        let currExpRet = 0, currVol = 0;
+        const prevTickers = Object.keys(prevAlloc);
+        if (prevTickers.length > 0) {
+          for (const [sym, wt] of Object.entries(prevAlloc)) {
+            const stat = trailingStats[sym];
+            if (stat) { currExpRet += wt * stat.r; currVol += wt * stat.v; }
+            else { currExpRet += wt * spyExpRet; currVol += wt * 15; } // fallback
+          }
+        }
+
+        // Proposed portfolio expected return
+        let propExpRet = 0;
+        for (const [sym, wt] of Object.entries(newAlloc)) {
+          const stat = trailingStats[sym];
+          if (stat) propExpRet += wt * stat.r;
+        }
+
+        // ── Estimate tax cost of rebalancing ──
+        const allTickers = [...new Set([...Object.keys(prevAlloc), ...Object.keys(newAlloc)])];
         const trades = allTickers.map(ticker => {
           const oldWt = prevAlloc[ticker] || 0;
-          const newWt = optAlloc[ticker] || 0;
+          const newWt = newAlloc[ticker] || 0;
           const change = newWt - oldWt;
-          if (Math.abs(change) < 0.005) return null; // skip trivial changes
+          if (Math.abs(change) < 0.005) return null;
           const rec = result.find(r => r.ticker === ticker);
           return {
             ticker,
@@ -926,40 +954,73 @@ export default function App() {
           };
         }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
 
-        // ── Tax drag: compute realized gains on sells, deduct tax from portfolio ──
-        // Annual rebalance → all positions held ~12 months → long-term rate applies
-        let yearTaxPaid = 0;
-        let yearRealizedGains = 0;
+        // Tax cost = realized gains on sells × LT rate
+        var yearTaxPaid = 0;
+        var yearRealizedGains = 0;
         const sells = trades.filter(t => t.action === "SELL");
         for (const sell of sells) {
-          // Estimate gain: if position grew by the trailing year return, the gain = sellAmount × (1 - 1/(1+return))
           const trailingStat = trailingStats[sell.ticker];
-          const trailingRet = trailingStat ? trailingStat.r / 100 : 0; // decimal annual return
+          const trailingRet = trailingStat ? trailingStat.r / 100 : 0;
           const sellDollars = sell.dollars;
-          // Cost basis ≈ current value / (1 + trailing return)
           const costBasis = trailingRet > -0.99 ? sellDollars / (1 + trailingRet) : sellDollars;
-          const gain = Math.max(0, sellDollars - costBasis); // only tax gains, not losses (simplified)
+          const gain = Math.max(0, sellDollars - costBasis);
           yearRealizedGains += gain;
         }
-        // Apply LT tax rate (annual rebalance = always held >1 year)
         const btTaxRate = btTaxRates.lt / 100;
-        yearTaxPaid = yearRealizedGains * btTaxRate;
-        // Deduct tax from portfolio value
-        optValue -= yearTaxPaid;
-        totalTaxPaid += yearTaxPaid;
+        const estTaxCost = yearRealizedGains * btTaxRate;
+        const taxCostPct = optValue > 0 ? (estTaxCost / optValue) * 100 : 0; // as % of portfolio
 
-        // Store holdings detail for this year
-        var yearHoldings = result.map(r => ({
+        // ── REBALANCE DECISION: only rebalance if net benefit is positive ──
+        // Expected improvement = proposed return - current return (annualized %)
+        // Tax cost = realized gains tax as % of portfolio
+        // Also factor in: if current is already beating SPY expectation, higher bar to rebalance
+        const returnImprovement = propExpRet - currExpRet;
+        const currAlpha = currExpRet - spyExpRet;
+
+        // Decision thresholds:
+        // - First year (no prior allocation): always allocate
+        // - If current portfolio has positive alpha over SPY: require improvement > 2× tax cost
+        // - Otherwise: require improvement > 1.5× tax cost (still conservative)
+        const isFirstYear = prevTickers.length === 0;
+        const hurdle = currAlpha > 2 ? taxCostPct * 2.0 : taxCostPct * 1.5;
+        const shouldRebalance = isFirstYear || returnImprovement > hurdle;
+        var rebalanceDecision = shouldRebalance ? "REBALANCE" : "HOLD";
+
+        if (shouldRebalance) {
+          optAlloc = newAlloc;
+          yearTaxPaid = estTaxCost;
+          optValue -= yearTaxPaid;
+          totalTaxPaid += yearTaxPaid;
+          totalRebalances++;
+        } else {
+          // HOLD: keep current allocation, pay zero tax
+          yearTaxPaid = 0;
+          yearRealizedGains = 0;
+          totalHolds++;
+        }
+
+        // Store holdings detail
+        var yearHoldings = (shouldRebalance ? result : prevTickers.map(t => {
+          const stat = trailingStats[t];
+          return { ticker: t, name: stat?.n || t, cat: stat?.c || "" };
+        })).map(r => ({
           ticker: r.ticker, name: r.name, cat: r.cat,
           weight: +((optAlloc[r.ticker] || 0) * 100).toFixed(1),
           dollars: Math.round((optAlloc[r.ticker] || 0) * optValue),
-        })).sort((a, b) => b.weight - a.weight);
-        var yearTrades = trades;
+        })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight);
+        var yearTrades = shouldRebalance ? trades : [];
+        var yearReturnImprovement = +returnImprovement.toFixed(1);
+        var yearTaxCostPct = +taxCostPct.toFixed(2);
+        var yearCurrAlpha = +currAlpha.toFixed(1);
       } else {
         var yearHoldings = [];
         var yearTrades = [];
         var yearTaxPaid = 0;
         var yearRealizedGains = 0;
+        var rebalanceDecision = "HOLD";
+        var yearReturnImprovement = 0;
+        var yearTaxCostPct = 0;
+        var yearCurrAlpha = 0;
       }
 
       // Simulate the year month-by-month
@@ -1003,6 +1064,10 @@ export default function App() {
         portfolioValue: Math.round(optValue),
         taxPaid: Math.round(yearTaxPaid),
         realizedGains: Math.round(yearRealizedGains),
+        decision: rebalanceDecision,
+        returnImprovement: yearReturnImprovement,
+        taxCostPct: yearTaxCostPct,
+        currAlpha: yearCurrAlpha,
         regime: typeof btRegime === "object" ? btRegime?.state5 || "neutral" : btRegime,
         state5: btState5,
         regimeScore: btRegimeScore,
@@ -1011,6 +1076,10 @@ export default function App() {
         duration: btDuration,
         transition: btTransition,
       });
+      } catch (yearErr) {
+        console.error(`Backtest error in ${year}:`, yearErr);
+        setBtProgress(`Error simulating ${year}: ${yearErr.message}`);
+      }
     }
 
     // Compute summary stats
@@ -1059,6 +1128,8 @@ export default function App() {
         rates: btTaxRates,
         state: taxState,
         effectiveDrag: startCash > 0 ? ((totalTaxPaid / startCash) * 100).toFixed(1) : 0,
+        rebalances: totalRebalances,
+        holds: totalHolds,
       },
     });
     setBtProgress(""); setBtRunning(false);
@@ -2260,7 +2331,7 @@ useEffect(() => {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                   <div>
                     <div style={{ fontSize: 10, fontWeight: 700, color: cs.purple }}>🏛 Tax Impact ({btResult.tax.state === "None" ? "Federal Only" : `${STATE_NAMES[btResult.tax.state]} + Federal`})</div>
-                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Estimated capital gains tax on annual rebalancing trades (LT rate: {btResult.tax.rates.lt.toFixed(1)}%)</div>
+                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Estimated capital gains tax on rebalancing trades (LT rate: {btResult.tax.rates.lt.toFixed(1)}%) · {btResult.tax.rebalances} rebalances, {btResult.tax.holds} holds</div>
                   </div>
                   <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                     <div style={{ textAlign: "center" }}>
@@ -2300,13 +2371,14 @@ useEffect(() => {
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.yellow, fontFamily: mono2, fontSize: 9 }}>Regime</th>}
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Accel</th>}
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.purple, fontFamily: mono2, fontSize: 9 }}>Tax</th>
+                        <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {annual.map(a => {
                         const alpha = a.optRet - a.spyRet;
                         const isExp = btExpandedYear === a.year;
-                        const cs2 = 7 + (useRegime ? 2 : 0); // 6 base + 1 tax + (2 regime)
+                        const cs2 = 8 + (useRegime ? 2 : 0);
                         return (<React.Fragment key={a.year}>
                           <tr onClick={() => setBtExpandedYear(isExp ? null : a.year)}
                             style={{ borderBottom: isExp ? "none" : "1px solid rgba(255,255,255,.03)", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : "transparent" }}
@@ -2328,6 +2400,9 @@ useEffect(() => {
                             </td>}
                             <td style={{ padding: "5px 8px", textAlign: "right", fontSize: 9, fontFamily: mono2, color: a.taxPaid > 0 ? cs.red : cs.dim }}>
                               {a.taxPaid > 0 ? `-${fmt$(a.taxPaid)}` : "—"}
+                            </td>
+                            <td style={{ padding: "5px 8px", textAlign: "center" }}>
+                              <Badge color={a.decision === "HOLD" ? cs.blue : cs.green}>{a.decision || "—"}</Badge>
                             </td>
                           </tr>
                           {/* ── Expanded Detail Row ── */}
@@ -2354,7 +2429,7 @@ useEffect(() => {
                                 </div>
                                 {/* Rebalance Trades */}
                                 <div style={{ flex: "1 1 250px", minWidth: 200 }}>
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: cs.blue, marginBottom: 6 }}>⚡ Rebalance ({a.trades?.length || 0} trades)</div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: a.decision === "HOLD" ? cs.blue : cs.blue, marginBottom: 6 }}>{a.decision === "HOLD" ? "🛡 Held — No Trades (tax savings)" : `⚡ Rebalance (${a.trades?.length || 0} trades)`}</div>
                                   {a.trades?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                                     {a.trades.map((t2, i) => (
                                       <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 4, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
@@ -2368,7 +2443,7 @@ useEffect(() => {
                                     <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 4, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim }}>
                                       {(() => { const buys = (a.trades || []).filter(t2 => t2.action === "BUY"); const sells = (a.trades || []).filter(t2 => t2.action === "SELL"); const to2 = (a.trades || []).reduce((s, t2) => s + Math.abs(t2.change), 0); return `${buys.length} buys · ${sells.length} sells · ${to2.toFixed(0)}% turnover`; })()}
                                     </div>
-                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation — no prior holdings" : "No significant changes"}</div>}
+                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation" : a.decision === "HOLD" ? "Portfolio held — rebalance tax cost exceeded expected improvement" : "No significant changes"}</div>}
                                 </div>
                               </div>
                               {/* Regime Context for this year */}
@@ -2385,6 +2460,14 @@ useEffect(() => {
                                   return null;
                                 })()}
                               </div>}
+                              {/* Rebalance Decision */}
+                              <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: a.decision === "HOLD" ? "rgba(96,165,250,.03)" : "rgba(110,231,183,.03)", border: `1px solid ${a.decision === "HOLD" ? "rgba(96,165,250,.12)" : "rgba(110,231,183,.08)"}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                                <Badge color={a.decision === "HOLD" ? cs.blue : cs.green}>{a.decision || "—"}</Badge>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Expected Δ: <span style={{ color: a.returnImprovement > 0 ? cs.green : cs.red, fontWeight: 600 }}>{a.returnImprovement > 0 ? "+" : ""}{a.returnImprovement}%</span></span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Tax cost: <span style={{ color: cs.red }}>{a.taxCostPct}%</span></span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Current α: <span style={{ color: a.currAlpha > 0 ? cs.green : cs.red }}>{a.currAlpha > 0 ? "+" : ""}{a.currAlpha}% vs SPY</span></span>
+                                {a.decision === "HOLD" && <span style={{ fontSize: 8, color: cs.blue }}>Tax savings outweigh potential improvement → kept existing positions</span>}
+                              </div>
                               {/* Tax Impact for this year */}
                               {(a.taxPaid > 0 || a.realizedGains > 0) && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(167,139,250,.03)", border: "1px solid rgba(167,139,250,.08)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 9, fontWeight: 600, color: cs.purple }}>🏛 Tax</span>
@@ -2403,7 +2486,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly caps" : ""}{useRegime ? ` · Regime-adaptive (${btResult.regimeSource || "FRED"})` : ""} · Tax: {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state + " + Federal"})
+                {btResult.etfsUsed} ETFs · Tax-aware conditional rebalancing · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
               </div>
             </>;
           })()}
