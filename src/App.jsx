@@ -204,6 +204,39 @@ function calcMetrics(positions, cashDollars, totalVal) {
 const DEFENSIVE_CATS = new Set(["US Bond","US Treasury","US Corp Bond","Intl Bond","Commodity","Factor LowVol","Sector Utilities","US Dividend","US Value"]);
 const AGGRESSIVE_CATS = new Set(["US Growth","US Small Cap","US Mid Cap","Emerging Mkts","Sector Tech","Sector Consumer","Sector Comms","Sector Finance","Factor Momentum"]);
 
+// ── US State Capital Gains Tax Rates (2024/2025) ──
+// Most states tax capital gains as ordinary income; these are the top marginal rates
+const STATE_TAX_RATES = {
+  "None":0,"AL":5.0,"AK":0,"AZ":2.5,"AR":4.4,"CA":13.3,"CO":4.4,"CT":6.99,"DE":6.6,"FL":0,
+  "GA":5.49,"HI":11.0,"ID":5.8,"IL":4.95,"IN":3.05,"IA":5.7,"KS":5.7,"KY":4.0,"LA":4.25,
+  "ME":7.15,"MD":5.75,"MA":9.0,"MI":4.25,"MN":9.85,"MS":5.0,"MO":4.95,"MT":5.9,"NE":5.84,
+  "NV":0,"NH":0,"NJ":10.75,"NM":5.9,"NY":10.9,"NC":4.5,"ND":2.5,"OH":3.5,"OK":4.75,
+  "OR":9.9,"PA":3.07,"RI":5.99,"SC":6.4,"SD":0,"TN":0,"TX":0,"UT":4.65,"VT":8.75,
+  "VA":5.75,"WA":7.0,"WV":5.12,"WI":7.65,"WY":0,"DC":10.75,
+};
+const STATE_NAMES = {
+  "None":"No State Tax","AL":"Alabama","AK":"Alaska","AZ":"Arizona","AR":"Arkansas","CA":"California",
+  "CO":"Colorado","CT":"Connecticut","DE":"Delaware","FL":"Florida","GA":"Georgia","HI":"Hawaii",
+  "ID":"Idaho","IL":"Illinois","IN":"Indiana","IA":"Iowa","KS":"Kansas","KY":"Kentucky","LA":"Louisiana",
+  "ME":"Maine","MD":"Maryland","MA":"Massachusetts","MI":"Michigan","MN":"Minnesota","MS":"Mississippi",
+  "MO":"Missouri","MT":"Montana","NE":"Nebraska","NV":"Nevada","NH":"New Hampshire","NJ":"New Jersey",
+  "NM":"New Mexico","NY":"New York","NC":"North Carolina","ND":"North Dakota","OH":"Ohio","OK":"Oklahoma",
+  "OR":"Oregon","PA":"Pennsylvania","RI":"Rhode Island","SC":"South Carolina","SD":"South Dakota",
+  "TN":"Tennessee","TX":"Texas","UT":"Utah","VT":"Vermont","VA":"Virginia","WA":"Washington",
+  "WV":"West Virginia","WI":"Wisconsin","WY":"Wyoming","DC":"Washington DC",
+};
+// Federal rates: 37% ST (ordinary income top bracket), 20% LT + 3.8% NIIT = 23.8%
+const FED_ST_RATE = 37; const FED_LT_RATE = 20; const NIIT_RATE = 3.8;
+function getTaxRates(stateCode) {
+  const stateRate = STATE_TAX_RATES[stateCode] || 0;
+  return {
+    st: FED_ST_RATE + stateRate,            // Short-term total rate %
+    lt: FED_LT_RATE + NIIT_RATE + stateRate, // Long-term total rate %
+    state: stateRate,
+    fedST: FED_ST_RATE, fedLT: FED_LT_RATE + NIIT_RATE,
+  };
+}
+
 // 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
 const REGIME_TILTS = {
   strong_risk_on: [-0.12, +0.15, 1.0],
@@ -531,6 +564,7 @@ export default function App() {
   const [volTarget, setVolTarget] = useState(0);  // 0 = off, otherwise target vol %
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
   const [useRegime, setUseRegime] = useState(true); // Regime-adaptive toggle
+  const [taxState, setTaxState] = useState("None"); // State for tax calc
   const [optResult, setOptResult] = useState(null);
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
@@ -684,6 +718,8 @@ export default function App() {
     let spyValue = startCash;
     let bal60Value = startCash;
     let optAlloc = {}; // ticker -> weight
+    let totalTaxPaid = 0;
+    const btTaxRates = getTaxRates(taxState);
     const annualResults = [];
 
     for (const year of years) {
@@ -772,6 +808,28 @@ export default function App() {
           };
         }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
 
+        // ── Tax drag: compute realized gains on sells, deduct tax from portfolio ──
+        // Annual rebalance → all positions held ~12 months → long-term rate applies
+        let yearTaxPaid = 0;
+        let yearRealizedGains = 0;
+        const sells = trades.filter(t => t.action === "SELL");
+        for (const sell of sells) {
+          // Estimate gain: if position grew by the trailing year return, the gain = sellAmount × (1 - 1/(1+return))
+          const trailingStat = trailingStats[sell.ticker];
+          const trailingRet = trailingStat ? trailingStat.r / 100 : 0; // decimal annual return
+          const sellDollars = sell.dollars;
+          // Cost basis ≈ current value / (1 + trailing return)
+          const costBasis = trailingRet > -0.99 ? sellDollars / (1 + trailingRet) : sellDollars;
+          const gain = Math.max(0, sellDollars - costBasis); // only tax gains, not losses (simplified)
+          yearRealizedGains += gain;
+        }
+        // Apply LT tax rate (annual rebalance = always held >1 year)
+        const btTaxRate = btTaxRates.lt / 100;
+        yearTaxPaid = yearRealizedGains * btTaxRate;
+        // Deduct tax from portfolio value
+        optValue -= yearTaxPaid;
+        totalTaxPaid += yearTaxPaid;
+
         // Store holdings detail for this year
         var yearHoldings = result.map(r => ({
           ticker: r.ticker, name: r.name, cat: r.cat,
@@ -782,6 +840,8 @@ export default function App() {
       } else {
         var yearHoldings = [];
         var yearTrades = [];
+        var yearTaxPaid = 0;
+        var yearRealizedGains = 0;
       }
 
       // Simulate the year month-by-month
@@ -823,6 +883,8 @@ export default function App() {
         holdings: yearHoldings,
         trades: yearTrades,
         portfolioValue: Math.round(optValue),
+        taxPaid: Math.round(yearTaxPaid),
+        realizedGains: Math.round(yearRealizedGains),
         regime: btRegime,
         state5: btState5,
         regimeScore: btRegimeScore,
@@ -872,9 +934,15 @@ export default function App() {
       startCash,
       etfsUsed: available.length,
       regimeSource: historicalRegimes ? "FRED v2 (7-factor, 5-state, daily EMA)" : "Proxy (SPY momentum/vol)",
+      tax: {
+        totalPaid: Math.round(totalTaxPaid),
+        rates: btTaxRates,
+        state: taxState,
+        effectiveDrag: startCash > 0 ? ((totalTaxPaid / startCash) * 100).toFixed(1) : 0,
+      },
     });
     setBtProgress(""); setBtRunning(false);
-  }, [ot, srMode, volTarget, useKelly, useRegime, btStartCash]);
+  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, btStartCash]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -896,6 +964,7 @@ useEffect(() => {
     if (typeof saved.volTarget === "number") setVolTarget(saved.volTarget);
     if (typeof saved.useKelly === "boolean") setUseKelly(saved.useKelly);
     if (typeof saved.useRegime === "boolean") setUseRegime(saved.useRegime);
+    if (typeof saved.taxState === "string") setTaxState(saved.taxState);
 
     if (typeof saved.sc === "string") setSc(saved.sc);
     if (typeof saved.so === "boolean") setSo(saved.so);
@@ -919,12 +988,13 @@ useEffect(() => {
       volTarget,
       useKelly,
       useRegime,
+      taxState,
       sc,
       so,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, useRegime, sc, so]);
+  }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, useRegime, taxState, sc, so]);
 
   // ─── Computed ───
   const etfV = useMemo(() => etfs.map(e => {
@@ -1106,18 +1176,26 @@ useEffect(() => {
   const getAI = useCallback(async (ctx) => {
     setAiL(true); setAiText("");
     const summary = {
-      existingETFs: etfV.map(e => ({ ticker: e.ticker, name: e.data?.n, shares: e.shares, costBasis: e.costBasis, mktValue: e.mktValue, category: e.data?.c, expenseRatio: e.data?.er })),
-      lockedStocks: stockV.map(s => ({ ticker: s.ticker, name: s.name, shares: s.shares, costBasis: s.costBasis, mktValue: s.mktValue, sector: s.sector, unrealizedGL: s.mktValue - (s.costBasis * s.shares) })),
+      existingETFs: etfV.map(e => {
+        const hp = holdingPeriod(e.purchaseDate);
+        const gl = e.shares > 0 && e.costBasis > 0 ? e.mktValue - (e.shares * e.costBasis) : null;
+        return { ticker: e.ticker, name: e.data?.n, shares: e.shares, costBasis: e.costBasis, mktValue: e.mktValue, category: e.data?.c, expenseRatio: e.data?.er, unrealizedGL: gl, holdingPeriod: hp?.label || null, isLongTerm: hp?.isLT || null, daysToLT: hp?.daysToLT || null };
+      }),
+      lockedStocks: stockV.map(s => {
+        const hp = holdingPeriod(s.purchaseDate);
+        return { ticker: s.ticker, name: s.name, shares: s.shares, costBasis: s.costBasis, mktValue: s.mktValue, sector: s.sector, unrealizedGL: s.mktValue - (s.costBasis * s.shares), holdingPeriod: hp?.label || null, isLongTerm: hp?.isLT || null, daysToLT: hp?.daysToLT || null };
+      }),
       holdingsValue: holdingsVal, cashToInvest: cashBalance, totalValue: totalVal,
       metrics: metrics ? { ret: metrics.er.toFixed(2), vol: metrics.vol.toFixed(2), sharpe: metrics.sh.toFixed(3) } : null,
-      optimizerSuggestion: optResult?.slice(0, 8)
+      optimizerSuggestion: optResult?.slice(0, 8),
+      taxRates: { state: taxState, stateName: STATE_NAMES[taxState], shortTerm: taxRates.st, longTerm: taxRates.lt, federal_ST: FED_ST_RATE, federal_LT: FED_LT_RATE + NIIT_RATE, stateRate: taxRates.state },
     };
     const fmtInst = `\n\nFormat your response with clear markdown: use ## headers for sections, bullet points (- ) for lists, **bold** for tickers and key figures, numbered lists for action steps, and | tables | for comparisons when helpful. Be specific with dollar amounts and percentages.`;
     const prompts = {
       deploy: `Expert portfolio advisor. I have $${cashBalance.toLocaleString()} cash to invest. My existing holdings below include individual stocks that are LOCKED (cannot be sold). Recommend specific ETF purchases to optimally deploy this cash. Consider diversification gaps, sector exposure relative to locked stocks, risk-adjusted returns, and correlation. Give exact dollar amounts.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
       risk: `Risk management expert. Analyze concentration risk, correlation, tail risk in this portfolio. Stocks are LOCKED. How should the new cash be deployed to reduce risk?${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
-      rebalance: `Portfolio rebalancing expert. Analyze my current portfolio allocation vs optimal targets. My stocks are LOCKED and cannot be sold. For my ETF positions, suggest specific rebalancing trades: which ETFs to trim (sell partial shares) and which to add to, with exact dollar amounts and share counts. Consider: 1) Whether any ETF positions are overweight vs the overall portfolio strategy 2) Drift from target allocation 3) How to use available cash ($${cashBalance.toLocaleString()}) to rebalance rather than selling when possible 4) Tax implications of selling ETF positions. Provide a clear rebalancing action plan with specific trades.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
-      taxloss: `Tax-loss harvesting expert. Analyze my portfolio for tax-loss harvesting opportunities. For each position, I've included cost basis and current market value. My stocks are LOCKED (cannot sell for tax purposes). For ETF positions, identify: 1) Positions with unrealized losses (market value < cost basis × shares) that could be sold to realize tax losses 2) Suitable replacement ETFs to maintain similar market exposure while avoiding wash sale rules (must be substantially different — different index, different fund family, or different strategy) 3) Estimated tax savings at both short-term (37%) and long-term (20%) capital gains rates 4) Whether the loss is worth harvesting given trading costs and tracking error of the replacement 5) Any positions approaching 1-year holding period where waiting could convert short-term to long-term gains. Provide specific sell/buy pairs with dollar amounts.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
+      rebalance: `Portfolio rebalancing expert. Analyze my current portfolio allocation vs optimal targets. My stocks are LOCKED and cannot be sold. For my ETF positions, suggest specific rebalancing trades: which ETFs to trim (sell partial shares) and which to add to, with exact dollar amounts and share counts. CRITICAL TAX CONSIDERATIONS: My tax rates are ${taxRates.st.toFixed(1)}% for short-term gains and ${taxRates.lt.toFixed(1)}% for long-term gains (${taxState === "None" ? "Federal only" : STATE_NAMES[taxState] + " + Federal"}). For each sell recommendation: 1) Check whether the position has an unrealized gain or loss 2) Check the holding period — if close to 1 year (daysToLT < 60), strongly recommend WAITING to convert ST to LT gains 3) Calculate the after-tax net benefit of the trade: expected improvement minus tax cost 4) Only recommend selling if the after-tax benefit is positive 5) Prefer selling positions with losses (tax-loss harvesting) or long-term positions over short-term gainers. Also consider using available cash ($${cashBalance.toLocaleString()}) to rebalance rather than selling.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
+      taxloss: `Tax-loss harvesting expert. Analyze my portfolio for tax-loss harvesting opportunities. My tax rates are ${taxRates.st.toFixed(1)}% short-term and ${taxRates.lt.toFixed(1)}% long-term (${taxState === "None" ? "Federal only" : STATE_NAMES[taxState] + " + Federal"}). My stocks are LOCKED (cannot sell). For ETF positions, identify: 1) Positions with unrealized losses that could be sold to realize tax losses — use the actual costBasis and mktValue provided 2) Suitable replacement ETFs to maintain similar exposure while avoiding wash sale rules 3) Calculate EXACT tax savings using my rates: loss × ${taxRates.st.toFixed(1)}% if short-term, loss × ${taxRates.lt.toFixed(1)}% if long-term 4) Flag positions approaching 1-year mark (daysToLT shown) where waiting would be beneficial 5) Net benefit after considering tracking error of replacement. Provide specific sell/buy pairs.${fmtInst}\n\n${JSON.stringify(summary, null, 2)}`,
     };
     try {
       const resp = await fetch("/api/ai", {
@@ -1158,6 +1236,9 @@ useEffect(() => {
     else label = `${days}d`;
     return { days, months, daysToLT, isLT, label };
   };
+
+  // ─── Tax rates ───
+  const taxRates = useMemo(() => getTaxRates(taxState), [taxState]);
 
   // ═══ RENDER ═══
   return (
@@ -1228,6 +1309,26 @@ useEffect(() => {
             <div style={{ fontSize: 8, color: cs.dim, marginTop: 4 }}>Contribute or withdraw cash. Balance cannot go below $0.</div>
           </div>
 
+          {/* Tax residency state */}
+          <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.08)", padding: "10px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: cs.purple }}>🏛 Tax Residency</div>
+                <div style={{ fontSize: 8, color: cs.dim, marginTop: 1 }}>Used for rebalancing, tax-loss harvesting, and backtest tax drag</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <select value={taxState} onChange={e => setTaxState(e.target.value)} style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(167,139,250,.15)", borderRadius: 5, color: cs.text, padding: "4px 8px", fontSize: 10, fontFamily: "inherit", cursor: "pointer", outline: "none" }}>
+                  {Object.entries(STATE_NAMES).sort((a, b) => a[1].localeCompare(b[1])).map(([code, name]) => (
+                    <option key={code} value={code} style={{ background: "#1a1b1e", color: "#e8eaed" }}>{name}{STATE_TAX_RATES[code] > 0 ? ` (${STATE_TAX_RATES[code]}%)` : ""}</option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 9, fontFamily: mono2, color: cs.purple }}>
+                  ST: {taxRates.st.toFixed(1)}% · LT: {taxRates.lt.toFixed(1)}%
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Add holding form */}
           <div style={cardS}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -1285,7 +1386,13 @@ useEffect(() => {
                     {s.shares > 0 && s.costBasis > 0 && s.mktValue > 0 && (() => {
                       const gl = s.mktValue - (s.shares * s.costBasis);
                       const glPct = ((s.mktValue / (s.shares * s.costBasis)) - 1) * 100;
-                      return <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>;
+                      const hp = holdingPeriod(s.purchaseDate);
+                      const rate = hp?.isLT ? taxRates.lt : taxRates.st;
+                      const estTax = gl > 0 ? gl * rate / 100 : 0;
+                      return <span>
+                        <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
+                        {gl > 0 && <span style={{ color: cs.purple, fontSize: 7 }}> tax ~{fmt$(estTax)} ({rate.toFixed(0)}% {hp?.isLT ? "LT" : "ST"})</span>}
+                      </span>;
                     })()}
                     {live[s.ticker] && <span style={{ color: live[s.ticker].change >= 0 ? cs.green : cs.red }}> · Day {live[s.ticker].change > 0 ? "+" : ""}{live[s.ticker].change}%</span>}
                     {totalVal > 0 && <span style={{ color: cs.dim }}> · Wt {((s.mktValue / totalVal) * 100).toFixed(1)}%</span>}
@@ -1317,7 +1424,13 @@ useEffect(() => {
                     {e.shares > 0 && e.costBasis > 0 && e.mktValue > 0 && (() => {
                       const gl = e.mktValue - (e.shares * e.costBasis);
                       const glPct = ((e.mktValue / (e.shares * e.costBasis)) - 1) * 100;
-                      return <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>;
+                      const hp = holdingPeriod(e.purchaseDate);
+                      const rate = hp?.isLT ? taxRates.lt : taxRates.st;
+                      const estTax = gl > 0 ? gl * rate / 100 : 0;
+                      return <span>
+                        <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
+                        {gl > 0 && <span style={{ color: cs.purple, fontSize: 7 }}> tax ~{fmt$(estTax)} ({rate.toFixed(0)}% {hp?.isLT ? "LT" : "ST"})</span>}
+                      </span>;
                     })()}
                     {live[e.ticker] && <span style={{ color: live[e.ticker].change >= 0 ? cs.green : cs.red }}> · Live ${live[e.ticker].price} (Day {live[e.ticker].change > 0 ? "+" : ""}{live[e.ticker].change}%)</span>}
                     {totalVal > 0 && <span style={{ color: cs.dim }}> · Wt {((e.mktValue / totalVal) * 100).toFixed(1)}%</span>}
@@ -1478,6 +1591,31 @@ useEffect(() => {
                 <MC sm label="Net Return" value={`${metrics.nr.toFixed(2)}%`} accent={cs.green} sub="After expenses" />
                 <MC sm label="Max Drawdown" value={`-${metrics.md.toFixed(1)}%`} accent={cs.red} sub="≈2.1× vol" />
               </div>
+              {/* Tax Summary */}
+              {(etfV.length > 0 || stockV.length > 0) && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.08)" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: cs.purple, marginBottom: 8 }}>🏛 Tax Summary ({taxState === "None" ? "Federal Only" : STATE_NAMES[taxState] + " + Federal"})</div>
+                {(() => {
+                  let totalUnrealizedGain = 0, totalUnrealizedLoss = 0, stGains = 0, ltGains = 0, stLosses = 0, ltLosses = 0;
+                  [...etfV, ...stockV].forEach(p => {
+                    const shares = p.shares || 0, cb = p.costBasis || 0, mv = p.mktValue || 0;
+                    if (shares <= 0 || cb <= 0) return;
+                    const gl = mv - (shares * cb);
+                    const hp = holdingPeriod(p.purchaseDate);
+                    if (gl >= 0) { totalUnrealizedGain += gl; if (hp?.isLT) ltGains += gl; else stGains += gl; }
+                    else { totalUnrealizedLoss += Math.abs(gl); if (hp?.isLT) ltLosses += Math.abs(gl); else stLosses += Math.abs(gl); }
+                  });
+                  const estTaxOnGains = (stGains * taxRates.st / 100) + (ltGains * taxRates.lt / 100);
+                  const potTaxSavings = (stLosses * taxRates.st / 100) + (ltLosses * taxRates.lt / 100);
+                  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(100px,1fr))", gap: 6 }}>
+                    <div><div style={{ fontSize: 7, color: cs.dim }}>Unrealized Gains</div><div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: cs.green }}>{fmt$(totalUnrealizedGain)}</div></div>
+                    <div><div style={{ fontSize: 7, color: cs.dim }}>Unrealized Losses</div><div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: cs.red }}>{fmt$(totalUnrealizedLoss)}</div></div>
+                    <div><div style={{ fontSize: 7, color: cs.dim }}>ST Gains ({taxRates.st.toFixed(0)}%)</div><div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: cs.yellow }}>{fmt$(stGains)}</div></div>
+                    <div><div style={{ fontSize: 7, color: cs.dim }}>LT Gains ({taxRates.lt.toFixed(0)}%)</div><div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: cs.green }}>{fmt$(ltGains)}</div></div>
+                    <div><div style={{ fontSize: 7, color: cs.dim }}>Est. Tax on Gains</div><div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: cs.red }}>{fmt$(estTaxOnGains)}</div></div>
+                    <div><div style={{ fontSize: 7, color: cs.dim }}>TLH Potential</div><div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: cs.purple }}>{fmt$(potTaxSavings)}</div></div>
+                  </div>;
+                })()}
+              </div>}
               {totalVal > 0 && <div style={cardS}>
                 <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 10 }}>Growth Projection ({fmt$(totalVal)})</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
@@ -1910,6 +2048,7 @@ useEffect(() => {
                 {volTarget > 0 && <span style={{ color: cs.blue }}> · Vol {volTarget}%</span>}
                 {useKelly && <span style={{ color: cs.purple }}> · ½Kelly</span>}
                 {useRegime && <span style={{ color: cs.yellow }}> · Regime-Adaptive</span>}
+                <span style={{ color: cs.purple }}> · Tax: {taxRates.lt.toFixed(1)}% LT</span>
               </div>
             </div>
 
@@ -1978,7 +2117,33 @@ useEffect(() => {
                 ))}
               </div>
 
-              {/* Annual Returns Table — click to expand holdings & rebalance */}
+              {/* Tax Impact Summary */}
+              {btResult.tax && btResult.tax.totalPaid > 0 && <div style={{ ...cardS, marginBottom: 14, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: cs.purple }}>🏛 Tax Impact ({btResult.tax.state === "None" ? "Federal Only" : `${STATE_NAMES[btResult.tax.state]} + Federal`})</div>
+                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Estimated capital gains tax on annual rebalancing trades (LT rate: {btResult.tax.rates.lt.toFixed(1)}%)</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Total Tax Paid</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{fmt$(btResult.tax.totalPaid)}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Tax Drag</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{btResult.tax.effectiveDrag}%</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Pre-Tax Value</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: cs.dim }}>{fmt$(summary.opt.final + btResult.tax.totalPaid)}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>After-Tax Value</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: cs.green }}>{fmt$(summary.opt.final)}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>}
               <div style={cardS}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                   <div style={{ fontSize: 11, fontWeight: 700 }}>Annual Returns & Rebalancing</div>
@@ -1996,13 +2161,14 @@ useEffect(() => {
                         <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>ETFs</th>
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.yellow, fontFamily: mono2, fontSize: 9 }}>Regime</th>}
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Accel</th>}
+                        <th style={{ padding: "6px 8px", textAlign: "right", color: cs.purple, fontFamily: mono2, fontSize: 9 }}>Tax</th>
                       </tr>
                     </thead>
                     <tbody>
                       {annual.map(a => {
                         const alpha = a.optRet - a.spyRet;
                         const isExp = btExpandedYear === a.year;
-                        const cs2 = 6 + (useRegime ? 2 : 0);
+                        const cs2 = 7 + (useRegime ? 2 : 0); // 6 base + 1 tax + (2 regime)
                         return (<React.Fragment key={a.year}>
                           <tr onClick={() => setBtExpandedYear(isExp ? null : a.year)}
                             style={{ borderBottom: isExp ? "none" : "1px solid rgba(255,255,255,.03)", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : "transparent" }}
@@ -2022,6 +2188,9 @@ useEffect(() => {
                             {useRegime && <td style={{ padding: "5px 8px", textAlign: "center", fontSize: 9, fontFamily: mono2, color: a.acceleration > 0.1 ? cs.red : a.acceleration < -0.1 ? cs.green : cs.dim }}>
                               {a.acceleration != null ? `${a.acceleration > 0 ? "+" : ""}${a.acceleration.toFixed(1)}` : "—"}
                             </td>}
+                            <td style={{ padding: "5px 8px", textAlign: "right", fontSize: 9, fontFamily: mono2, color: a.taxPaid > 0 ? cs.red : cs.dim }}>
+                              {a.taxPaid > 0 ? `-${fmt$(a.taxPaid)}` : "—"}
+                            </td>
                           </tr>
                           {/* ── Expanded Detail Row ── */}
                           {isExp && <tr><td colSpan={cs2} style={{ padding: 0 }}>
@@ -2064,6 +2233,14 @@ useEffect(() => {
                                   </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation — no prior holdings" : "No significant changes"}</div>}
                                 </div>
                               </div>
+                              {/* Tax Impact for this year */}
+                              {(a.taxPaid > 0 || a.realizedGains > 0) && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(167,139,250,.03)", border: "1px solid rgba(167,139,250,.08)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 9, fontWeight: 600, color: cs.purple }}>🏛 Tax</span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Realized Gains: <span style={{ color: a.realizedGains > 0 ? cs.green : cs.dim }}>{fmt$(a.realizedGains)}</span></span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Tax Rate: <span style={{ color: cs.text }}>{btResult.tax?.rates?.lt?.toFixed(1)}% LT</span></span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Tax Paid: <span style={{ color: cs.red, fontWeight: 600 }}>-{fmt$(a.taxPaid)}</span></span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>After-Tax Value: <span style={{ color: cs.green }}>{fmt$(a.portfolioValue)}</span></span>
+                              </div>}
                             </div>
                           </td></tr>}
                         </React.Fragment>);
@@ -2074,7 +2251,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly caps" : ""}{useRegime ? ` · Regime-adaptive (${btResult.regimeSource || "FRED"})` : ""}
+                {btResult.etfsUsed} ETFs used · Annual rebalancing · Trailing 12-month stats · {ot.replace("_"," ")} objective · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly caps" : ""}{useRegime ? ` · Regime-adaptive (${btResult.regimeSource || "FRED"})` : ""} · Tax: {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state + " + Federal"})
               </div>
             </>;
           })()}
