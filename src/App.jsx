@@ -374,7 +374,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   for (let t = 0; t < numIterations; t++) {
-    const numActive = 3 + Math.floor(Math.random() * Math.min(8, n - 2));
+    const numActive = Math.min(n, 3 + Math.floor(Math.random() * Math.min(8, Math.max(1, n - 2))));
 
     // Warm-start: 70% of iterations mutate the best-so-far, 30% random exploration
     const warmStart = best && t > 10 && Math.random() < 0.7;
@@ -383,29 +383,27 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     let wSum = 0;
     for (let i = 0; i < n; i++) ws[i] = 0;
     if (warmStart) {
-      // Mutate best: perturb each weight by ±30%
       for (let i = 0; i < n; i++) {
         ws[i] = Math.max(0, best[i] + (Math.random() - 0.5) * 0.6 * best[i]);
         wSum += ws[i];
       }
-      // Occasionally zero out or add a position
       if (Math.random() < 0.3) {
         const idx = Math.floor(Math.random() * n);
         if (ws[idx] > 0) { wSum -= ws[idx]; ws[idx] = 0; }
         else { ws[idx] = Math.random() * 0.3; wSum += ws[idx]; }
       }
     } else {
-      // Random: select numActive positions
-      // Simple approach: randomly assign weights to numActive random indices
-      const picks = new Uint8Array(n);
-      let picked = 0;
-      while (picked < numActive) {
-        const idx = Math.floor(Math.random() * n);
-        if (!picks[idx]) { picks[idx] = 1; picked++; }
+      // Safe selection: Fisher-Yates partial shuffle on index array
+      const idxArr = new Uint16Array(n);
+      for (let i = 0; i < n; i++) idxArr[i] = i;
+      for (let i = 0; i < numActive; i++) {
+        const j = i + Math.floor(Math.random() * (n - i));
+        const tmp = idxArr[i]; idxArr[i] = idxArr[j]; idxArr[j] = tmp;
       }
-      for (let i = 0; i < n; i++) {
-        ws[i] = picks[i] ? Math.random() : 0;
-        wSum += ws[i];
+      for (let i = 0; i < numActive; i++) {
+        const idx = idxArr[i];
+        ws[idx] = Math.random();
+        wSum += ws[idx];
       }
     }
 
@@ -849,7 +847,9 @@ export default function App() {
     const btTaxRates = getTaxRates(taxState);
     const rebalanceEvents = [];
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; });
-    const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12");
+    // Only simulate months where SPY data actually exists
+    const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
+    const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12" && spyDates.has(d));
 
     for (let mi = 0; mi < simDates.length; mi++) {
       const monthKey = simDates[mi];
@@ -916,7 +916,7 @@ export default function App() {
       }
       const allCandidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
       // Pre-filter to top 25 by trailing Sharpe — keeps optimizer O(n²) fast
-      const candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 25);
+      const candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 15);
       if (candidates.length < 3) continue;
 
       // Step 4: Optimizer (1000 iterations for speed)
@@ -928,7 +928,7 @@ export default function App() {
           warmWeights[i] = lastBestWeights[candidates[i].t] || 0;
         }
       }
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 500, warmWeights);
+      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 300, warmWeights);
       if (!result || result.length === 0) continue;
       // Save best weights for warm-starting next evaluation
       lastBestWeights = {};
@@ -962,7 +962,8 @@ export default function App() {
 
     // ═══ AGGREGATE INTO ANNUAL RESULTS FOR DISPLAY ═══
     const annualResults = [];
-    for (let year = 2016; year <= 2025; year++) {
+    const simYears = [...new Set(simDates.map(d => parseInt(d.slice(0, 4))))].sort();
+    for (const year of simYears) {
       // Find year boundaries in curve data
       const yearCurve = optCurve.filter(p => p.date.startsWith(String(year)));
       const spyYearCurve = spyCurve.filter(p => p.date.startsWith(String(year)));
@@ -1021,7 +1022,7 @@ export default function App() {
     const optTotal = (optValue / startCash - 1) * 100;
     const spyTotal = (spyValue / startCash - 1) * 100;
     const bal60Total = (bal60Value / startCash - 1) * 100;
-    const numYears = years.length;
+    const numYears = simYears.length;
     const optCAGR = (Math.pow(optValue / startCash, 1 / numYears) - 1) * 100;
     const spyCAGR = (Math.pow(spyValue / startCash, 1 / numYears) - 1) * 100;
     const bal60CAGR = (Math.pow(bal60Value / startCash, 1 / numYears) - 1) * 100;
