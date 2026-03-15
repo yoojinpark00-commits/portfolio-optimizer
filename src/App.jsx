@@ -270,12 +270,13 @@ const REGIME_TILTS = {
 };
 
 // regimeCtx: { state5, acceleration, duration, transition } or just a string for backward compat
-function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations) {
+// prevBest: optional previous allocation weights to warm-start from
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest) {
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
   const numIterations = iterations || 6000;
 
-  // Parse regimeCtx — can be a string ("bull") or object with full context
+  // Parse regimeCtx
   let state5 = "neutral", acceleration = 0, duration = 1, transition = null;
   if (typeof regimeCtx === "string") {
     if (regimeCtx === "bull") state5 = "mild_risk_on";
@@ -289,161 +290,192 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   const [baseDefBonus, baseAggBonus, baseKellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
-
-  // ── Duration scaling: longer regime = stronger conviction (caps at 2x after 12 months) ──
   const durationScale = Math.min(2.0, 0.5 + (duration / 12) * 1.5);
-
-  // ── Acceleration modulation: improving stress dampens risk-off tilt, deteriorating amplifies ──
-  // acceleration > 0 = getting worse; < 0 = improving
   let accelMod = 1.0;
-  if (state5.includes("risk_off")) {
-    // In risk-off: if improving (accel < 0), dampen defensive tilt to 60%
-    // If deteriorating (accel > 0), amplify to 130%
-    accelMod = acceleration < -0.15 ? 0.6 : acceleration > 0.15 ? 1.3 : 1.0;
-  } else if (state5.includes("risk_on")) {
-    // In risk-on: if deteriorating, dampen aggressive tilt
-    accelMod = acceleration > 0.15 ? 0.6 : acceleration < -0.15 ? 1.2 : 1.0;
-  }
+  if (state5.includes("risk_off")) accelMod = acceleration < -0.15 ? 0.6 : acceleration > 0.15 ? 1.3 : 1.0;
+  else if (state5.includes("risk_on")) accelMod = acceleration > 0.15 ? 0.6 : acceleration < -0.15 ? 1.2 : 1.0;
 
-  // ── Entry signal bonus: transitions from bear→bull or bear→neutral with duration 2-6m ──
-  // These are historically the best entry windows for risk assets
   let entryBonus = 0;
   if (transition) {
     const [from, to] = transition.includes("→") ? transition.split("→") : [null, null];
-    if (from === "bear" && (to === "bull" || to === "neutral") && duration >= 2 && duration <= 8) {
-      entryBonus = 0.08; // significant bonus for aggressive assets during optimal entry
-    } else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) {
-      entryBonus = 0.04; // moderate bonus for bull confirmation
-    }
+    if (from === "bear" && (to === "bull" || to === "neutral") && duration >= 2 && duration <= 8) entryBonus = 0.08;
+    else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) entryBonus = 0.04;
   }
 
-  // Apply all modifiers to base tilts
   const defBonus = baseDefBonus * durationScale * accelMod;
   const aggBonus = baseAggBonus * durationScale * accelMod + (state5.includes("risk_on") ? entryBonus : 0);
   const kellyMult = baseKellyMult;
+  const regimeTilt = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const c = candidates[i];
+    if (state5 === "neutral" && entryBonus === 0) { regimeTilt[i] = 0; continue; }
+    if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = defBonus - (entryBonus > 0 ? entryBonus * 0.5 : 0);
+    else if (AGGRESSIVE_CATS.has(c.c)) regimeTilt[i] = aggBonus;
+    else regimeTilt[i] = entryBonus > 0 ? entryBonus * 0.3 : 0;
+  }
 
-  // Regime tilt multipliers per candidate
-  const regimeTilt = candidates.map(c => {
-    if (state5 === "neutral" && entryBonus === 0) return 0;
-    const isDef = DEFENSIVE_CATS.has(c.c);
-    const isAgg = AGGRESSIVE_CATS.has(c.c);
-    if (isDef) return defBonus - (entryBonus > 0 ? entryBonus * 0.5 : 0); // reduce defensive during entry
-    if (isAgg) return aggBonus;
-    return entryBonus > 0 ? entryBonus * 0.3 : 0; // moderate categories get small entry boost
-  });
+  // Pre-compute adjusted returns, vols as typed arrays
+  const adjRet = new Float64Array(n), volArr = new Float64Array(n), isLev = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const c = candidates[i];
+    adjRet[i] = (c.lev && Math.abs(c.lev) > 1) ? getAdjustedReturn(c.r, c.v, c.lev) : c.r;
+    volArr[i] = c.v / 100;
+    isLev[i] = (c.lev && Math.abs(c.lev) > 1) ? 1 : 0;
+  }
 
-  // Pre-compute decay-adjusted returns for leveraged ETFs
-  const adjReturns = candidates.map(c => {
-    if (c.lev && Math.abs(c.lev) > 1) return getAdjustedReturn(c.r, c.v, c.lev);
-    return c.r;
-  });
+  // Leverage caps + Kelly caps
+  const maxPct = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const c = candidates[i];
+    let levCap = 1.0;
+    if (c.lev && Math.abs(c.lev) > 1) { levCap = c.lev < 0 ? 0.05 : Math.abs(c.lev) >= 3 ? 0.10 : 0.15; }
+    if (!useKelly) { maxPct[i] = levCap; continue; }
+    const sigSq = volArr[i] * volArr[i];
+    if (sigSq <= 0) { maxPct[i] = levCap; continue; }
+    const fStar = 0.5 * ((adjRet[i] - RF) / 100) / sigSq;
+    const adj = AGGRESSIVE_CATS.has(c.c) ? kellyMult : 1.0;
+    maxPct[i] = Math.max(0.01, Math.min(fStar * adj, levCap));
+  }
 
-  // Leveraged ETF max allocation cap: 3x → 10%, 2x → 15%, inverse → 5%
-  const levMaxPct = candidates.map(c => {
-    if (!c.lev || Math.abs(c.lev) <= 1) return 1.0;
-    if (c.lev < 0) return 0.05; // inverse ETFs: max 5%
-    if (Math.abs(c.lev) >= 3) return 0.10; // 3x: max 10%
-    return 0.15; // 2x: max 15%
-  });
+  // ── Pre-compute flat correlation matrix (n×n) — eliminates gc() calls in hot loop ──
+  const nEx = existing.length;
+  const totalItems = nEx + n;
+  const corrMatrix = new Float64Array(totalItems * totalItems);
+  const itemCats = [];
+  for (const p of existing) itemCats.push(p.cat || "Stock");
+  for (const c of candidates) itemCats.push(c.c);
+  for (let i = 0; i < totalItems; i++) {
+    for (let j = i; j < totalItems; j++) {
+      const v = gc(itemCats[i], itemCats[j]);
+      corrMatrix[i * totalItems + j] = v;
+      corrMatrix[j * totalItems + i] = v;
+    }
+  }
 
-  // Half Kelly caps with regime-adjusted Kelly multiplier + leverage cap
-  const kellyMaxPct = candidates.map((c, i) => {
-    if (!useKelly) return levMaxPct[i]; // Still apply leverage cap even without Kelly
-    const sigSq = (c.v / 100) * (c.v / 100);
-    if (sigSq <= 0) return levMaxPct[i];
-    // Use decay-adjusted return for Kelly calculation
-    const adjR = adjReturns[i];
-    const fStar = 0.5 * ((adjR - RF) / 100) / sigSq;
-    const adjMult = AGGRESSIVE_CATS.has(c.c) ? kellyMult : 1.0;
-    return Math.max(0.01, Math.min(fStar * adjMult, levMaxPct[i])); // cap by leverage limit
-  });
+  // Pre-compute existing portfolio weights and properties
+  const newTV = totalVal + cash;
+  const exW = new Float64Array(nEx), exVol = new Float64Array(nEx), exRet = new Float64Array(nEx);
+  for (let i = 0; i < nEx; i++) {
+    exW[i] = existing[i].dollars / newTV;
+    exVol[i] = (existing[i].v || 0) / 100;
+    exRet[i] = existing[i].r || 0;
+  }
+
+  // Reusable arrays — zero allocation in hot loop
+  const ws = new Float64Array(n);
+  const alloc = new Float64Array(n);
+  const itemW = new Float64Array(totalItems);
+  const itemVol = new Float64Array(totalItems);
+  const hasRegimeTilt = state5 !== "neutral" || entryBonus > 0;
+
+  // Warm-start: build initial best from prevBest if available
+  if (prevBest && prevBest.length === n) {
+    best = new Float64Array(prevBest);
+  }
 
   for (let t = 0; t < numIterations; t++) {
-    // KEY CHANGE: vary the number of active positions per simulation (3 to 10)
-    // This explores concentrated portfolios that may outperform diluted ones
-    const numActive = 3 + Math.floor(Math.random() * 8); // 3 to 10 positions
-    
-    // Randomly select which candidates get allocation
-    const indices = Array.from({ length: n }, (_, i) => i);
-    for (let i = indices.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [indices[i], indices[j]] = [indices[j], indices[i]]; }
-    const activeSet = new Set(indices.slice(0, Math.min(numActive, n)));
-    
-    const ws = Array.from({ length: n }, (_, i) => activeSet.has(i) ? Math.random() : 0);
-    const s = ws.reduce((a, b) => a + b, 0) || 1;
-    // Deploy between 90% and 100% of cash
+    const numActive = 3 + Math.floor(Math.random() * Math.min(8, n - 2));
+
+    // Warm-start: 70% of iterations mutate the best-so-far, 30% random exploration
+    const warmStart = best && t > 10 && Math.random() < 0.7;
+
+    // Generate weights
+    let wSum = 0;
+    for (let i = 0; i < n; i++) ws[i] = 0;
+    if (warmStart) {
+      // Mutate best: perturb each weight by ±30%
+      for (let i = 0; i < n; i++) {
+        ws[i] = Math.max(0, best[i] + (Math.random() - 0.5) * 0.6 * best[i]);
+        wSum += ws[i];
+      }
+      // Occasionally zero out or add a position
+      if (Math.random() < 0.3) {
+        const idx = Math.floor(Math.random() * n);
+        if (ws[idx] > 0) { wSum -= ws[idx]; ws[idx] = 0; }
+        else { ws[idx] = Math.random() * 0.3; wSum += ws[idx]; }
+      }
+    } else {
+      // Random: select numActive positions
+      // Simple approach: randomly assign weights to numActive random indices
+      const picks = new Uint8Array(n);
+      let picked = 0;
+      while (picked < numActive) {
+        const idx = Math.floor(Math.random() * n);
+        if (!picks[idx]) { picks[idx] = 1; picked++; }
+      }
+      for (let i = 0; i < n; i++) {
+        ws[i] = picks[i] ? Math.random() : 0;
+        wSum += ws[i];
+      }
+    }
+
+    if (wSum <= 0) continue;
     const deployPct = 0.9 + Math.random() * 0.1;
     const deployAmt = cash * deployPct;
-    let alloc = ws.map((w, i) => {
-      let pct = w / s;
-      if (useKelly && activeSet.has(i)) pct = Math.min(pct, kellyMaxPct[i]);
-      return pct;
-    });
-    // Renormalize after Kelly caps
-    const allocSum = alloc.reduce((a, b) => a + b, 0) || 1;
-    alloc = alloc.map(a => (a / allocSum) * deployAmt);
 
-    const newTV = totalVal + cash;
-    const items = [
-      ...existing.map(p => ({ w: p.dollars / newTV, vol: p.v || 0, cat: p.cat || "Stock", ret: p.r || 0 })),
-      ...alloc.map((d, i) => ({ w: d / newTV, vol: candidates[i].v, cat: candidates[i].c, ret: adjReturns[i] })), // Use decay-adjusted returns
-    ];
+    // Normalize + apply Kelly/leverage caps
+    let allocSum2 = 0;
+    for (let i = 0; i < n; i++) {
+      let pct = ws[i] / wSum;
+      if (pct > 0) pct = Math.min(pct, maxPct[i]);
+      alloc[i] = pct;
+      allocSum2 += pct;
+    }
+    if (allocSum2 <= 0) continue;
+    for (let i = 0; i < n; i++) alloc[i] = (alloc[i] / allocSum2) * deployAmt;
+
+    // Build item arrays (existing + new alloc)
+    for (let i = 0; i < nEx; i++) { itemW[i] = exW[i]; itemVol[i] = exVol[i]; }
+    for (let i = 0; i < n; i++) { itemW[nEx + i] = alloc[i] / newTV; itemVol[nEx + i] = volArr[i]; }
+
+    // Compute return + variance (fully inlined, no gc() calls)
     let ret = 0, vr = 0;
-    for (let i = 0; i < items.length; i++) { ret += items[i].w * items[i].ret;
-      for (let j = 0; j < items.length; j++) vr += items[i].w * items[j].w * (items[i].vol / 100) * (items[j].vol / 100) * gc(items[i].cat, items[j].cat); }
+    for (let i = 0; i < nEx; i++) ret += exW[i] * exRet[i];
+    for (let i = 0; i < n; i++) ret += itemW[nEx + i] * adjRet[i];
+    for (let i = 0; i < totalItems; i++) {
+      const wi = itemW[i] * itemVol[i];
+      if (wi === 0) continue;
+      for (let j = i; j < totalItems; j++) {
+        const wj = itemW[j] * itemVol[j];
+        if (wj === 0) continue;
+        const c = corrMatrix[i * totalItems + j];
+        vr += (i === j ? 1 : 2) * wi * wj * c;
+      }
+    }
     const vol = Math.sqrt(Math.max(0, vr)) * 100;
 
-    // Sharpe variants
+    // Score
     const var95 = vol * 1.645;
-    const stdSh = vol > 0 ? (ret - RF) / vol : 0;
-    const varSh = var95 > 0 ? (ret - RF) / var95 : 0;
-    const vol2Sh = vol > 0 ? (ret - RF) / (vol * vol / 100) : 0;
-    const sh = srMode === "var" ? varSh : srMode === "vol2" ? vol2Sh : stdSh;
-
-    // Volatility targeting penalty
+    const sh = srMode === "var" ? (var95 > 0 ? (ret - RF) / var95 : 0) : srMode === "vol2" ? (vol > 0 ? (ret - RF) / (vol * vol / 100) : 0) : (vol > 0 ? (ret - RF) / vol : 0);
     const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
 
-    // Leveraged ETF penalty: penalize total leveraged exposure
-    // Path dependency + daily rebalancing drag + extreme drawdown risk
-    let levPenalty = 0;
-    let levExposure = 0;
-    for (let i = 0; i < n; i++) {
-      if (candidates[i].lev && Math.abs(candidates[i].lev) > 1) {
-        const allocPct = alloc[i] / (deployAmt || 1);
-        levExposure += allocPct;
-      }
-    }
-    // Penalty scales quadratically: 5% leveraged = small penalty, 20% = severe
+    let levPenalty = 0, levExposure = 0;
+    for (let i = 0; i < n; i++) if (isLev[i]) levExposure += alloc[i] / deployAmt;
     levPenalty = -levExposure * levExposure * 0.5;
 
-    // Regime tilt: weighted sum of regime bonuses for this allocation
     let regimeBonus = 0;
-    if (state5 !== "neutral" || entryBonus > 0) {
-      for (let i = 0; i < n; i++) {
-        const allocPct = alloc[i] / (deployAmt || 1);
-        regimeBonus += allocPct * regimeTilt[i];
-      }
-    }
+    if (hasRegimeTilt) for (let i = 0; i < n; i++) regimeBonus += (alloc[i] / deployAmt) * regimeTilt[i];
 
-    // Concentration premium: strongly reward fewer positions that achieve same performance
-    // Performance should always win, but among equal-performance portfolios prefer concentrated
-    const activeCount = alloc.filter(a => a > deployAmt * 0.03).length; // positions > 3% of cash
+    let activeCount = 0;
+    for (let i = 0; i < n; i++) if (alloc[i] > deployAmt * 0.03) activeCount++;
     const concBonus = activeCount <= 3 ? 0.06 : activeCount <= 5 ? 0.04 : activeCount <= 7 ? 0.02 : 0;
 
     let sc;
     if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + concBonus + levPenalty;
     else if (target === "min_vol") sc = -vol + regimeBonus + concBonus + levPenalty;
     else if (target === "max_return") sc = ret + volPenalty + regimeBonus + concBonus + levPenalty;
-    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + concBonus + levPenalty;  // balanced
-    if (sc > bs) { bs = sc; best = alloc; }
+    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + concBonus + levPenalty;
+    if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
-  const minAlloc = cash * 0.03; // Minimum 3% of cash per position (meaningful allocation)
+  const minAlloc = cash * 0.03;
+  if (!best) return [];
   const raw = candidates.map((e, i) => {
-    const hk = useKelly ? kellyMaxPct[i] : null;
+    const hk = useKelly ? maxPct[i] : null;
     const lev = e.lev && Math.abs(e.lev) > 1 ? e.lev : null;
     const decay = lev ? getLevDecay(e.v, lev) : null;
-    const adjR = adjReturns[i];
-    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null, lev, decay: decay != null ? +decay.toFixed(1) : null, adjR: lev ? +adjR.toFixed(1) : null };
-  }).filter(e => e.dollars >= minAlloc).sort((a, b) => b.dollars - a.dollars); // no hard cap — let performance decide
+    const ar = adjRet[i];
+    return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null, lev, decay: decay != null ? +decay.toFixed(1) : null, adjR: lev ? +ar.toFixed(1) : null };
+  }).filter(e => e.dollars >= minAlloc).sort((a, b) => b.dollars - a.dollars);
   // Ensure total deployment is at least 90% of cash
   const deployed = raw.reduce((s, r) => s + r.dollars, 0);
   const minDeploy = cash * 0.9;
@@ -813,6 +845,7 @@ export default function App() {
     let optAlloc = {};
     let totalTaxPaid = 0, totalRebalances = 0;
     let lastRebalanceMonth = null;
+    let lastBestWeights = null; // for warm-starting optimizer
     const btTaxRates = getTaxRates(taxState);
     const rebalanceEvents = [];
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; });
@@ -887,8 +920,19 @@ export default function App() {
       if (candidates.length < 3) continue;
 
       // Step 4: Optimizer (1000 iterations for speed)
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 500);
+      // Build warm-start weights: map previous best allocation to current candidate indices
+      let warmWeights = null;
+      if (lastBestWeights) {
+        warmWeights = new Float64Array(candidates.length);
+        for (let i = 0; i < candidates.length; i++) {
+          warmWeights[i] = lastBestWeights[candidates[i].t] || 0;
+        }
+      }
+      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 500, warmWeights);
       if (!result || result.length === 0) continue;
+      // Save best weights for warm-starting next evaluation
+      lastBestWeights = {};
+      result.forEach(r => { lastBestWeights[r.ticker] = r.dollars / (optValue || 1); });
       const newAlloc = {}; const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
       result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDeployed; });
 
