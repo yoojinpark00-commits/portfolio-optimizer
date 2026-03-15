@@ -8,11 +8,14 @@
 // SETUP: npm install yahoo-finance2
 //        (Optional) TWELVEDATA_API_KEY env var for fallback
 
-import YahooFinance from "yahoo-finance2";
+let yahooFinance = null;
+try {
+  yahooFinance = require("yahoo-finance2").default || require("yahoo-finance2");
+} catch (e) {
+  console.warn("yahoo-finance2 not installed, will use Twelve Data only");
+}
 
-const yahooFinance = new YahooFinance();
-
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   if (req.method === "OPTIONS") return res.status(200).end();
@@ -27,30 +30,36 @@ export default async function handler(req, res) {
   const forceYahoo = provider === "yahoo";
 
   // ── Try Yahoo Finance first (unless forced to Twelve Data) ──
-  if (!forceTD) {
+  if (!forceTD && yahooFinance) {
     try {
       const results = {};
-      // yahoo-finance2 quote accepts array of symbols
-      const quotes = await yahooFinance.quote(symbols);
-      const quoteArr = Array.isArray(quotes) ? quotes : [quotes];
 
-      for (const q of quoteArr) {
-        if (!q || !q.symbol) continue;
-        results[q.symbol] = {
-          price: q.regularMarketPrice || 0,
-          change: q.regularMarketChangePercent != null ? +q.regularMarketChangePercent.toFixed(2) : 0,
-          prevClose: q.regularMarketPreviousClose || 0,
-          open: q.regularMarketOpen || 0,
-          dayHigh: q.regularMarketDayHigh || 0,
-          dayLow: q.regularMarketDayLow || 0,
-          volume: q.regularMarketVolume || 0,
-          name: q.shortName || q.longName || "",
-          exchange: q.exchange || "",
-          currency: q.currency || "USD",
-          datetime: q.regularMarketTime instanceof Date ? q.regularMarketTime.toISOString() : "",
-          ts: Date.now(),
-        };
-      }
+      // Fetch quotes one at a time for maximum compatibility
+      await Promise.all(
+        symbols.map(async (sym) => {
+          try {
+            const q = await yahooFinance.quote(sym);
+            if (q && q.regularMarketPrice) {
+              results[sym] = {
+                price: q.regularMarketPrice || 0,
+                change: q.regularMarketChangePercent != null ? +q.regularMarketChangePercent.toFixed(2) : 0,
+                prevClose: q.regularMarketPreviousClose || 0,
+                open: q.regularMarketOpen || 0,
+                dayHigh: q.regularMarketDayHigh || 0,
+                dayLow: q.regularMarketDayLow || 0,
+                volume: q.regularMarketVolume || 0,
+                name: q.shortName || q.longName || "",
+                exchange: q.exchange || "",
+                currency: q.currency || "USD",
+                datetime: q.regularMarketTime instanceof Date ? q.regularMarketTime.toISOString() : "",
+                ts: Date.now(),
+              };
+            }
+          } catch (err) {
+            console.warn("Yahoo quote failed for " + sym + ": " + err.message);
+          }
+        })
+      );
 
       if (Object.keys(results).length > 0) {
         return res.status(200).json({
@@ -66,7 +75,6 @@ export default async function handler(req, res) {
       if (forceYahoo) {
         return res.status(500).json({ error: "Yahoo Finance failed", detail: err.message, provider: "yahoo" });
       }
-      // Fall through to Twelve Data
     }
   }
 
@@ -75,12 +83,12 @@ export default async function handler(req, res) {
   if (!apiKey) {
     return res.status(500).json({
       error: "Yahoo Finance unavailable and TWELVEDATA_API_KEY not set",
-      hint: "Either fix Yahoo or add TWELVEDATA_API_KEY in Vercel env vars",
+      hint: "Run: npm install yahoo-finance2 — or add TWELVEDATA_API_KEY in Vercel env vars",
     });
   }
 
   try {
-    const url = `https://api.twelvedata.com/quote?symbol=${symbols.join(",")}&apikey=${apiKey}`;
+    const url = "https://api.twelvedata.com/quote?symbol=" + symbols.join(",") + "&apikey=" + apiKey;
     const resp = await fetch(url);
     if (!resp.ok) {
       return res.status(resp.status).json({ error: "Twelve Data API error", status: resp.status });
@@ -126,4 +134,4 @@ export default async function handler(req, res) {
   } catch (err) {
     return res.status(500).json({ error: "Both providers failed", detail: err.message });
   }
-}
+};
