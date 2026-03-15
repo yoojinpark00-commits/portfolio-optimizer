@@ -199,23 +199,139 @@ const STOCK_OPT = STOCK_DB.map(s => ({ t: s.t, n: s.n, c: SECTOR_TO_CAT[s.s] || 
 // Helper: check if a stock was publicly traded by a given year
 function stockAvailableAt(stock, year) { return (stock.ipo || 0) <= year; }
 
-// ── Historical S&P 500 Top 30 by market cap at January of each year ──
-// Source: actual S&P 500 constituents ranked by market cap (approximate)
-// This eliminates survivorship bias — only stocks that were top-30 AT THAT TIME are included
-const SP500_TOP30 = {
-  2016: ["AAPL","GOOGL","MSFT","XOM","BRK.B","GE","JNJ","AMZN","META","JPM","WFC","WMT","PG","V","PFE","CVX","KO","HD","VZ","T","CSCO","INTC","DIS","IBM","ORCL","MRK","UNH","C","PEP","BA"],
-  2017: ["AAPL","GOOGL","MSFT","AMZN","BRK.B","META","XOM","JNJ","JPM","GE","WFC","V","T","PG","WMT","HD","PFE","CVX","KO","VZ","UNH","INTC","CSCO","DIS","MRK","BA","ORCL","IBM","C","PEP"],
-  2018: ["AAPL","GOOGL","MSFT","AMZN","META","BRK.B","JPM","JNJ","XOM","V","BAC","WFC","UNH","HD","PG","CVX","INTC","T","VZ","KO","CSCO","PFE","DIS","WMT","MRK","BA","ORCL","PEP","MA","ABBV"],
-  2019: ["MSFT","AAPL","AMZN","GOOGL","BRK.B","META","JPM","JNJ","V","PG","XOM","UNH","HD","VZ","T","CVX","MA","PFE","WMT","KO","INTC","CSCO","BA","DIS","MRK","PEP","BAC","WFC","ABBV","ORCL"],
-  2020: ["AAPL","MSFT","GOOGL","AMZN","META","BRK.B","V","JPM","JNJ","WMT","PG","UNH","MA","HD","VZ","T","INTC","DIS","KO","PFE","MRK","PEP","CSCO","XOM","CVX","BA","ABBV","ORCL","ADBE","CRM"],
-  2021: ["AAPL","MSFT","AMZN","GOOGL","META","TSLA","BRK.B","V","JPM","JNJ","UNH","WMT","MA","PG","NVDA","HD","DIS","PYPL","BAC","ADBE","CRM","NFLX","INTC","KO","PEP","PFE","CSCO","MRK","XOM","VZ"],
-  2022: ["AAPL","MSFT","GOOGL","AMZN","TSLA","META","NVDA","BRK.B","UNH","JNJ","V","JPM","HD","PG","MA","BAC","PFE","XOM","KO","PEP","ABBV","AVGO","COST","LLY","WMT","MRK","DIS","CSCO","ADBE","CRM"],
-  2023: ["AAPL","MSFT","GOOGL","AMZN","BRK.B","UNH","JNJ","XOM","V","JPM","NVDA","PG","HD","MA","CVX","LLY","MRK","ABBV","PEP","KO","PFE","COST","BAC","WMT","AVGO","CSCO","MCD","CRM","ADBE","AMD"],
-  2024: ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","BRK.B","LLY","V","UNH","JPM","AVGO","XOM","JNJ","MA","PG","HD","COST","MRK","ABBV","CRM","AMD","KO","PEP","WMT","BAC","ADBE","CSCO","NFLX","MCD"],
-  2025: ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","BRK.B","AVGO","LLY","TSLA","WMT","JPM","V","UNH","XOM","MA","COST","JNJ","PG","HD","NFLX","ABBV","BAC","CRM","AMD","MRK","ORCL","CVX","KO","PEP"],
+// ── Historical S&P 500 Top ~5 per GICS sector by market cap at January of each year ──
+// This captures sector leaders INCLUDING growth names that aren't overall top-30
+// e.g., NVDA was tech top-5 by 2018 (GPU dominance) even though it wasn't overall top-30 until 2021
+// Format: { year: { sector: [tickers] } }
+const SP500_BY_SECTOR = {
+  2016: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","AVGO","TXN","ACN"],
+    Financials: ["BRK.B","JPM","WFC","BAC","C","GS","MS","V","MA","SCHW"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","ABBV","AMGN","GILD","LLY","MDT","BMY"],
+    Consumer: ["AMZN","WMT","HD","KO","PEP","PG","COST","MCD","NKE","SBUX"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA","TMUS","CHTR"],
+    Energy: ["XOM","CVX","COP","OXY","EOG","SLB","PSX","MPC","VLO","HAL"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS"],
+    Materials: ["DD","DOW","NEM","FCX","APD","ECL","SHW","PPG","LIN","NUE"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["AMT","SPG","PLD","CCI","EQIX","PSA","O","WELL","AVB","DLR"],
+  },
+  2017: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","AVGO","TXN","ACN"],
+    Financials: ["BRK.B","JPM","WFC","BAC","C","GS","MS","V","MA","SCHW"],
+    Healthcare: ["JNJ","UNH","PFE","MRK","ABBV","AMGN","GILD","LLY","MDT","BMY"],
+    Consumer: ["AMZN","WMT","HD","KO","PEP","PG","COST","MCD","NKE","SBUX"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA","TMUS","CHTR"],
+    Energy: ["XOM","CVX","COP","OXY","EOG","SLB","PSX","MPC","VLO","HAL"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS"],
+    Materials: ["DD","DOW","NEM","FCX","APD","ECL","SHW","PPG","LIN","NUE"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["AMT","SPG","PLD","CCI","EQIX","PSA","O","WELL","AVB","DLR"],
+  },
+  2018: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","NVDA","AVGO","CRM","ADBE","ACN"],
+    Financials: ["BRK.B","JPM","BAC","WFC","C","GS","MS","V","MA","SCHW"],
+    Healthcare: ["JNJ","UNH","PFE","MRK","ABBV","AMGN","LLY","MDT","BMY","GILD"],
+    Consumer: ["AMZN","WMT","HD","KO","PEP","PG","COST","MCD","NKE","SBUX"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA","TMUS","CHTR"],
+    Energy: ["XOM","CVX","COP","OXY","EOG","SLB","PSX","MPC","VLO","HAL"],
+    Industrial: ["BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX"],
+    Materials: ["LIN","NEM","FCX","APD","ECL","SHW","PPG","DD","NUE","DOW"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["AMT","SPG","PLD","CCI","EQIX","PSA","O","WELL","AVB","DLR"],
+  },
+  2019: {
+    Technology: ["MSFT","AAPL","CSCO","INTC","ORCL","NVDA","AVGO","CRM","ADBE","ACN"],
+    Financials: ["BRK.B","JPM","BAC","WFC","C","GS","V","MA","MS","SCHW"],
+    Healthcare: ["JNJ","UNH","PFE","MRK","ABBV","AMGN","LLY","MDT","BMY","GILD"],
+    Consumer: ["AMZN","WMT","HD","KO","PEP","PG","COST","MCD","NKE","SBUX"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA","TMUS","CHTR"],
+    Energy: ["XOM","CVX","COP","EOG","SLB","OXY","PSX","MPC","VLO","HAL"],
+    Industrial: ["BA","HON","UNP","CAT","LMT","GD","DE","UPS","FDX","RTX"],
+    Materials: ["LIN","NEM","FCX","APD","ECL","SHW","PPG","DD","NUE","DOW"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["AMT","PLD","CCI","EQIX","PSA","SPG","O","WELL","AVB","DLR"],
+  },
+  2020: {
+    Technology: ["AAPL","MSFT","NVDA","ADBE","CRM","INTC","CSCO","AVGO","ORCL","AMD"],
+    Financials: ["BRK.B","V","JPM","MA","PYPL","BAC","GS","MS","C","SCHW"],
+    Healthcare: ["JNJ","UNH","MRK","PFE","ABBV","LLY","AMGN","MDT","BMY","ISRG"],
+    Consumer: ["AMZN","WMT","HD","KO","PEP","PG","COST","MCD","NKE","SBUX"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","TMUS","EA","CHTR"],
+    Energy: ["XOM","CVX","COP","EOG","SLB","OXY","PSX","MPC","VLO","HAL"],
+    Industrial: ["BA","HON","UNP","CAT","LMT","DE","UPS","FDX","RTX","GD"],
+    Materials: ["LIN","NEM","APD","ECL","SHW","FCX","PPG","DD","NUE","DOW"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["AMT","PLD","CCI","EQIX","PSA","O","SPG","WELL","AVB","DLR"],
+  },
+  2021: {
+    Technology: ["AAPL","MSFT","NVDA","ADBE","CRM","AVGO","AMD","INTC","CSCO","ORCL"],
+    Financials: ["BRK.B","V","JPM","MA","PYPL","BAC","GS","MS","SCHW","C"],
+    Healthcare: ["JNJ","UNH","PFE","LLY","MRK","ABBV","AMGN","MDT","BMY","ISRG"],
+    Consumer: ["AMZN","TSLA","WMT","HD","KO","PEP","PG","COST","MCD","NKE"],
+    Communications: ["GOOGL","META","DIS","NFLX","CMCSA","TMUS","VZ","T","EA","CHTR"],
+    Energy: ["XOM","CVX","COP","EOG","SLB","OXY","PSX","MPC","VLO","HAL"],
+    Industrial: ["HON","UNP","CAT","LMT","DE","UPS","FDX","RTX","GD","BA"],
+    Materials: ["LIN","APD","SHW","ECL","FCX","NEM","PPG","DD","NUE","DOW"],
+    Utilities: ["NEE","SO","DUK","D","AEP","SRE","EXC","WEC","ES","XEL"],
+    RealEstate: ["AMT","PLD","CCI","EQIX","PSA","O","DLR","SPG","WELL","AVB"],
+  },
+  2022: {
+    Technology: ["AAPL","MSFT","NVDA","AVGO","ADBE","CRM","AMD","CSCO","INTC","ORCL"],
+    Financials: ["BRK.B","V","JPM","MA","BAC","GS","MS","SCHW","PYPL","C"],
+    Healthcare: ["UNH","JNJ","LLY","PFE","MRK","ABBV","AMGN","MDT","ISRG","BMY"],
+    Consumer: ["AMZN","TSLA","WMT","HD","KO","PEP","PG","COST","MCD","NKE"],
+    Communications: ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","EA","CHTR"],
+    Energy: ["XOM","CVX","COP","EOG","SLB","OXY","MPC","PSX","VLO","HAL"],
+    Industrial: ["HON","UNP","CAT","DE","UPS","LMT","RTX","BA","GD","FDX"],
+    Materials: ["LIN","SHW","APD","ECL","FCX","NEM","PPG","NUE","DD","DOW"],
+    Utilities: ["NEE","SO","DUK","D","AEP","SRE","EXC","WEC","ES","XEL"],
+    RealEstate: ["AMT","PLD","CCI","EQIX","PSA","O","DLR","WELL","SPG","AVB"],
+  },
+  2023: {
+    Technology: ["AAPL","MSFT","NVDA","AVGO","CRM","AMD","ADBE","CSCO","ORCL","INTC"],
+    Financials: ["BRK.B","V","JPM","MA","BAC","GS","MS","SCHW","C","BLK"],
+    Healthcare: ["UNH","LLY","JNJ","MRK","ABBV","PFE","AMGN","ISRG","MDT","BMY"],
+    Consumer: ["AMZN","TSLA","WMT","HD","COST","KO","PEP","PG","MCD","NKE"],
+    Communications: ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","EA","CHTR","T"],
+    Energy: ["XOM","CVX","COP","EOG","SLB","OXY","MPC","PSX","VLO","HAL"],
+    Industrial: ["HON","CAT","UNP","DE","UPS","LMT","RTX","GD","BA","FDX"],
+    Materials: ["LIN","SHW","APD","ECL","FCX","NEM","NUE","PPG","DD","DOW"],
+    Utilities: ["NEE","SO","DUK","AEP","D","SRE","EXC","WEC","ES","XEL"],
+    RealEstate: ["PLD","AMT","EQIX","CCI","PSA","O","DLR","WELL","SPG","AVB"],
+  },
+  2024: {
+    Technology: ["AAPL","MSFT","NVDA","AVGO","AMD","CRM","ADBE","CSCO","ORCL","INTU"],
+    Financials: ["BRK.B","V","JPM","MA","BAC","GS","MS","SCHW","C","BLK"],
+    Healthcare: ["LLY","UNH","JNJ","MRK","ABBV","AMGN","ISRG","PFE","MDT","BMY"],
+    Consumer: ["AMZN","TSLA","WMT","COST","HD","KO","PEP","PG","MCD","NKE"],
+    Communications: ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","EA","CHTR","VZ","T"],
+    Energy: ["XOM","CVX","COP","EOG","SLB","OXY","MPC","PSX","VLO","HAL"],
+    Industrial: ["HON","CAT","UNP","DE","LMT","UPS","RTX","GD","BA","FDX"],
+    Materials: ["LIN","SHW","APD","ECL","FCX","NEM","NUE","PPG","DD","DOW"],
+    Utilities: ["NEE","SO","DUK","AEP","D","SRE","EXC","WEC","ES","XEL"],
+    RealEstate: ["PLD","AMT","EQIX","CCI","PSA","O","DLR","WELL","SPG","AVB"],
+  },
+  2025: {
+    Technology: ["AAPL","MSFT","NVDA","AVGO","AMD","CRM","ORCL","ADBE","CSCO","INTU"],
+    Financials: ["BRK.B","V","JPM","MA","BAC","GS","MS","SCHW","C","BLK"],
+    Healthcare: ["LLY","UNH","JNJ","ABBV","MRK","AMGN","ISRG","PFE","MDT","BMY"],
+    Consumer: ["AMZN","TSLA","WMT","COST","HD","PG","KO","PEP","MCD","NKE"],
+    Communications: ["GOOGL","META","NFLX","TMUS","DIS","CMCSA","EA","CHTR","VZ","T"],
+    Energy: ["XOM","CVX","COP","EOG","SLB","OXY","MPC","PSX","VLO","HAL"],
+    Industrial: ["HON","CAT","UNP","DE","LMT","UPS","RTX","GD","BA","FDX"],
+    Materials: ["LIN","SHW","APD","ECL","FCX","NEM","NUE","PPG","DD","DOW"],
+    Utilities: ["NEE","SO","DUK","AEP","D","SRE","EXC","WEC","ES","XEL"],
+    RealEstate: ["PLD","AMT","EQIX","CCI","PSA","O","DLR","WELL","SPG","AVB"],
+  },
 };
+// Get stock tickers available for a given year
+function getStocksForYear(year) {
+  const sectors = SP500_BY_SECTOR[year] || SP500_BY_SECTOR[2025];
+  return [...new Set(Object.values(sectors).flat())];
+}
 // All unique tickers across all years (for data fetching)
-const SP500_ALL_TICKERS = [...new Set(Object.values(SP500_TOP30).flat())];
+const SP500_ALL_TICKERS = [...new Set(Object.values(SP500_BY_SECTOR).flatMap(y => Object.values(y).flat()))];
 
 // ═══ ENGINE ═══
 // VaR at 95% confidence (parametric): VaR = σ × 1.645
@@ -1001,11 +1117,11 @@ export default function App() {
       }
       const allCandidates = Object.values(trailingStats).filter(s => {
         if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
-        // For stocks: only include if it was in the S&P 500 top 30 for this year
+        // For stocks: only include if it was a sector leader for this year
         const db = etfDbMap[s.t];
         if (db?.type === "stock") {
-          const yearList = SP500_TOP30[mYear] || SP500_TOP30[2025];
-          if (!yearList.includes(s.t)) return false;
+          const yearStocks = getStocksForYear(mYear);
+          if (!yearStocks.includes(s.t)) return false;
         }
         return true;
       });
@@ -1346,8 +1462,8 @@ export default function App() {
           if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
           const db = etfDbMap[s.t];
           if (db?.type === "stock") {
-            const yearList = SP500_TOP30[mYear] || SP500_TOP30[2025];
-            if (!yearList.includes(s.t)) return false;
+            const yearStocks = getStocksForYear(mYear);
+            if (!yearStocks.includes(s.t)) return false;
           }
           return true;
         }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 20);
@@ -2630,7 +2746,7 @@ useEffect(() => {
 
             return <>
               {includeStocks && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe:</strong> Individual stocks are filtered to the actual S&P 500 top 30 by market cap at each year. For example, 2016 includes GE (#6) and excludes NVDA (not yet top 30). 2021 adds TSLA and NVDA. This matches what a large-cap investor would have realistically considered at each point in time.</div>
+                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (top 10 per sector):</strong> At each year, the optimizer sees the top ~10 S&P 500 stocks by market cap in each GICS sector (Tech, Finance, Healthcare, Consumer, etc.). This captures growth leaders BEFORE they become mega-caps — e.g., NVDA entered Tech top-10 in 2018 at ~$100B, three years before it was overall top-30. ~100 stocks available per year, rotating naturally as sector leadership changes.</div>
               </div>}
               {/* Equity Curve */}
               <div style={cardS}>
@@ -2878,7 +2994,7 @@ useEffect(() => {
               </button>
             </div>
             {!btResult && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Run a backtest first — simulation reuses the same parameters and time period.</div>}
-            {includeStocks && <div style={{ fontSize: 9, color: cs.blue, marginTop: 4 }}>📊 <strong>Historical universe:</strong> Stocks filtered to actual S&P 500 top 30 at each year — no look-ahead bias. GE included in 2016 (when it was #6), NVDA excluded until 2021 (when it entered top 30).</div>}
+            {includeStocks && <div style={{ fontSize: 9, color: cs.blue, marginTop: 4 }}>📊 <strong>Sector-based universe:</strong> Top ~10 stocks per GICS sector at each year. Growth names enter when they become sector leaders (NVDA in Tech 2018, TSLA in Consumer 2021), not when they hit overall top-30.</div>}
           </div>
 
           {simResult && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
