@@ -246,27 +246,66 @@ const REGIME_TILTS = {
   strong_risk_off: [+0.15, -0.12, 0.5],
 };
 
-function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regime) {
+// regimeCtx: { state5, acceleration, duration, transition } or just a string for backward compat
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx) {
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
 
-  // Resolve 5-state from regime input (can be 3-state "bull"/"bear"/"neutral" or 5-state)
-  let state5 = "neutral";
-  if (regime === "bull") state5 = "mild_risk_on";
-  else if (regime === "bear") state5 = "mild_risk_off";
-  else if (regime === "strong_risk_on" || regime === "mild_risk_on" || regime === "mild_risk_off" || regime === "strong_risk_off") state5 = regime;
-  else if (regime === "neutral" || !regime) state5 = "neutral";
+  // Parse regimeCtx — can be a string ("bull") or object with full context
+  let state5 = "neutral", acceleration = 0, duration = 1, transition = null;
+  if (typeof regimeCtx === "string") {
+    if (regimeCtx === "bull") state5 = "mild_risk_on";
+    else if (regimeCtx === "bear") state5 = "mild_risk_off";
+    else if (REGIME_TILTS[regimeCtx]) state5 = regimeCtx;
+  } else if (regimeCtx && typeof regimeCtx === "object") {
+    state5 = regimeCtx.state5 || "neutral";
+    acceleration = regimeCtx.acceleration || 0;
+    duration = regimeCtx.duration || 1;
+    transition = regimeCtx.transition || null;
+  }
 
-  const [defBonus, aggBonus, kellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
+  const [baseDefBonus, baseAggBonus, baseKellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
+
+  // ── Duration scaling: longer regime = stronger conviction (caps at 2x after 12 months) ──
+  const durationScale = Math.min(2.0, 0.5 + (duration / 12) * 1.5);
+
+  // ── Acceleration modulation: improving stress dampens risk-off tilt, deteriorating amplifies ──
+  // acceleration > 0 = getting worse; < 0 = improving
+  let accelMod = 1.0;
+  if (state5.includes("risk_off")) {
+    // In risk-off: if improving (accel < 0), dampen defensive tilt to 60%
+    // If deteriorating (accel > 0), amplify to 130%
+    accelMod = acceleration < -0.15 ? 0.6 : acceleration > 0.15 ? 1.3 : 1.0;
+  } else if (state5.includes("risk_on")) {
+    // In risk-on: if deteriorating, dampen aggressive tilt
+    accelMod = acceleration > 0.15 ? 0.6 : acceleration < -0.15 ? 1.2 : 1.0;
+  }
+
+  // ── Entry signal bonus: transitions from bear→bull or bear→neutral with duration 2-6m ──
+  // These are historically the best entry windows for risk assets
+  let entryBonus = 0;
+  if (transition) {
+    const [from, to] = transition.includes("→") ? transition.split("→") : [null, null];
+    if (from === "bear" && (to === "bull" || to === "neutral") && duration >= 2 && duration <= 8) {
+      entryBonus = 0.08; // significant bonus for aggressive assets during optimal entry
+    } else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) {
+      entryBonus = 0.04; // moderate bonus for bull confirmation
+    }
+  }
+
+  // Apply all modifiers to base tilts
+  const defBonus = baseDefBonus * durationScale * accelMod;
+  const aggBonus = baseAggBonus * durationScale * accelMod + (state5.includes("risk_on") ? entryBonus : 0);
+  const kellyMult = baseKellyMult;
 
   // Regime tilt multipliers per candidate
   const regimeTilt = candidates.map(c => {
-    if (state5 === "neutral") return 0;
+    if (state5 === "neutral" && entryBonus === 0) return 0;
     const isDef = DEFENSIVE_CATS.has(c.c);
     const isAgg = AGGRESSIVE_CATS.has(c.c);
-    if (isDef) return defBonus;
+    if (isDef) return defBonus - (entryBonus > 0 ? entryBonus * 0.5 : 0); // reduce defensive during entry
     if (isAgg) return aggBonus;
-    return 0;
+    return entryBonus > 0 ? entryBonus * 0.3 : 0; // moderate categories get small entry boost
   });
 
   // Half Kelly caps with regime-adjusted Kelly multiplier
@@ -326,7 +365,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
     // Regime tilt: weighted sum of regime bonuses for this allocation
     let regimeBonus = 0;
-    if (regime && regime !== "neutral") {
+    if (state5 !== "neutral" || entryBonus > 0) {
       for (let i = 0; i < n; i++) {
         const allocPct = alloc[i] / (deployAmt || 1);
         regimeBonus += allocPct * regimeTilt[i];
@@ -747,24 +786,49 @@ export default function App() {
       // Run optimizer with trailing stats as candidates
       const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
 
-      // Compute regime for this rebalance year (v2: 5-state + acceleration)
+      // Compute regime for this rebalance year (v2: full context with duration + transition + acceleration)
       let btRegime = null;
       let btRegimeScore = null;
       let btRegimeProbBear = null;
       let btState5 = null;
       let btAcceleration = null;
+      let btRegimeCtx = null;
+      let btDuration = 0;
+      let btTransition = null;
       if (useRegime) {
-        // Try real FRED historical data first (v2 returns state5 + acceleration)
-        const regKey = `${year}-01`; // January of rebalance year
+        const regKey = `${year}-01`;
         const regData = historicalRegimes?.[regKey];
         if (regData) {
           btState5 = regData.state5 || null;
-          btRegime = btState5 || regData.regime; // pass 5-state to optimizer (it handles both)
           btRegimeScore = regData.score;
           btRegimeProbBear = regData.probBear;
           btAcceleration = regData.acceleration || null;
+
+          // Compute regime run length: how many consecutive months in this 3-state regime?
+          const regime3 = regData.regime;
+          btDuration = 1;
+          for (let lookback = 1; lookback <= 36; lookback++) {
+            const prevMonth = new Date(year, 0 - lookback, 28);
+            const prevKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
+            const prev = historicalRegimes?.[prevKey];
+            if (prev && prev.regime === regime3) btDuration++;
+            else {
+              // Found the transition point — what was the previous regime?
+              if (prev) btTransition = `${prev.regime}→${regime3}`;
+              break;
+            }
+          }
+
+          // Build full context object for optimizer
+          btRegimeCtx = {
+            state5: btState5 || regime3,
+            acceleration: btAcceleration || 0,
+            duration: btDuration,
+            transition: btTransition,
+          };
+          btRegime = btRegimeCtx;
         } else {
-          // Fallback: proxy from trailing SPY data (3-state only)
+          // Fallback: proxy from trailing SPY data (3-state only, no duration/transition)
           const spyStats = trailingStats["SPY"] || Object.values(trailingStats).find(s => s.t === "VTI");
           const spyRets = monthlyReturns["SPY"]?.filter(r => new Date(r.date).getFullYear() === year - 1) || [];
           const bndRets = monthlyReturns["BND"]?.filter(r => new Date(r.date).getFullYear() === year - 1) || [];
@@ -885,11 +949,13 @@ export default function App() {
         portfolioValue: Math.round(optValue),
         taxPaid: Math.round(yearTaxPaid),
         realizedGains: Math.round(yearRealizedGains),
-        regime: btRegime,
+        regime: typeof btRegime === "object" ? btRegime?.state5 || "neutral" : btRegime,
         state5: btState5,
         regimeScore: btRegimeScore,
         probBear: btRegimeProbBear,
         acceleration: btAcceleration,
+        duration: btDuration,
+        transition: btTransition,
       });
     }
 
@@ -1165,12 +1231,26 @@ useEffect(() => {
   // ─── Optimizer ───
   const runOptimizer = useCallback(() => {
     if (cashBalance <= 0) return;
-    // Use 5-state if available, fall back to 3-state
-    const activeRegime = useRegime ? (regimeData?.regime?.state5 || regimeData?.regime?.regime || null) : null;
-    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, srMode, volTarget, useKelly, activeRegime);
+    // Build full regime context for the optimizer
+    let regimeCtx = null;
+    if (useRegime && regimeData?.regime) {
+      const r = regimeData.regime;
+      regimeCtx = {
+        state5: r.state5 || r.regime || "neutral",
+        acceleration: r.acceleration || 0,
+        duration: 1, // live = current snapshot, duration unknown without analytics
+        transition: null,
+      };
+      // If we have analytics data, use the current position info
+      if (regimeAnalytics?.current) {
+        regimeCtx.duration = regimeAnalytics.current.runLength || 1;
+        regimeCtx.transition = regimeAnalytics.current.transition || null;
+      }
+    }
+    const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, srMode, volTarget, useKelly, regimeCtx);
     setOptResult(result);
     setAccepted(new Set());
-  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData]);
+  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData, regimeAnalytics]);
 
   // ─── AI Advisor (via serverless proxy) ───
   const getAI = useCallback(async (ctx) => {
@@ -2233,6 +2313,20 @@ useEffect(() => {
                                   </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation — no prior holdings" : "No significant changes"}</div>}
                                 </div>
                               </div>
+                              {/* Regime Context for this year */}
+                              {useRegime && a.state5 && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(251,191,36,.03)", border: "1px solid rgba(251,191,36,.08)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 9, fontWeight: 600, color: cs.yellow }}>🌊 Regime</span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.text }}>{a.state5?.replace(/_/g, " ")}</span>
+                                {a.duration > 0 && <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Duration: <span style={{ color: cs.text, fontWeight: 600 }}>{a.duration}m</span></span>}
+                                {a.transition && <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Transition: <span style={{ color: cs.blue, fontWeight: 600 }}>{a.transition}</span></span>}
+                                {a.acceleration != null && <span style={{ fontSize: 9, fontFamily: mono2, color: a.acceleration > 0.1 ? cs.red : a.acceleration < -0.1 ? cs.green : cs.dim }}>Accel: {a.acceleration > 0 ? "+" : ""}{a.acceleration.toFixed(2)} {a.acceleration < -0.1 ? "↓ improving" : a.acceleration > 0.1 ? "↑ deteriorating" : "→ stable"}</span>}
+                                {a.transition && (() => {
+                                  const [from, to] = a.transition.includes("→") ? a.transition.split("→") : [null, null];
+                                  if (from === "bear" && (to === "bull" || to === "neutral") && a.duration >= 2 && a.duration <= 8)
+                                    return <Badge color={cs.green}>ENTRY SIGNAL</Badge>;
+                                  return null;
+                                })()}
+                              </div>}
                               {/* Tax Impact for this year */}
                               {(a.taxPaid > 0 || a.realizedGains > 0) && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(167,139,250,.03)", border: "1px solid rgba(167,139,250,.08)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 9, fontWeight: 600, color: cs.purple }}>🏛 Tax</span>
