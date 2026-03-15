@@ -203,31 +203,48 @@ function calcMetrics(positions, cashDollars, totalVal) {
 // ── Category risk classification for regime-adaptive optimization ──
 const DEFENSIVE_CATS = new Set(["US Bond","US Treasury","US Corp Bond","Intl Bond","Commodity","Factor LowVol","Sector Utilities","US Dividend","US Value"]);
 const AGGRESSIVE_CATS = new Set(["US Growth","US Small Cap","US Mid Cap","Emerging Mkts","Sector Tech","Sector Consumer","Sector Comms","Sector Finance","Factor Momentum"]);
-// Everything else is "moderate" (US Large Cap, International, Intl Developed, Sector Health, etc.)
+
+// 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
+const REGIME_TILTS = {
+  strong_risk_on: [-0.12, +0.15, 1.0],
+  mild_risk_on:   [-0.06, +0.08, 1.0],
+  neutral:        [0, 0, 1.0],
+  mild_risk_off:  [+0.08, -0.06, 0.8],
+  strong_risk_off: [+0.15, -0.12, 0.5],
+};
 
 function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regime) {
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
 
-  // Regime tilt multipliers: boost/penalize candidates based on category
+  // Resolve 5-state from regime input (can be 3-state "bull"/"bear"/"neutral" or 5-state)
+  let state5 = "neutral";
+  if (regime === "bull") state5 = "mild_risk_on";
+  else if (regime === "bear") state5 = "mild_risk_off";
+  else if (regime === "strong_risk_on" || regime === "mild_risk_on" || regime === "mild_risk_off" || regime === "strong_risk_off") state5 = regime;
+  else if (regime === "neutral" || !regime) state5 = "neutral";
+
+  const [defBonus, aggBonus, kellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
+
+  // Regime tilt multipliers per candidate
   const regimeTilt = candidates.map(c => {
-    if (!regime || regime === "neutral") return 0;
+    if (state5 === "neutral") return 0;
     const isDef = DEFENSIVE_CATS.has(c.c);
     const isAgg = AGGRESSIVE_CATS.has(c.c);
-    if (regime === "bear") return isDef ? 0.12 : isAgg ? -0.10 : 0;
-    if (regime === "bull") return isAgg ? 0.10 : isDef ? -0.08 : 0;
+    if (isDef) return defBonus;
+    if (isAgg) return aggBonus;
     return 0;
   });
 
-  // Pre-compute Half Kelly max allocation per candidate
+  // Half Kelly caps with regime-adjusted Kelly multiplier
   const kellyMaxPct = candidates.map(c => {
     if (!useKelly) return 1.0;
     const sigSq = (c.v / 100) * (c.v / 100);
     if (sigSq <= 0) return 1.0;
     const fStar = 0.5 * ((c.r - RF) / 100) / sigSq;
-    // In bear regime, tighten Kelly to 1/3 Kelly for aggressive assets
-    const kellyMult = (regime === "bear" && AGGRESSIVE_CATS.has(c.c)) ? 0.67 : 1.0;
-    return Math.max(0.01, Math.min(fStar * kellyMult, 1.0));
+    // Apply regime Kelly multiplier (tighter in risk-off)
+    const adjMult = AGGRESSIVE_CATS.has(c.c) ? kellyMult : 1.0;
+    return Math.max(0.01, Math.min(fStar * adjMult, 1.0));
   });
 
   for (let t = 0; t < 6000; t++) {
@@ -1021,7 +1038,8 @@ useEffect(() => {
   // ─── Optimizer ───
   const runOptimizer = useCallback(() => {
     if (cashBalance <= 0) return;
-    const activeRegime = useRegime && regimeData?.regime?.regime ? regimeData.regime.regime : null;
+    // Use 5-state if available, fall back to 3-state
+    const activeRegime = useRegime ? (regimeData?.regime?.state5 || regimeData?.regime?.regime || null) : null;
     const result = optimizeCash(allPos, cashBalance, holdingsVal, ETF_DB, ot, srMode, volTarget, useKelly, activeRegime);
     setOptResult(result);
     setAccepted(new Set());
@@ -1284,12 +1302,12 @@ useEffect(() => {
                 </button>
                 <button onClick={() => setUseRegime(v => !v)} style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${useRegime ? "rgba(251,191,36,.2)" : "rgba(255,255,255,.06)"}`, background: useRegime ? "rgba(251,191,36,.05)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
-                  <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (regimeData?.regime?.regime === "bear" ? "BEAR" : regimeData?.regime?.regime === "bull" ? "BULL" : regimeData?.regime ? "NEUT" : "ON") : "OFF"}</span>
+                  <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
                 </button>
               </div>
 
               <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                Run Optimizer — Deploy ${cashBalance.toLocaleString()}{useRegime && regimeData?.regime?.regime ? ` (${regimeData.regime.regime.toUpperCase()} regime)` : ""} (6,000 simulations)
+                Run Optimizer — Deploy ${cashBalance.toLocaleString()}{useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""} (6,000 simulations)
               </button>
               {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime enabled but no data fetched — go to Analysis tab → "Fetch Live Data" first, or optimizer runs without regime tilt.</div>}
 
@@ -1420,64 +1438,100 @@ useEffect(() => {
                 {regimeData?.regime && (() => {
                   const r = regimeData.regime;
                   const regimeColor = r.regime === "bull" ? cs.green : r.regime === "bear" ? cs.red : cs.yellow;
-                  const regimeIcon = r.regime === "bull" ? "🟢" : r.regime === "bear" ? "🔴" : "🟡";
-                  const regimeLabel = r.regime === "bull" ? "BULL / Risk-On" : r.regime === "bear" ? "BEAR / Risk-Off" : "NEUTRAL / Transition";
+                  const state5Colors = { strong_risk_on: "#22c55e", mild_risk_on: "#6ee7b7", neutral: "#fbbf24", mild_risk_off: "#fb923c", strong_risk_off: "#ef4444" };
+                  const state5Labels = { strong_risk_on: "STRONG RISK-ON", mild_risk_on: "MILD RISK-ON", neutral: "NEUTRAL", mild_risk_off: "MILD RISK-OFF", strong_risk_off: "STRONG RISK-OFF" };
+                  const s5 = r.state5 || "neutral";
+                  const s5Color = state5Colors[s5] || cs.yellow;
 
                   return <div>
-                    {/* Regime Banner */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 8, background: `${regimeColor}08`, border: `1px solid ${regimeColor}25`, marginBottom: 12 }}>
-                      <div style={{ fontSize: 28 }}>{regimeIcon}</div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: regimeColor }}>{regimeLabel}</div>
-                        <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>
-                          Composite Score: <span style={{ color: regimeColor, fontWeight: 600, fontFamily: mono2 }}>{r.score?.toFixed(2)}</span>
-                          <span style={{ marginLeft: 10 }}>P(bear): <span style={{ color: r.probBear > 0.6 ? cs.red : r.probBear < 0.4 ? cs.green : cs.yellow, fontWeight: 600, fontFamily: mono2 }}>{(r.probBear * 100).toFixed(0)}%</span></span>
+                    {/* 5-State Regime Banner */}
+                    <div style={{ padding: "14px 16px", borderRadius: 8, background: `${s5Color}0a`, border: `1px solid ${s5Color}30`, marginBottom: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                        <div style={{ fontSize: 28 }}>{s5 === "strong_risk_on" ? "🟢" : s5 === "mild_risk_on" ? "🟩" : s5 === "neutral" ? "🟡" : s5 === "mild_risk_off" ? "🟧" : "🔴"}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: s5Color }}>{state5Labels[s5] || s5}</div>
+                          <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>
+                            Score: <span style={{ color: s5Color, fontWeight: 600, fontFamily: mono2 }}>{r.score?.toFixed(2)}</span>
+                            <span style={{ marginLeft: 8 }}>P(bear): <span style={{ color: r.probBear > 0.6 ? cs.red : r.probBear < 0.4 ? cs.green : cs.yellow, fontWeight: 600, fontFamily: mono2 }}>{(r.probBear * 100).toFixed(0)}%</span></span>
+                            {r.acceleration != null && <span style={{ marginLeft: 8 }}>Accel: <span style={{ color: r.acceleration > 0.1 ? cs.red : r.acceleration < -0.1 ? cs.green : cs.dim, fontWeight: 600, fontFamily: mono2 }}>{r.acceleration > 0 ? "+" : ""}{r.acceleration}</span></span>}
+                            {r.momentum && <span style={{ marginLeft: 8 }}>Momentum: <span style={{ color: r.momentum === "improving" ? cs.green : r.momentum === "deteriorating" ? cs.red : cs.dim, fontWeight: 600 }}>{r.momentum}</span></span>}
+                          </div>
                         </div>
                       </div>
-                      {/* Score gauge */}
-                      <div style={{ width: 120, height: 8, borderRadius: 4, background: "rgba(255,255,255,.06)", position: "relative", overflow: "hidden" }}>
-                        <div style={{ position: "absolute", left: `${Math.min(100, Math.max(0, (r.score + 2) / 4 * 100))}%`, top: -2, width: 4, height: 12, borderRadius: 2, background: regimeColor, transform: "translateX(-50%)" }} />
-                        <div style={{ position: "absolute", left: "25%", top: 0, width: 1, height: 8, background: "rgba(110,231,183,.3)" }} />
-                        <div style={{ position: "absolute", left: "62.5%", top: 0, width: 1, height: 8, background: "rgba(248,113,113,.3)" }} />
+                      {/* 5-state gauge bar */}
+                      <div style={{ display: "flex", height: 10, borderRadius: 5, overflow: "hidden", background: "rgba(255,255,255,.03)" }}>
+                        {Object.entries(state5Colors).map(([state, color]) => (
+                          <div key={state} style={{ flex: 1, background: s5 === state ? `${color}60` : "transparent", borderRight: "1px solid rgba(0,0,0,.2)", position: "relative" }}>
+                            {s5 === state && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ width: 4, height: 4, borderRadius: 2, background: color }} /></div>}
+                          </div>
+                        ))}
                       </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 2 }}>
+                        <span>Strong Risk-On</span><span>Neutral</span><span>Strong Risk-Off</span>
+                      </div>
+                      {/* EMA info */}
+                      {(r.emaFast != null || r.emaCrossover) && <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 9, color: cs.dim }}>
+                        {r.emaFast != null && <span>EMA₁₀: <span style={{ fontFamily: mono2, color: cs.text }}>{r.emaFast}</span></span>}
+                        {r.emaSlow != null && <span>EMA₆₀: <span style={{ fontFamily: mono2, color: cs.text }}>{r.emaSlow}</span></span>}
+                        {r.emaCrossover && r.emaCrossover !== "none" && <Badge color={r.emaCrossover === "bullish_cross" ? cs.green : cs.red}>{r.emaCrossover === "bullish_cross" ? "BULLISH CROSS ↑" : "BEARISH CROSS ↓"}</Badge>}
+                      </div>}
                     </div>
 
-                    {/* 3 Core Signals */}
-                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Core Signals (z-weighted composite)</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 12 }}>
+                    {/* 7-Factor Signal Grid */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Factor Signals (7-factor weighted composite)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 5, marginBottom: 12 }}>
                       {[
-                        { label: "HY Credit Spread", icon: "📊", weight: "45%", data: r.details?.hy_oas, zVal: r.zScores?.hy,
-                          main: r.details?.hy_oas ? `${r.details.hy_oas.level?.toFixed(0)} bps` : "—",
-                          sub: r.details?.hy_oas ? `Δ ${r.details.hy_oas.roc > 0 ? "+" : ""}${r.details.hy_oas.roc?.toFixed(0)} bps` : "" },
-                        { label: "VIX Term Structure", icon: "📈", weight: "35%", data: r.details?.vix_slope, zVal: r.zScores?.slope,
-                          main: r.details?.vix_slope ? `${(r.details.vix_slope.slope * 100).toFixed(1)}%` : "—",
-                          sub: r.details?.vix_slope ? `${r.details.vix_slope.slope > 0 ? "Contango" : "Backwardation"}` : "" },
-                        { label: "NFCI Conditions", icon: "🏦", weight: "20%", data: r.details?.nfci, zVal: r.zScores?.nfci,
-                          main: r.details?.nfci ? r.details.nfci.level?.toFixed(2) : "—",
-                          sub: r.details?.nfci ? (r.details.nfci.level < 0 ? "Loose" : "Tight") : "" },
-                      ].map((s, i) => {
-                        const sig = s.data?.signal || "neutral";
+                        { key: "hy_oas", label: "HY Credit Spread", icon: "📊", fmt: v => `${v?.toFixed(0)} bps` },
+                        { key: "vix_slope", label: "VIX Term Structure", icon: "📈", fmt: v => `${(v * 100)?.toFixed(1)}%` },
+                        { key: "nfci", label: "NFCI Conditions", icon: "🏦", fmt: v => v?.toFixed(2) },
+                        { key: "t10y3m", label: "10Y-3M Yield Curve", icon: "📉", fmt: v => `${v?.toFixed(2)}%` },
+                        { key: "ted", label: "TED Spread", icon: "🏧", fmt: v => `${v?.toFixed(2)}%` },
+                        { key: "sahm", label: "Sahm Rule", icon: "🚨", fmt: v => v?.toFixed(2) },
+                        { key: "claims", label: "Initial Claims", icon: "📋", fmt: v => v ? `${(v/1000).toFixed(0)}k` : "—" },
+                        { key: "cross_asset", label: "Cross-Asset Corr", icon: "🔗", fmt: v => v?.toFixed(2) },
+                      ].map(f => {
+                        const d = r.details?.[f.key];
+                        if (!d) return null;
+                        const sig = d.signal || "neutral";
                         const sigColor = sig === "risk-on" ? cs.green : sig === "risk-off" ? cs.red : cs.yellow;
-                        return <div key={i} style={{ padding: "10px 12px", borderRadius: 7, background: "rgba(255,255,255,.015)", border: `1px solid ${sigColor}15` }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                            <span style={{ fontSize: 12 }}>{s.icon}</span>
-                            <Badge color={sigColor}>{sig.toUpperCase()}</Badge>
+                        return <div key={f.key} style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.01)", border: `1px solid ${sigColor}12` }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                            <span style={{ fontSize: 10 }}>{f.icon}</span>
+                            <span style={{ width: 6, height: 6, borderRadius: 3, background: sigColor, display: "inline-block" }} />
                           </div>
-                          <div style={{ fontSize: 18, fontWeight: 700, fontFamily: mono2, color: sigColor }}>{s.main}</div>
-                          <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>{s.sub}</div>
-                          <div style={{ fontSize: 8, color: cs.muted, marginTop: 4, fontFamily: mono2 }}>w: {s.weight} · z: {s.zVal?.toFixed(2) || "—"}</div>
-                          <div style={{ fontSize: 8, color: cs.dim, marginTop: 1 }}>{s.label}</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: sigColor }}>{f.fmt(d.value)}</div>
+                          <div style={{ fontSize: 7, color: cs.muted, marginTop: 2 }}>{f.label}</div>
+                          <div style={{ fontSize: 7, color: cs.dim, fontFamily: mono2 }}>z: {d.zScore?.toFixed(2) || "—"} · w: {(d.weight * 100).toFixed(0)}%</div>
                         </div>;
-                      })}
+                      }).filter(Boolean)}
                     </div>
+
+                    {/* Cross-Asset Correlations */}
+                    {r.crossAsset && Object.keys(r.crossAsset).length > 0 && <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 7, background: "rgba(255,255,255,.015)" }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Cross-Asset Correlations (60-day rolling)</div>
+                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        {[
+                          { key: "spyGold60d", label: "SPY ↔ Gold", desc: "Negative = flight-to-safety" },
+                          { key: "spyBond60d", label: "SPY ↔ Bonds", desc: "More negative = risk-off" },
+                          { key: "spyHY60d", label: "SPY ↔ HY OAS", desc: "Negative = stress divergence" },
+                        ].map(c => {
+                          const v = r.crossAsset[c.key];
+                          if (v == null) return null;
+                          return <div key={c.key} style={{ flex: "1 1 120px" }}>
+                            <div style={{ fontSize: 9, color: cs.dim }}>{c.label}</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: Math.abs(v) > 0.3 ? (v > 0 ? cs.green : cs.red) : cs.dim }}>{v > 0 ? "+" : ""}{v.toFixed(2)}</div>
+                            <div style={{ fontSize: 7, color: cs.muted }}>{c.desc}</div>
+                          </div>;
+                        }).filter(Boolean)}
+                      </div>
+                    </div>}
 
                     {/* Supplementary Signals */}
                     <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Supplementary Signals</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 4, marginBottom: 8 }}>
                       {[
                         { label: "VIX Level", data: r.details?.vix_level, main: r.details?.vix_level ? r.details.vix_level.level?.toFixed(1) : "—", threshold: "< 20 bull · > 25 bear" },
-                        { label: "S&P 500 vs MA200", data: r.details?.sp500_ma, main: r.details?.sp500_ma?.aboveMa200 ? "Above ✓" : "Below ✗", threshold: r.details?.sp500_ma ? `${r.details.sp500_ma.goldenCross ? "Golden" : "Death"} cross` : "" },
-                        { label: "Yield Curve", data: r.details?.yield_curve, main: r.details?.yield_curve ? `${r.details.yield_curve.spread?.toFixed(2)}%` : "—", threshold: "10Y-2Y spread" },
+                        { label: "S&P 500 vs MA200", data: r.details?.sp500_ma, main: r.details?.sp500_ma?.aboveMa200 ? "Above ✓" : r.details?.sp500_ma ? "Below ✗" : "—", threshold: r.details?.sp500_ma ? `${r.details.sp500_ma.goldenCross ? "Golden" : "Death"} cross` : "" },
                         { label: "Drawdown", data: r.details?.drawdown, main: r.details?.drawdown ? `-${r.details.drawdown.drawdownPct?.toFixed(1)}%` : "—", threshold: "> -10% correction" },
                         { label: "12M Momentum", data: r.details?.momentum, main: r.details?.momentum ? `${r.details.momentum.return12m > 0 ? "+" : ""}${r.details.momentum.return12m?.toFixed(1)}%` : "—", threshold: "> 0% = bullish" },
                       ].map((s, i) => {
@@ -1494,24 +1548,28 @@ useEffect(() => {
                       })}
                     </div>
 
-                    {/* Signal Summary Bar */}
-                    <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim }}>
+                    {/* Signal Summary */}
+                    <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim, marginBottom: 8 }}>
                       {(() => {
                         const allSignals = Object.values(r.details || {}).filter(d => d?.signal);
                         const on = allSignals.filter(d => d.signal === "risk-on").length;
                         const off = allSignals.filter(d => d.signal === "risk-off").length;
-                        const neutral = allSignals.filter(d => d.signal === "neutral").length;
-                        return <span>{on} risk-on · {off} risk-off · {neutral} neutral of {allSignals.length} signals · Formula: 0.45·z(HY OAS) + 0.35·z(−VIX Slope) + 0.20·z(NFCI)</span>;
+                        const neut = allSignals.filter(d => d.signal === "neutral").length;
+                        return <span>{on} risk-on · {off} risk-off · {neut} neutral of {allSignals.length} factors · 5-state model · Daily EMA(10/60) smoothing · 7 FRED factors + cross-asset correlation</span>;
                       })()}
                     </div>
 
-                    {/* Optimizer Guidance */}
-                    <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 7, background: r.regime === "bear" ? "rgba(248,113,113,.04)" : r.regime === "bull" ? "rgba(110,231,183,.04)" : "rgba(251,191,36,.04)", border: `1px solid ${regimeColor}12` }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: regimeColor, marginBottom: 4 }}>Optimizer Guidance for {r.regime.toUpperCase()} Regime</div>
+                    {/* 5-State Optimizer Guidance */}
+                    <div style={{ padding: "10px 12px", borderRadius: 7, background: `${s5Color}08`, border: `1px solid ${s5Color}15` }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: s5Color, marginBottom: 4 }}>Optimizer Guidance: {state5Labels[s5]}{r.momentum ? ` / ${r.momentum}` : ""}</div>
                       <div style={{ fontSize: 9, color: cs.dim, lineHeight: 1.6 }}>
-                        {r.regime === "bear" && "Consider: Min Volatility objective, higher vol target (defensive), increase bond/gold allocation. Half Kelly helps cap position sizes in stressed markets. Tax-loss harvesting opportunities may be elevated."}
-                        {r.regime === "bull" && "Consider: Max Sharpe or Max Return objective, higher equity allocation, growth/momentum ETFs. Half Kelly still recommended but broader allocations appropriate."}
-                        {r.regime === "neutral" && "Consider: Balanced objective with moderate vol target. Transition periods benefit from diversification. Monitor signals closely for regime shift confirmation."}
+                        {s5 === "strong_risk_on" && "Full growth allocation. Max Sharpe or Max Return. Aggressive ETFs (tech, growth, small cap, EM) heavily favored. Kelly at full. This is historically the best time for risk assets."}
+                        {s5 === "mild_risk_on" && "Growth-tilted allocation. Max Sharpe recommended. Moderate overweight to aggressive categories. Watch for complacency signals (low VIX + compressed spreads)."}
+                        {s5 === "neutral" && "Balanced allocation. Diversification across categories. Vol target ~12-15%. This is a transition period — monitor acceleration for direction."}
+                        {s5 === "mild_risk_off" && "Shift toward quality and low-vol. Increase bond, dividend, value, utility exposure. Kelly tightened to 80% for aggressive assets. Consider Min Vol objective."}
+                        {s5 === "strong_risk_off" && "Full defensive. Bonds, treasuries, gold, cash favored. Kelly cut to 50% for aggressive positions. Min Volatility objective. Tax-loss harvest aggressively. Historical best entry point is often near the END of this state."}
+                        {r.momentum === "improving" && " The regime is IMPROVING — stress indicators declining. Historically the best risk-adjusted entry window."}
+                        {r.momentum === "deteriorating" && " The regime is DETERIORATING — stress indicators rising. Consider waiting for stabilization before adding risk."}
                       </div>
                     </div>
                   </div>;
