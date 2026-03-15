@@ -163,6 +163,20 @@ const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"U
 function gc(a,b){if(a===b)return 1;return CORR[a]?.[b]??CORR[b]?.[a]??.5}
 
 const RF=4.5;
+
+// ── Return Shrinkage: dampen extreme trailing returns to reduce momentum bias ──
+// A stock that returned 200% last year almost never repeats — mean reversion dominates.
+// This blends extreme returns toward a cap, preventing any single stock from dominating
+// the Sharpe pre-filter purely on trailing momentum.
+// For stocks: cap at 50% annualized, keep 15% of excess above cap
+// For ETFs: cap at 80% annualized (ETFs are diversified, less mean-reversion)
+function shrinkReturn(r, isStock) {
+  const cap = isStock ? 50 : 80;
+  const decayFactor = isStock ? 0.15 : 0.25;
+  if (r > cap) return cap + (r - cap) * decayFactor;
+  if (r < -cap) return -cap + (r + cap) * decayFactor; // symmetric for losses
+  return r;
+}
 const PAL=["#6ee7b7","#60a5fa","#f472b6","#fbbf24","#a78bfa","#fb923c","#34d399","#f87171","#38bdf8","#e879f9"];
 
 const STOCK_DB=[
@@ -1147,7 +1161,10 @@ export default function App() {
         if (count < 6) continue;
         const avgMo = sumRet / count;
         const db = etfDbMap[sym];
-        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: avgMo * 12 * 100, v: Math.max(Math.sqrt(Math.max(0, sumRetSq / count - avgMo * avgMo)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
+        const rawR = avgMo * 12 * 100; // raw annualized return
+        const isStk = db?.type === "stock";
+        const shrunkR = shrinkReturn(rawR, isStk); // dampen extreme trailing returns
+        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: Math.max(Math.sqrt(Math.max(0, sumRetSq / count - avgMo * avgMo)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
       }
       const allCandidates = Object.values(trailingStats).filter(s => {
         if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
@@ -1335,6 +1352,33 @@ export default function App() {
       const allEventsToDate = rebalanceEvents.filter(e => e.date <= `${year}-12`);
       const latestAlloc = allEventsToDate.length > 0 ? allEventsToDate[allEventsToDate.length - 1] : null;
 
+      // Get regime at year-end from actual FRED data (independent of random rebalance timing)
+      let yearEndState5 = null, yearEndRegimeScore = null, yearEndAcceleration = null, yearEndDuration = 0, yearEndTransition = null;
+      if (historicalRegimes) {
+        // Try December, then November, then last available month of the year
+        for (let m = 12; m >= 1; m--) {
+          const mk = `${year}-${String(m).padStart(2, "0")}`;
+          const rd = historicalRegimes[mk];
+          if (rd) {
+            yearEndState5 = rd.state5 || rd.regime || null;
+            yearEndRegimeScore = rd.score || null;
+            yearEndAcceleration = rd.acceleration || null;
+            // Compute duration at year-end
+            const rdIdx = dateToIdx[mk];
+            if (rdIdx != null) {
+              yearEndDuration = 1;
+              const r3 = rd.regime;
+              for (let lb = 1; lb <= 36 && rdIdx - lb >= 0; lb++) {
+                const prev = historicalRegimes[sortedDates[rdIdx - lb]];
+                if (prev && prev.regime === r3) yearEndDuration++;
+                else { if (prev) yearEndTransition = `${prev.regime}→${r3}`; break; }
+              }
+            }
+            break;
+          }
+        }
+      }
+
       annualResults.push({
         year,
         optRet: optYearStart > 0 ? ((optYearEnd - optYearStart) / optYearStart * 100) : 0,
@@ -1356,13 +1400,13 @@ export default function App() {
         returnImprovement: lastEvent?.returnImprovement || 0,
         taxCostPct: lastEvent?.taxCostPct || 0,
         currAlpha: lastEvent?.currAlpha || 0,
-        regime: latestAlloc?.regime || null,
-        state5: latestAlloc?.regime || null,
-        regimeScore: lastEvent?.regimeScore || null,
+        regime: yearEndState5,
+        state5: yearEndState5,
+        regimeScore: yearEndRegimeScore,
         probBear: null,
-        acceleration: lastEvent?.acceleration || null,
-        duration: lastEvent?.duration || 0,
-        transition: lastEvent?.transition || null,
+        acceleration: yearEndAcceleration,
+        duration: yearEndDuration,
+        transition: yearEndTransition,
       });
     }
 
@@ -1531,7 +1575,9 @@ export default function App() {
           if (cnt < 6) continue;
           const avg = sR / cnt;
           const db = etfDbMap[sym];
-          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: avg * 12 * 100, v: Math.max(Math.sqrt(Math.max(0, sR2 / cnt - avg * avg)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: 0, lev: db?.lev || null };
+          const rawR = avg * 12 * 100;
+          const shrunkR = shrinkReturn(rawR, db?.type === "stock");
+          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: Math.max(Math.sqrt(Math.max(0, sR2 / cnt - avg * avg)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: 0, lev: db?.lev || null };
         }
 
         const cands = Object.values(trailingStats).filter(s => {
