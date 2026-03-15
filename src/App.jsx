@@ -248,14 +248,23 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   });
 
   for (let t = 0; t < 6000; t++) {
-    const ws = Array.from({ length: n }, () => Math.random());
-    const s = ws.reduce((a, b) => a + b, 0);
+    // KEY CHANGE: vary the number of active positions per simulation (3 to 10)
+    // This explores concentrated portfolios that may outperform diluted ones
+    const numActive = 3 + Math.floor(Math.random() * 8); // 3 to 10 positions
+    
+    // Randomly select which candidates get allocation
+    const indices = Array.from({ length: n }, (_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [indices[i], indices[j]] = [indices[j], indices[i]]; }
+    const activeSet = new Set(indices.slice(0, Math.min(numActive, n)));
+    
+    const ws = Array.from({ length: n }, (_, i) => activeSet.has(i) ? Math.random() : 0);
+    const s = ws.reduce((a, b) => a + b, 0) || 1;
     // Deploy between 90% and 100% of cash
     const deployPct = 0.9 + Math.random() * 0.1;
     const deployAmt = cash * deployPct;
     let alloc = ws.map((w, i) => {
       let pct = w / s;
-      if (useKelly) pct = Math.min(pct, kellyMaxPct[i]);
+      if (useKelly && activeSet.has(i)) pct = Math.min(pct, kellyMaxPct[i]);
       return pct;
     });
     // Renormalize after Kelly caps
@@ -291,17 +300,23 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
       }
     }
 
+    // Concentration premium: strongly reward fewer positions that achieve same performance
+    // Performance should always win, but among equal-performance portfolios prefer concentrated
+    const activeCount = alloc.filter(a => a > deployAmt * 0.03).length; // positions > 3% of cash
+    const concBonus = activeCount <= 3 ? 0.06 : activeCount <= 5 ? 0.04 : activeCount <= 7 ? 0.02 : 0;
+
     let sc;
-    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus;
-    else if (target === "min_vol") sc = -vol + regimeBonus;
-    else if (target === "max_return") sc = ret + volPenalty + regimeBonus;
-    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus;  // balanced
+    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + concBonus;
+    else if (target === "min_vol") sc = -vol + regimeBonus + concBonus;
+    else if (target === "max_return") sc = ret + volPenalty + regimeBonus + concBonus;
+    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + concBonus;  // balanced
     if (sc > bs) { bs = sc; best = alloc; }
   }
+  const minAlloc = cash * 0.03; // Minimum 3% of cash per position (meaningful allocation)
   const raw = candidates.map((e, i) => {
     const hk = useKelly ? kellyMaxPct[i] : null;
     return { ticker: e.t, name: e.n, cat: e.c, r: e.r, v: e.v, er: e.er, d: e.d, dollars: +best[i].toFixed(0), pct: +((best[i] / cash) * 100).toFixed(1), hk: hk != null ? +(hk * 100).toFixed(1) : null };
-  }).filter(e => e.dollars > 10).sort((a, b) => b.dollars - a.dollars).slice(0, 10);
+  }).filter(e => e.dollars >= minAlloc).sort((a, b) => b.dollars - a.dollars); // no hard cap — let performance decide
   // Ensure total deployment is at least 90% of cash
   const deployed = raw.reduce((s, r) => s + r.dollars, 0);
   const minDeploy = cash * 0.9;
@@ -1264,12 +1279,22 @@ useEffect(() => {
                     <Badge color={cs.dim}>{s.sector}</Badge>
                   </div>
                   <div style={{ fontSize: 8, color: cs.muted, marginTop: 1, fontFamily: mono2 }}>
-                    {s.shares} sh · Cost ${s.costBasis} · Mkt {fmt$(s.mktValue)}
-                    {s.livePrice && <span style={{ color: cs.green }}> · ${s.livePrice.toFixed(2)}</span>}
-                    {live[s.ticker] && <span style={{ color: live[s.ticker].change >= 0 ? cs.green : cs.red }}> ({live[s.ticker].change > 0 ? "+" : ""}{live[s.ticker].change}%)</span>}
-                    {totalVal > 0 && <span style={{ color: cs.dim }}> · {((s.mktValue / totalVal) * 100).toFixed(1)}%</span>}
+                    {s.shares > 0 ? `${s.shares} shares` : "—"} · {s.costBasis > 0 ? `Cost $${(+s.costBasis).toFixed(2)}/sh` : "No cost basis"}
+                    {s.shares > 0 && s.costBasis > 0 && <span> · Basis {fmt$(s.shares * s.costBasis)}</span>}
+                    {s.livePrice && <span style={{ color: cs.green }}> · Live ${s.livePrice.toFixed(2)}</span>}
+                    {s.shares > 0 && s.costBasis > 0 && s.mktValue > 0 && (() => {
+                      const gl = s.mktValue - (s.shares * s.costBasis);
+                      const glPct = ((s.mktValue / (s.shares * s.costBasis)) - 1) * 100;
+                      return <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>;
+                    })()}
+                    {live[s.ticker] && <span style={{ color: live[s.ticker].change >= 0 ? cs.green : cs.red }}> · Day {live[s.ticker].change > 0 ? "+" : ""}{live[s.ticker].change}%</span>}
+                    {totalVal > 0 && <span style={{ color: cs.dim }}> · Wt {((s.mktValue / totalVal) * 100).toFixed(1)}%</span>}
                     {(() => { const hp = holdingPeriod(s.purchaseDate); return hp ? <span style={{ color: hp.isLT ? cs.green : cs.yellow }}> · {hp.label} {hp.isLT ? "LT" : `(${hp.daysToLT}d→LT)`}</span> : null; })()}
                   </div>
+                </div>
+                <div style={{ textAlign: "right", minWidth: 60 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.yellow }}>{fmt$(s.mktValue)}</div>
+                  {s.shares > 0 && <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>{s.shares} sh</div>}
                 </div>
                 <button onClick={() => removeHolding(s.ticker, "stock")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e => e.currentTarget.style.color = cs.red} onMouseLeave={e => e.currentTarget.style.color = cs.muted}>×</button>
               </div>
@@ -1286,11 +1311,22 @@ useEffect(() => {
                     <Badge color={cs.dim}>{e.data?.c}</Badge>
                   </div>
                   <div style={{ fontSize: 8, color: cs.muted, marginTop: 1, fontFamily: mono2 }}>
-                    {e.shares} sh · Cost ${e.costBasis} · Mkt {fmt$(e.mktValue)} · R:{e.data?.r}% · V:{e.data?.v}%
-                    {live[e.ticker] && <span style={{ color: live[e.ticker].change >= 0 ? cs.green : cs.red }}> · ${live[e.ticker].price} ({live[e.ticker].change > 0 ? "+" : ""}{live[e.ticker].change}%)</span>}
-                    {totalVal > 0 && <span style={{ color: cs.dim }}> · {((e.mktValue / totalVal) * 100).toFixed(1)}%</span>}
+                    {e.shares > 0 ? `${e.shares} shares` : "—"} · {e.costBasis > 0 ? `Cost $${(+e.costBasis).toFixed(2)}/sh` : "No cost basis"}
+                    {e.shares > 0 && e.costBasis > 0 && <span> · Basis {fmt$(e.shares * e.costBasis)}</span>}
+                    <span style={{ color: cs.text }}> · Mkt {fmt$(e.mktValue)}</span>
+                    {e.shares > 0 && e.costBasis > 0 && e.mktValue > 0 && (() => {
+                      const gl = e.mktValue - (e.shares * e.costBasis);
+                      const glPct = ((e.mktValue / (e.shares * e.costBasis)) - 1) * 100;
+                      return <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>;
+                    })()}
+                    {live[e.ticker] && <span style={{ color: live[e.ticker].change >= 0 ? cs.green : cs.red }}> · Live ${live[e.ticker].price} (Day {live[e.ticker].change > 0 ? "+" : ""}{live[e.ticker].change}%)</span>}
+                    {totalVal > 0 && <span style={{ color: cs.dim }}> · Wt {((e.mktValue / totalVal) * 100).toFixed(1)}%</span>}
                     {(() => { const hp = holdingPeriod(e.purchaseDate); return hp ? <span style={{ color: hp.isLT ? cs.green : cs.yellow }}> · {hp.label} {hp.isLT ? "LT" : `(${hp.daysToLT}d→LT)`}</span> : null; })()}
                   </div>
+                </div>
+                <div style={{ textAlign: "right", minWidth: 60 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.green }}>{fmt$(e.mktValue)}</div>
+                  {e.shares > 0 && <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>{e.shares} sh</div>}
                 </div>
                 <button onClick={() => removeHolding(e.ticker, "etf")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e2 => e2.currentTarget.style.color = cs.red} onMouseLeave={e2 => e2.currentTarget.style.color = cs.muted}>×</button>
               </div>
@@ -1309,7 +1345,7 @@ useEffect(() => {
           <div style={{ ...cardS, background: "rgba(96,165,250,.03)", borderColor: "rgba(96,165,250,.12)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer finds the best ETF allocation for your cash, considering your locked stock positions.</div></div>
+                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer finds the highest-performing ETF allocation (up to 10 positions). Concentrated portfolios are preferred when they outperform diversified ones.</div></div>
               {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Holdings" tab first</div>}
             </div>
 
@@ -1359,8 +1395,11 @@ useEffect(() => {
 
           {optResult && optResult.length > 0 && <div style={cardS}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>Recommended ETF Purchases</div>
-              <div style={{ fontSize: 9, color: cs.dim }}>Click to add to holdings</div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>Recommended ETF Purchases ({optResult.length} positions)</div>
+                <div style={{ fontSize: 8, color: cs.dim, marginTop: 1 }}>Optimizer selected {optResult.length} high-conviction positions · {optResult.reduce((s, r) => s + r.pct, 0).toFixed(0)}% of cash deployed</div>
+              </div>
+              <div style={{ fontSize: 9, color: cs.dim }}>Click to toggle</div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {optResult.map(r => {
