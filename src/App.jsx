@@ -787,265 +787,131 @@ export default function App() {
     setBtProgress(`Processing ${available.length} ETFs...`);
 
     // Build monthly returns for each symbol
+    // Pre-index monthly returns by date key for O(1) lookup
     const monthlyReturns = {};
+    const returnsByDateSym = {};
+    const allDateKeys = new Set();
     for (const sym of available) {
       const prices = histData[sym];
       monthlyReturns[sym] = [];
       for (let i = 1; i < prices.length; i++) {
-        monthlyReturns[sym].push({
-          date: prices[i].date,
-          ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close,
-          close: prices[i].close,
-        });
+        const dateKey = prices[i].date.slice(0, 7);
+        const entry = { date: prices[i].date, ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close, close: prices[i].close };
+        monthlyReturns[sym].push(entry);
+        if (!returnsByDateSym[dateKey]) returnsByDateSym[dateKey] = {};
+        returnsByDateSym[dateKey][sym] = entry;
+        allDateKeys.add(dateKey);
       }
     }
+    const sortedDates = [...allDateKeys].sort();
+    const dateToIdx = {}; sortedDates.forEach((d, i) => { dateToIdx[d] = i; });
 
     // ═══ MONTHLY MONITORING WITH CONDITIONAL REBALANCING ═══
-    // Portfolio is monitored every month. Rebalancing only happens when
-    // the after-tax benefit of switching exceeds the tax cost of selling.
     const startCash = btStartCash;
-
     const optCurve = [{ date: "2016-01", value: startCash }];
     const spyCurve = [{ date: "2016-01", value: startCash }];
     const bal60Curve = [{ date: "2016-01", value: startCash }];
-
-    let optValue = startCash;
-    let spyValue = startCash;
-    let bal60Value = startCash;
+    let optValue = startCash, spyValue = startCash, bal60Value = startCash;
     let optAlloc = {};
-    let totalTaxPaid = 0;
-    let totalRebalances = 0;
-    let totalHolds = 0;
-    let lastRebalanceMonth = null; // track when we last rebalanced
+    let totalTaxPaid = 0, totalRebalances = 0;
+    let lastRebalanceMonth = null;
     const btTaxRates = getTaxRates(taxState);
-    const rebalanceEvents = []; // every rebalance/hold decision with date
+    const rebalanceEvents = [];
+    const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; });
+    const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12");
 
-    // Cache ETF_DB lookups for speed
-    const etfDbMap = {};
-    ETF_DB.forEach(e => { etfDbMap[e.t] = e; });
-
-    // Build flat sorted list of all months from 2016-01 to 2025-12
-    const allMonths = (monthlyReturns["SPY"] || [])
-      .filter(r => { const y = new Date(r.date).getFullYear(); return y >= 2016 && y <= 2025; })
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    for (let mi = 0; mi < allMonths.length; mi++) {
-      const month = allMonths[mi];
-      const d = month.date;
-      const mDate = new Date(d);
-      const mYear = mDate.getFullYear();
-      const mMonth = mDate.getMonth(); // 0-indexed
-      const monthKey = d.slice(0, 7);
-
-      setBtProgress(`Simulating ${monthKey}...`);
-
+    for (let mi = 0; mi < simDates.length; mi++) {
+      const monthKey = simDates[mi];
+      const mIdx = dateToIdx[monthKey];
+      const mYear = parseInt(monthKey.slice(0, 4));
+      const mMonth = parseInt(monthKey.slice(5, 7)) - 1;
+      const monthData = returnsByDateSym[monthKey] || {};
       try {
 
-      // ── Step 1: Apply this month's returns to current portfolio ──
+      // Step 1: Apply returns
       if (Object.keys(optAlloc).length > 0) {
         let optMonthRet = 0;
         for (const [sym, wt] of Object.entries(optAlloc)) {
-          const symMonth = monthlyReturns[sym]?.find(r => r.date === d);
-          if (symMonth) optMonthRet += wt * symMonth.ret;
+          const md = monthData[sym];
+          if (md) optMonthRet += wt * md.ret;
         }
         optValue *= (1 + optMonthRet);
       }
-
-      spyValue *= (1 + month.ret);
-      const vtiMonth = monthlyReturns["VTI"]?.find(r => r.date === d);
-      const bndMonth = monthlyReturns["BND"]?.find(r => r.date === d);
-      bal60Value *= (1 + (0.6 * (vtiMonth?.ret || 0) + 0.4 * (bndMonth?.ret || 0)));
-
+      const spyMd = monthData["SPY"];
+      if (spyMd) spyValue *= (1 + spyMd.ret);
+      bal60Value *= (1 + 0.6 * (monthData["VTI"]?.ret || 0) + 0.4 * (monthData["BND"]?.ret || 0));
       optCurve.push({ date: monthKey, value: optValue });
       spyCurve.push({ date: monthKey, value: spyValue });
       bal60Curve.push({ date: monthKey, value: bal60Value });
 
-      // ── Step 2: Fast pre-screen — should we even evaluate rebalancing? ──
-      // Skip expensive optimizer call unless there's a reason to look
+      // Step 2: Pre-screen
       const prevTickers = Object.keys(optAlloc);
       const isFirstAllocation = prevTickers.length === 0;
-      const monthsSinceRebal = lastRebalanceMonth
-        ? ((mYear - new Date(lastRebalanceMonth).getFullYear()) * 12 + (mMonth - new Date(lastRebalanceMonth).getMonth()))
-        : 999;
-
-      // Quick regime check (cheap — just a lookup)
+      const monthsSinceRebal = lastRebalanceMonth ? (mIdx - dateToIdx[lastRebalanceMonth]) : 999;
       let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
       let btDuration = 0, btTransition = null, regimeChanged = false;
       if (useRegime && historicalRegimes) {
-        const regKey = `${mYear}-${String(mMonth + 1).padStart(2, "0")}`;
-        const regData = historicalRegimes[regKey];
+        const regData = historicalRegimes[monthKey];
         if (regData) {
-          btState5 = regData.state5 || null;
-          btRegimeScore = regData.score;
-          btAcceleration = regData.acceleration || null;
-          const regime3 = regData.regime;
-          btDuration = 1;
-          for (let lookback = 1; lookback <= 36; lookback++) {
-            const pm = new Date(mYear, mMonth - lookback, 28);
-            const pk = `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, "0")}`;
-            const prev = historicalRegimes[pk];
-            if (prev && prev.regime === regime3) btDuration++;
-            else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
+          btState5 = regData.state5 || null; btRegimeScore = regData.score; btAcceleration = regData.acceleration || null;
+          const regime3 = regData.regime; btDuration = 1;
+          for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
+            const prev = historicalRegimes[sortedDates[mIdx - lb]];
+            if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
           }
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition };
-          // Did regime change from last month?
-          const lastMonthKey = mi > 0 ? allMonths[mi - 1].date : null;
-          if (lastMonthKey) {
-            const lmKey = lastMonthKey.slice(0, 7).replace(/-(\d)$/, "-0$1");
-            const lm = historicalRegimes[lmKey];
-            if (lm && lm.regime !== regime3) regimeChanged = true;
-          }
+          if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
         }
       }
+      if (!(isFirstAllocation || regimeChanged || mMonth % 3 === 0)) { continue; }
+      if (!isFirstAllocation && monthsSinceRebal < 2) { continue; }
+      if (mi % 6 === 0) { setBtProgress(`Evaluating ${monthKey}...`); await new Promise(r => setTimeout(r, 0)); }
 
-      // Pre-screen: skip full evaluation unless one of these triggers fires
-      // 1. First allocation — must allocate
-      // 2. Regime just changed — evaluate immediately
-      // 3. Quarterly check (every 3 months) — routine review
-      // 4. Minimum 2 months since last rebalance
-      const isQuarterlyCheck = (mMonth % 3 === 0); // Jan, Apr, Jul, Oct
-      const shouldEvaluate = isFirstAllocation || regimeChanged || isQuarterlyCheck;
-      if (!shouldEvaluate || (!isFirstAllocation && monthsSinceRebal < 2)) { continue; }
-
-      // Yield to UI every 12 months to prevent freeze
-      if (mi % 12 === 0) {
-        setBtProgress(`Evaluating ${monthKey}...`);
-        await new Promise(r => setTimeout(r, 0));
-      }
-
-      // ── Full evaluation: compute trailing stats + run optimizer ──
+      // Step 3: Trailing stats (fast index-based)
       const trailingStats = {};
+      const trailStart = Math.max(0, mIdx - 12);
       for (const sym of available) {
-        const symRets = monthlyReturns[sym]?.filter(r => {
-          const rd = new Date(r.date);
-          const monthsAgo = (mYear - rd.getFullYear()) * 12 + (mMonth - rd.getMonth());
-          return monthsAgo >= 1 && monthsAgo <= 12;
-        });
-        if (!symRets || symRets.length < 6) continue;
-        const avgMo = symRets.reduce((s, r) => s + r.ret, 0) / symRets.length;
-        const annRet = avgMo * 12 * 100;
-        const variance = symRets.reduce((s, r) => s + Math.pow(r.ret - avgMo, 2), 0) / symRets.length;
-        const annVol = Math.sqrt(variance) * Math.sqrt(12) * 100;
+        let sumRet = 0, sumRetSq = 0, count = 0;
+        for (let ti = trailStart; ti < mIdx; ti++) {
+          const entry = returnsByDateSym[sortedDates[ti]]?.[sym];
+          if (entry) { sumRet += entry.ret; sumRetSq += entry.ret * entry.ret; count++; }
+        }
+        if (count < 6) continue;
+        const avgMo = sumRet / count;
         const db = etfDbMap[sym];
-        trailingStats[sym] = {
-          t: sym, n: db?.n || sym, c: db?.c || "US Large Cap",
-          r: annRet, v: Math.max(annVol, 1), er: db?.er || 0.1, d: db?.d || 0,
-          lev: db?.lev || null,
-        };
+        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: avgMo * 12 * 100, v: Math.max(Math.sqrt(Math.max(0, sumRetSq / count - avgMo * avgMo)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
       }
-
       const candidates = Object.values(trailingStats).filter(s => s.t !== "SPY" && s.v > 0 && s.r > -50);
-      if (candidates.length < 3) { continue; }
+      if (candidates.length < 3) continue;
 
-      // ── Run optimizer (reduced iterations for backtest speed) ──
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 2000);
-      if (!result || result.length === 0) { continue; }
-
-      const newAlloc = {};
-      const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
+      // Step 4: Optimizer (1000 iterations for speed)
+      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 1000);
+      if (!result || result.length === 0) continue;
+      const newAlloc = {}; const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
       result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDeployed; });
 
-      // ── Compare current vs proposed ──
-      const prevAlloc = { ...optAlloc };
-      const spyTrailing = trailingStats["SPY"];
-      const spyExpRet = spyTrailing ? spyTrailing.r : 10;
+      // Step 5: Compare
+      const prevAlloc = { ...optAlloc }; const spyExpRet = trailingStats["SPY"]?.r || 10;
+      let currExpRet = 0; for (const [sym, wt] of Object.entries(prevAlloc)) currExpRet += wt * (trailingStats[sym]?.r || spyExpRet);
+      let propExpRet = 0; for (const [sym, wt] of Object.entries(newAlloc)) if (trailingStats[sym]) propExpRet += wt * trailingStats[sym].r;
 
-      // Current portfolio expected return
-      let currExpRet = 0;
-      for (const [sym, wt] of Object.entries(prevAlloc)) {
-        const stat = trailingStats[sym];
-        currExpRet += wt * (stat ? stat.r : spyExpRet);
+      // Step 6: Tax cost
+      const allTkrs = [...new Set([...prevTickers, ...Object.keys(newAlloc)])];
+      const trades = allTkrs.map(ticker => { const ow = prevAlloc[ticker] || 0, nw = newAlloc[ticker] || 0, ch = nw - ow; if (Math.abs(ch) < 0.005) return null; const rc = result.find(r => r.ticker === ticker); return { ticker, name: rc?.name || candidates.find(c => c.t === ticker)?.n || ticker, cat: rc?.cat || candidates.find(c => c.t === ticker)?.c || "", oldWt: +(ow * 100).toFixed(1), newWt: +(nw * 100).toFixed(1), change: +(ch * 100).toFixed(1), action: ch > 0.005 ? "BUY" : "SELL", dollars: Math.abs(ch) * optValue }; }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+      let estRG = 0; for (const sell of trades.filter(t => t.action === "SELL")) { const tr = trailingStats[sell.ticker]?.r / 100 || 0; estRG += Math.max(0, sell.dollars - (tr > -0.99 ? sell.dollars / (1 + tr) : sell.dollars)); }
+      const appRate = monthsSinceRebal >= 12 ? btTaxRates.lt : btTaxRates.st;
+      const estTC = estRG * (appRate / 100); const tcPct = optValue > 0 ? (estTC / optValue) * 100 : 0;
+
+      // Step 7: Decision
+      const retImp = propExpRet - currExpRet; const curAlpha = currExpRet - spyExpRet;
+      let hurdle; if (isFirstAllocation) hurdle = -999; else if (btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8) hurdle = tcPct * 1.0; else if (curAlpha > 3) hurdle = tcPct * 2.5; else if (curAlpha < -2) hurdle = tcPct * 1.2; else hurdle = tcPct * 1.5;
+
+      if (isFirstAllocation || retImp > hurdle) {
+        optAlloc = newAlloc; optValue -= estTC; totalTaxPaid += estTC; totalRebalances++; lastRebalanceMonth = monthKey;
+        rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({ ticker: r.ticker, name: r.name, cat: r.cat, weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1), dollars: Math.round((newAlloc[r.ticker] || 0) * optValue) })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades, taxPaid: Math.round(estTC), realizedGains: Math.round(estRG), returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition });
       }
 
-      // Proposed portfolio expected return
-      let propExpRet = 0;
-      for (const [sym, wt] of Object.entries(newAlloc)) {
-        const stat = trailingStats[sym];
-        if (stat) propExpRet += wt * stat.r;
-      }
-
-      // ── Estimate tax cost of switching ──
-      const allTickers = [...new Set([...prevTickers, ...Object.keys(newAlloc)])];
-      const trades = allTickers.map(ticker => {
-        const oldWt = prevAlloc[ticker] || 0;
-        const newWt = newAlloc[ticker] || 0;
-        const change = newWt - oldWt;
-        if (Math.abs(change) < 0.005) return null;
-        const rec = result.find(r => r.ticker === ticker);
-        return {
-          ticker, name: rec?.name || candidates.find(c => c.t === ticker)?.n || ticker,
-          cat: rec?.cat || candidates.find(c => c.t === ticker)?.c || "",
-          oldWt: +(oldWt * 100).toFixed(1), newWt: +(newWt * 100).toFixed(1),
-          change: +(change * 100).toFixed(1), action: change > 0.005 ? "BUY" : "SELL",
-          dollars: Math.abs(change) * optValue,
-        };
-      }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
-
-      let estTaxCost = 0, estRealizedGains = 0;
-      for (const sell of trades.filter(t => t.action === "SELL")) {
-        const trailingStat = trailingStats[sell.ticker];
-        const trailingRet = trailingStat ? trailingStat.r / 100 : 0;
-        const costBasis = trailingRet > -0.99 ? sell.dollars / (1 + trailingRet) : sell.dollars;
-        estRealizedGains += Math.max(0, sell.dollars - costBasis);
-      }
-      // Use LT rate if held >12 months since last rebalance, otherwise ST
-      const applicableRate = monthsSinceRebal >= 12 ? btTaxRates.lt : btTaxRates.st;
-      estTaxCost = estRealizedGains * (applicableRate / 100);
-      const taxCostPct = optValue > 0 ? (estTaxCost / optValue) * 100 : 0;
-
-      // ── REBALANCE DECISION ──
-      const returnImprovement = propExpRet - currExpRet;
-      const currAlpha = currExpRet - spyExpRet;
-
-      // Decision logic:
-      // 1. First allocation: always
-      // 2. Regime change (bear→bull transition with duration 2-8): lower hurdle (1× tax cost)
-      // 3. Current portfolio beating SPY by 3%+: very high hurdle (2.5× tax cost)
-      // 4. Current underperforming SPY: moderate hurdle (1.2× tax cost — be more willing to switch)
-      // 5. Default: 1.5× tax cost
-      let hurdle;
-      if (isFirstAllocation) {
-        hurdle = -999; // always allocate
-      } else if (btTransition && btTransition.includes("bear→") && btDuration >= 2 && btDuration <= 8) {
-        hurdle = taxCostPct * 1.0; // regime transition: low bar to reposition
-      } else if (currAlpha > 3) {
-        hurdle = taxCostPct * 2.5; // winning big: very high bar to change
-      } else if (currAlpha < -2) {
-        hurdle = taxCostPct * 1.2; // losing to SPY: more willing to change
-      } else {
-        hurdle = taxCostPct * 1.5; // default
-      }
-
-      const shouldRebalance = isFirstAllocation || returnImprovement > hurdle;
-
-      if (shouldRebalance) {
-        optAlloc = newAlloc;
-        optValue -= estTaxCost;
-        totalTaxPaid += estTaxCost;
-        totalRebalances++;
-        lastRebalanceMonth = d;
-
-        rebalanceEvents.push({
-          date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({
-            ticker: r.ticker, name: r.name, cat: r.cat,
-            weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1),
-            dollars: Math.round((newAlloc[r.ticker] || 0) * optValue),
-          })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight),
-          trades, taxPaid: Math.round(estTaxCost), realizedGains: Math.round(estRealizedGains),
-          returnImprovement: +returnImprovement.toFixed(1), taxCostPct: +taxCostPct.toFixed(2),
-          currAlpha: +currAlpha.toFixed(1), taxRate: applicableRate,
-          taxType: monthsSinceRebal >= 12 ? "LT" : "ST",
-          regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration,
-          duration: btDuration, transition: btTransition,
-        });
-      }
-
-      // Track monthly holds only at year boundaries for annual summary
-      // (don't store 120 hold events, just aggregate)
-
-      } catch (monthErr) {
-        console.error(`Backtest error at ${monthKey}:`, monthErr);
-      }
+      } catch (e) { console.error(`Backtest error at ${monthKey}:`, e); }
     }
 
     // ═══ AGGREGATE INTO ANNUAL RESULTS FOR DISPLAY ═══
@@ -1152,7 +1018,7 @@ export default function App() {
         state: taxState,
         effectiveDrag: startCash > 0 ? ((totalTaxPaid / startCash) * 100).toFixed(1) : 0,
         rebalances: totalRebalances,
-        holds: (allMonths.length - totalRebalances),
+        holds: (simDates.length - totalRebalances),
         rebalanceEvents,
       },
     });
