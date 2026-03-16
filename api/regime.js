@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     dgs10: "DGS10",            // 10Y Treasury yield (daily, inverse of bond price)
   };
 
-  const startDate = (isHistory || isAnalytics) ? "2012-01-01" : new Date(Date.now() - 3 * 365.25 * 86400000).toISOString().slice(0, 10);
+  const startDate = (isHistory || isAnalytics) ? "2005-01-01" : new Date(Date.now() - 3 * 365.25 * 86400000).toISOString().slice(0, 10);
 
   const data = {};
   const errors = [];
