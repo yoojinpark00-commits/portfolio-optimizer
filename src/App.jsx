@@ -226,6 +226,8 @@ const STOCK_DB=[
   {t:"DUK",n:"Duke Energy",s:"Utilities",ipo:1961},{t:"D",n:"Dominion Energy",s:"Utilities",ipo:1983},{t:"AEP",n:"American Electric Power",s:"Utilities",ipo:1906},{t:"EXC",n:"Exelon",s:"Utilities",ipo:2000},{t:"SRE",n:"Sempra",s:"Utilities",ipo:1998},{t:"WEC",n:"WEC Energy",s:"Utilities",ipo:1947},{t:"ES",n:"Eversource Energy",s:"Utilities",ipo:1966},{t:"XEL",n:"Xcel Energy",s:"Utilities",ipo:1910},
   // Real Estate
   {t:"PLD",n:"Prologis",s:"Real Estate",ipo:1997},{t:"CCI",n:"Crown Castle",s:"Real Estate",ipo:1998},{t:"EQIX",n:"Equinix",s:"Real Estate",ipo:2000},{t:"PSA",n:"Public Storage",s:"Real Estate",ipo:1980},{t:"DLR",n:"Digital Realty",s:"Real Estate",ipo:2004},{t:"SPG",n:"Simon Property Group",s:"Real Estate",ipo:1993},{t:"WELL",n:"Welltower",s:"Real Estate",ipo:1985},{t:"AVB",n:"AvalonBay",s:"Real Estate",ipo:1994},
+  // Historical leaders (pre-2016, needed for extended backtest 2006-2015)
+  {t:"HPQ",n:"HP Inc",s:"Technology",ipo:1961},{t:"ABT",n:"Abbott Labs",s:"Healthcare",ipo:1964},{t:"MET",n:"MetLife",s:"Financial",ipo:2000},{t:"AIG",n:"AIG",s:"Financial",ipo:1969},{t:"BIIB",n:"Biogen",s:"Healthcare",ipo:1991},
 ];
 
 // Map STOCK_DB sector names to optimizer category system
@@ -239,6 +241,126 @@ function stockAvailableAt(stock, year) { return (stock.ipo || 0) <= year; }
 // e.g., NVDA was tech top-5 by 2018 (GPU dominance) even though it wasn't overall top-30 until 2021
 // Format: { year: { sector: [tickers] } }
 const SP500_BY_SECTOR = {
+  2006: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","HPQ","TXN","ACN","MU","ADBE","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","C","BAC","JPM","WFC","AIG","GS","MS","MET","SCHW","CME","ICE"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB"],
+    Consumer: ["WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM"],
+    Communications: ["GOOGL","DIS","CMCSA","VZ","T","EA"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","PSA","AVB","WELL","O"],
+  },
+  2007: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","HPQ","TXN","ACN","MU","ADBE","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","C","BAC","JPM","WFC","AIG","GS","MS","MET","SCHW","CME","ICE"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM"],
+    Communications: ["GOOGL","DIS","CMCSA","VZ","T","EA"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","PSA","AVB","WELL","O"],
+  },
+  2008: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","HPQ","TXN","ACN","MU","ADBE","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","JPM","BAC","WFC","GS","MS","C","MET","SCHW","CME","ICE"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F"],
+    Communications: ["GOOGL","DIS","CMCSA","VZ","T","EA"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","PSA","AVB","WELL","O"],
+  },
+  2009: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","HPQ","TXN","ACN","MU","ADBE","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","JPM","WFC","BAC","GS","MS","C","V","MET","SCHW","CME","ICE"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F"],
+    Communications: ["GOOGL","DIS","CMCSA","VZ","T","EA"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","PSA","AVB","WELL","O","AMT"],
+  },
+  2010: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","HPQ","TXN","ACN","MU","ADBE","CRM","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","JPM","WFC","BAC","GS","MS","C","V","MA","MET","SCHW","CME","ICE","BLK"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB","ISRG"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM"],
+    Communications: ["GOOGL","DIS","CMCSA","VZ","T","NFLX","EA"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","AMT","PSA","AVB","WELL","O","PLD"],
+  },
+  2011: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","HPQ","TXN","ACN","MU","ADBE","CRM","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","JPM","WFC","BAC","GS","MS","C","V","MA","MET","SCHW","CME","ICE","BLK"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB","ISRG"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM","TSLA"],
+    Communications: ["GOOGL","DIS","CMCSA","VZ","T","NFLX","EA"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO","MPC"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","AMT","PLD","PSA","AVB","WELL","O","CCI","EQIX"],
+  },
+  2012: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","TXN","ACN","MU","ADBE","CRM","INTU","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","JPM","WFC","BAC","GS","MS","C","V","MA","MET","SCHW","CME","ICE","BLK"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB","ISRG","REGN"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM","TSLA","CMG"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO","PSX","MPC"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","AMT","PLD","CCI","EQIX","PSA","O","WELL","AVB","DLR"],
+  },
+  2013: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","TXN","ACN","MU","ADBE","CRM","INTU","ADI","SNPS","CDNS"],
+    Financials: ["BRK.B","JPM","WFC","BAC","GS","MS","C","V","MA","MET","SCHW","CME","ICE","BLK"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","ABBV","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB","ISRG","REGN","VRTX"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM","TSLA","CMG","LULU"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA","TMUS"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO","PSX","MPC","FSLR"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","AMT","PLD","CCI","EQIX","PSA","O","WELL","AVB","DLR"],
+  },
+  2014: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","TXN","ACN","MU","ADBE","CRM","INTU","ADI","SNPS","CDNS","AVGO"],
+    Financials: ["BRK.B","JPM","WFC","BAC","GS","MS","C","V","MA","MET","SCHW","CME","ICE","BLK"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","ABBV","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB","ISRG","REGN","VRTX"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM","TSLA","CMG","LULU"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA","TMUS","CHTR"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO","PSX","MPC","FSLR"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","AMT","PLD","CCI","EQIX","PSA","O","WELL","AVB","DLR"],
+  },
+  2015: {
+    Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","TXN","ACN","MU","ADBE","CRM","INTU","ADI","SNPS","CDNS","AVGO","NXPI"],
+    Financials: ["BRK.B","JPM","WFC","BAC","GS","MS","C","V","MA","MET","SCHW","CME","ICE","BLK"],
+    Healthcare: ["JNJ","PFE","UNH","MRK","ABBV","AMGN","GILD","ABT","MDT","BMY","LLY","CI","DHR","CVS","BIIB","ISRG","REGN","VRTX"],
+    Consumer: ["AMZN","WMT","PG","KO","PEP","HD","MCD","COST","NKE","SBUX","LOW","TGT","F","GM","TSLA","CMG","LULU"],
+    Communications: ["GOOGL","META","DIS","CMCSA","VZ","T","NFLX","EA","TMUS","CHTR"],
+    Energy: ["XOM","CVX","COP","SLB","OXY","EOG","HAL","VLO","PSX","MPC","FSLR"],
+    Industrial: ["GE","BA","HON","UNP","CAT","MMM","LMT","GD","DE","UPS","FDX","DAL","ETN"],
+    Materials: ["DD","NEM","FCX","APD","ECL","SHW","PPG","NUE","GOLD","VALE","BHP","RIO"],
+    Utilities: ["NEE","SO","DUK","D","AEP","EXC","SRE","WEC","ES","XEL"],
+    RealEstate: ["SPG","AMT","PLD","CCI","EQIX","PSA","O","WELL","AVB","DLR"],
+  },
   2016: {
     Technology: ["AAPL","MSFT","INTC","CSCO","ORCL","IBM","QCOM","AVGO","TXN","ACN","MU","INTU","ADBE","CRM","ADI","SNPS","CDNS","NXPI"],
     Financials: ["BRK.B","JPM","WFC","BAC","C","GS","MS","V","MA","SCHW","CME","ICE","BLK"],
@@ -1061,7 +1183,7 @@ export default function App() {
     const btStocks = includeStocks ? SP500_ALL_TICKERS : [];
 
     const allSymbols = [...new Set([...btETFs, ...benchmarks, ...btStocks])];
-    setBtProgress(`Fetching ${allSymbols.length} ETFs (2015-2025)...`);
+    setBtProgress(`Fetching ${allSymbols.length} symbols (2005-2025)...`);
 
     let histData = {};
     try {
@@ -1069,7 +1191,7 @@ export default function App() {
       for (let i = 0; i < allSymbols.length; i += 15) {
         const batch = allSymbols.slice(i, i + 15);
         setBtProgress(`Fetching batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
-        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2015-01-01&end=2025-12-31`);
+        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31`);
         const json = await resp.json();
         if (json.data) Object.assign(histData, json.data);
       }
@@ -1108,9 +1230,9 @@ export default function App() {
 
     // ═══ MONTHLY MONITORING WITH CONDITIONAL REBALANCING ═══
     const startCash = btStartCash;
-    const optCurve = [{ date: "2016-01", value: startCash }];
-    const spyCurve = [{ date: "2016-01", value: startCash }];
-    const bal60Curve = [{ date: "2016-01", value: startCash }];
+    const optCurve = [{ date: "2006-01", value: startCash }];
+    const spyCurve = [{ date: "2006-01", value: startCash }];
+    const bal60Curve = [{ date: "2006-01", value: startCash }];
     let optValue = startCash, spyValue = startCash, bal60Value = startCash;
     let optAlloc = {};
     let costBasisMap = {}; // ticker → total dollar cost basis (actual purchase cost)
@@ -1126,7 +1248,7 @@ export default function App() {
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
     // Only simulate months where SPY data actually exists
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
-    const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12" && spyDates.has(d));
+    const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
 
     for (let mi = 0; mi < simDates.length; mi++) {
       const monthKey = simDates[mi];
@@ -1554,7 +1676,7 @@ export default function App() {
     try {
       for (let i = 0; i < allSymbols.length; i += 15) {
         const batch = allSymbols.slice(i, i + 15);
-        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2015-01-01&end=2025-12-31`);
+        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31`);
         const json = await resp.json();
         if (json.data) Object.assign(histData, json.data);
       }
@@ -1579,7 +1701,7 @@ export default function App() {
     const sortedDates = [...allDateKeys].sort();
     const dateToIdx = {}; sortedDates.forEach((d, i) => { dateToIdx[d] = i; });
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
-    const simDates = sortedDates.filter(d => d >= "2016-01" && d <= "2025-12" && spyDates.has(d));
+    const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
 
     // Compute SPY final value (same for all sims)
@@ -2688,7 +2810,7 @@ useEffect(() => {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 700 }}>📊 Regime Duration & Entry Signal Analysis</div>
-                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>Historical regime episodes, transition probabilities, and forward returns by duration. Auto-fetched from 12 FRED series (2012–2025).</div>
+                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>Historical regime episodes, transition probabilities, and forward returns by duration. Auto-fetched from 12 FRED series (2005–2025).</div>
                   </div>
                   <button onClick={fetchRegimeAnalytics} disabled={analyticsLoading} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(251,191,36,.2)", background: "rgba(251,191,36,.06)", color: cs.yellow, fontSize: 9, fontWeight: 600, cursor: analyticsLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
                     {analyticsLoading ? "Computing..." : regimeAnalytics ? "⟳ Refresh" : "Run Analysis"}
@@ -2696,7 +2818,7 @@ useEffect(() => {
                 </div>
 
                 {!regimeAnalytics && !analyticsLoading && <div style={{ textAlign: "center", padding: 18, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>
-                  Auto-fetches on app launch. Computes regime episodes, transition probabilities, and optimal entry signals from 12+ years of FRED macro data.
+                  Auto-fetches on app launch. Computes regime episodes, transition probabilities, and optimal entry signals from 20 years of FRED macro data.
                 </div>}
 
                 {regimeAnalytics && (() => {
@@ -2921,9 +3043,9 @@ useEffect(() => {
         {tab === "Backtest" && <div>
           <div style={cardS}>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
-              <span style={{ fontSize: 16 }}>📈</span><div style={{ fontSize: 13, fontWeight: 700 }}>Backtest: 2016–2025</div>
+              <span style={{ fontSize: 16 }}>📈</span><div style={{ fontSize: 13, fontWeight: 700 }}>Backtest: 2006–2025</div>
             </div>
-            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2016-2025). Quarterly evaluation + regime-triggered reviews. SPY-overlap penalty rewards differentiated portfolios. Recovery plays included during risk-off. Return shrinkage (stocks 80%, ETFs 120%), diversification constraints, and actual cost basis tracking.</div>
+            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2006-2025). Includes 2008 financial crisis, 2020 COVID crash, and 2022 rate hike cycle. Quarterly evaluation + regime-triggered reviews. SPY-overlap penalty, recovery plays during risk-off, return shrinkage (stocks 80%, ETFs 120%), diversification constraints, and actual cost basis tracking.</div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -2942,7 +3064,7 @@ useEffect(() => {
             </div>
 
             <button onClick={runBacktest} disabled={btRunning} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: btRunning ? "rgba(255,255,255,.06)" : "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: btRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: btRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
-              {btRunning ? btProgress : "Run Backtest (2016–2025)"}
+              {btRunning ? btProgress : "Run Backtest (2006–2025)"}
             </button>
           </div>
 
@@ -2960,7 +3082,7 @@ useEffect(() => {
 
             return <>
               {includeStocks && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (~130-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year, matching the live optimizer's breadth. Growth leaders enter when they become sector-relevant — NVDA in Tech 2017 (GPU dominance), AMD in 2019 (Zen comeback), TSLA in Consumer 2021. GE included in 2016 (Industrial #1) but exits by 2018. ~140 stocks per year, rotating naturally with return shrinkage (80% cap) and SPY-overlap penalty to reward differentiated positioning.</div>
+                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (2006–2025, ~100-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year. Covers 2008 crisis (AIG in Financials pre-crash, removed after), 2010 recovery (V/MA enter), 2017 tech shift (NVDA enters), 2020 COVID (TSLA in Consumer), and 2023 AI boom (SMCI). GE Industrial #1 in 2006, exits by 2018. Return shrinkage (80% cap) + SPY-overlap penalty.</div>
               </div>}
               {/* Equity Curve */}
               <div style={cardS}>
@@ -3152,7 +3274,7 @@ useEffect(() => {
                                         ))}
                                       </div>
                                     ))}
-                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation" : "Portfolio held — improvement did not exceed 1.5% hurdle + turnover cost"}</div>}
+                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === btResult?.annualResults?.[0]?.year ? "Initial allocation" : "Portfolio held — improvement did not exceed 1.5% hurdle + turnover cost"}</div>}
                                 </div>
                               </div>
                               {/* Regime Context for this year */}
