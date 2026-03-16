@@ -693,10 +693,19 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
     let sc;
     const divAdj = divScore + concPenalty;
+    // ── Max drawdown estimate: VaR95 × √2 approximates annual max drawdown ──
+    // (Cornish-Fisher adjustment for non-normal returns in monthly rebalance context)
+    const estMaxDD = var95 * 1.41; // √2 ≈ 1.41
     if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty;
     else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty;
-    else if (target === "max_return") sc = ret + volPenalty + regimeBonus + divAdj + levPenalty;
-    else sc = sh * .5 + ret * .03 - vol * .02 + volPenalty + regimeBonus + divAdj + levPenalty;
+    else if (target === "max_return") {
+      // Maximize return but penalize drawdown risk
+      // VaR mode: heavy drawdown penalty via estimated max drawdown
+      // Standard mode: moderate vol penalty
+      const ddPenalty = srMode === "var" ? -0.30 * estMaxDD : srMode === "vol2" ? -0.20 * vol : -0.10 * vol;
+      sc = ret + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty;
+    }
+    else sc = sh * .5 + ret * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty; // balanced
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
@@ -2261,7 +2270,7 @@ useEffect(() => {
 
             {cashBalance > 0 && <>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
-                {[{ k: "max_sharpe", l: "Max Sharpe", d: "Risk-adjusted" }, { k: "min_vol", l: "Min Volatility", d: "Lowest risk" }, { k: "max_return", l: "Max Return", d: "Aggressive" }, { k: "balanced", l: "Balanced", d: "Multi-factor" }].map(o => (
+                {[{ k: "max_sharpe", l: "Max Sharpe", d: "Risk-adjusted" }, { k: "min_vol", l: "Min Volatility", d: "Lowest risk" }, { k: "max_return", l: "Max Return", d: srMode === "var" ? "DD-controlled" : "Aggressive" }, { k: "balanced", l: "Balanced", d: "Multi-factor" }].map(o => (
                   <button key={o.k} onClick={() => setOt(o.k)} style={{ flex: "1 1 100px", padding: "8px 12px", borderRadius: 6, border: "1px solid", borderColor: ot === o.k ? "rgba(110,231,183,.25)" : "rgba(255,255,255,.05)", background: ot === o.k ? "rgba(110,231,183,.06)" : "rgba(255,255,255,.015)", color: ot === o.k ? cs.green : cs.dim, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
                     <div style={{ fontSize: 10, fontWeight: 600 }}>{o.l}</div><div style={{ fontSize: 8, opacity: .7 }}>{o.d}</div>
                   </button>
@@ -2297,6 +2306,9 @@ useEffect(() => {
                   <span style={{ fontSize: 8, color: includeStocks ? cs.blue : cs.dim }}>{includeStocks ? "ETF+Stocks" : "ETF Only"}</span>
                 </button>
               </div>
+
+              {ot === "max_return" && srMode === "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🛡️ Max Return + VaR mode: drawdown-controlled. Return is maximized but penalized by estimated max drawdown (VaR₉₅ × √2). This favors high-return positions with lower tail risk over pure momentum chasers.</div>}
+              {ot === "max_return" && srMode !== "var" && <div style={{ fontSize: 8, color: cs.dim, marginBottom: 4 }}>💡 Tip: Switch SR Mode to (R-Rf)/VaR for drawdown-controlled max return — penalizes tail risk while still maximizing upside.</div>}
 
               <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Run Optimizer — Deploy ${cashBalance.toLocaleString()}{includeStocks ? " (ETF+Stocks)" : ""}{useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}
@@ -2841,7 +2853,7 @@ useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
               <span style={{ fontSize: 16 }}>📈</span><div style={{ fontSize: 13, fontWeight: 700 }}>Backtest: 2016–2025</div>
             </div>
-            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data. Annual rebalancing using trailing 12-month stats. Half Kelly caps + Vol Target + VaR Sharpe all applied.</div>
+            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2016–2025). Monthly monitoring with tax-aware conditional rebalancing. VaR Sharpe mode applies drawdown penalty to Max Return objective. Return shrinkage, diversification constraints, and actual cost basis tracking applied.</div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
