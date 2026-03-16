@@ -1168,22 +1168,59 @@ export default function App() {
       setBtProgress(`Evaluating ${monthKey}...`);
       await new Promise(r => setTimeout(r, 0));
 
-      // Step 3: Trailing stats (fast index-based)
+      // Step 3: Trailing stats with RECENCY WEIGHTING + MEAN REVERSION
+      // Recent months matter more than old months to avoid momentum whipsaw
+      // (e.g., Jan 2021 still seeing the March-Dec 2020 rocket with equal weight)
       const trailingStats = {};
       const trailStart = Math.max(0, mIdx - 12);
+      const trailMonths = mIdx - trailStart;
+      // Collect all returns for cross-sectional z-score
+      const allReturns = [];
+      const symStats = {};
       for (const sym of available) {
-        let sumRet = 0, sumRetSq = 0, count = 0;
+        let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
         for (let ti = trailStart; ti < mIdx; ti++) {
           const entry = returnsByDateSym[sortedDates[ti]]?.[sym];
-          if (entry) { sumRet += entry.ret; sumRetSq += entry.ret * entry.ret; count++; }
+          if (entry) {
+            // Exponential decay: recent months get higher weight
+            // Month 0 (oldest) = weight ~0.5, Month 11 (newest) = weight ~1.0
+            const age = mIdx - 1 - ti; // 0 = newest, 11 = oldest
+            const w = Math.exp(-0.05 * age); // half-life ~14 months, gentle decay
+            sumWRet += w * entry.ret;
+            sumW += w;
+            sumRet += entry.ret;
+            sumRetSq += entry.ret * entry.ret;
+            count++;
+          }
         }
         if (count < 6) continue;
-        const avgMo = sumRet / count;
+        const wAvgMo = sumWRet / sumW; // recency-weighted average monthly return
+        const rawR = wAvgMo * 12 * 100;
         const db = etfDbMap[sym];
-        const rawR = avgMo * 12 * 100; // raw annualized return
         const isStk = db?.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk); // dampen extreme trailing returns
-        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: Math.max(Math.sqrt(Math.max(0, sumRetSq / count - avgMo * avgMo)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
+        const shrunkR = shrinkReturn(rawR, isStk);
+        const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
+        symStats[sym] = { shrunkR, vol, rawR, db, isStk };
+        allReturns.push(shrunkR);
+      }
+
+      // Cross-sectional mean-reversion adjustment:
+      // Assets with returns >1.5 std devs above the mean get penalized
+      // This prevents the entire top-15 from being last year's winners
+      const meanR = allReturns.length > 0 ? allReturns.reduce((s, v) => s + v, 0) / allReturns.length : 0;
+      const stdR = allReturns.length > 1 ? Math.sqrt(allReturns.reduce((s, v) => s + (v - meanR) ** 2, 0) / allReturns.length) : 1;
+
+      for (const [sym, stats] of Object.entries(symStats)) {
+        const { shrunkR, vol, db, isStk } = stats;
+        const zScore = stdR > 0 ? (shrunkR - meanR) / stdR : 0;
+        // Penalize extreme winners: if z > 1.5, shave off 30% of the excess
+        // This is ON TOP of return shrinkage — double protection against momentum whipsaw
+        let adjR = shrunkR;
+        if (zScore > 1.5) {
+          const excessR = (zScore - 1.5) * stdR;
+          adjR = shrunkR - excessR * (isStk ? 0.30 : 0.15); // stronger for stocks
+        }
+        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: adjR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
       }
       const allCandidates = Object.values(trailingStats).filter(s => {
         if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
@@ -1582,21 +1619,38 @@ export default function App() {
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
         if (!isFirst && mSinceRebal < 2) continue;
 
-        // Trailing stats
+        // Trailing stats with recency weighting + mean reversion (matches main backtest)
         const trailingStats = {};
         const trailStart = Math.max(0, mIdx - 12);
+        const allRets = [];
+        const symTmp = {};
         for (const sym of available) {
-          let sR = 0, sR2 = 0, cnt = 0;
+          let sWR = 0, sW = 0, sR = 0, sR2 = 0, cnt = 0;
           for (let ti = trailStart; ti < mIdx; ti++) {
             const e = returnsByDateSym[sortedDates[ti]]?.[sym];
-            if (e) { sR += e.ret; sR2 += e.ret * e.ret; cnt++; }
+            if (e) {
+              const age = mIdx - 1 - ti;
+              const w = Math.exp(-0.05 * age);
+              sWR += w * e.ret; sW += w;
+              sR += e.ret; sR2 += e.ret * e.ret; cnt++;
+            }
           }
           if (cnt < 6) continue;
-          const avg = sR / cnt;
           const db = etfDbMap[sym];
-          const rawR = avg * 12 * 100;
-          const shrunkR = shrinkReturn(rawR, db?.type === "stock");
-          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: Math.max(Math.sqrt(Math.max(0, sR2 / cnt - avg * avg)) * Math.sqrt(12) * 100, 1), er: db?.er || 0.1, d: 0, lev: db?.lev || null };
+          const rawR = (sWR / sW) * 12 * 100;
+          const isStk = db?.type === "stock";
+          const shrunkR = shrinkReturn(rawR, isStk);
+          const vol = Math.max(Math.sqrt(Math.max(0, sR2 / cnt - (sR/cnt) ** 2)) * Math.sqrt(12) * 100, 1);
+          symTmp[sym] = { shrunkR, vol, db, isStk };
+          allRets.push(shrunkR);
+        }
+        const mR = allRets.length > 0 ? allRets.reduce((s, v) => s + v, 0) / allRets.length : 0;
+        const stdRets = allRets.length > 1 ? Math.sqrt(allRets.reduce((s, v) => s + (v - mR) ** 2, 0) / allRets.length) : 1;
+        for (const [sym, st] of Object.entries(symTmp)) {
+          const z = stdRets > 0 ? (st.shrunkR - mR) / stdRets : 0;
+          let adjR = st.shrunkR;
+          if (z > 1.5) adjR -= (z - 1.5) * stdRets * (st.isStk ? 0.30 : 0.15);
+          trailingStats[sym] = { t: sym, n: st.db?.n || sym, c: st.db?.c || "US Large Cap", r: adjR, v: st.vol, er: st.db?.er || 0.1, d: 0, lev: st.db?.lev || null };
         }
 
         const cands = Object.values(trailingStats).filter(s => {
