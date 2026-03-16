@@ -914,8 +914,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     else numActive = 8 + Math.floor(Math.random() * 3);                     // 30%: 8-10 diversified
     numActive = Math.min(numActive, n);
 
-    // Warm-start: 70% of iterations mutate the best-so-far, 30% random exploration
-    const warmStart = best && t > 10 && Math.random() < 0.7;
+    // Warm-start: 50% of iterations mutate the best-so-far, 50% random exploration
+    const warmStart = best && t > 10 && Math.random() < 0.5;
 
     // Generate weights
     let wSum = 0;
@@ -931,7 +931,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
         else { ws[idx] = Math.random() * 0.3; wSum += ws[idx]; }
       }
     } else {
-      // Safe selection: Fisher-Yates partial shuffle on index array
+      // Balanced random weights using -log(U) (Gamma(1) ≈ Exponential)
+      // This produces more balanced allocations than uniform random
       const idxArr = new Uint16Array(n);
       for (let i = 0; i < n; i++) idxArr[i] = i;
       for (let i = 0; i < numActive; i++) {
@@ -940,7 +941,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
       }
       for (let i = 0; i < numActive; i++) {
         const idx = idxArr[i];
-        ws[idx] = Math.random();
+        // -log(U) produces exponential draws; adding two makes it Gamma(2) = more balanced
+        ws[idx] = -Math.log(Math.random() + 1e-10) + -Math.log(Math.random() + 1e-10);
         wSum += ws[idx];
       }
     }
@@ -949,16 +951,33 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const deployPct = 0.9 + Math.random() * 0.1;
     const deployAmt = cash * deployPct;
 
-    // Normalize + apply Kelly/leverage caps
+    // Normalize + apply Kelly/leverage caps + hard 30% per-position cap
+    // Two-pass: cap positions, then re-normalize the uncapped to fill the freed weight
     let allocSum2 = 0;
+    const POS_CAP = 0.30; // no single position > 30% of deployment
     for (let i = 0; i < n; i++) {
       let pct = ws[i] / wSum;
-      if (pct > 0) pct = Math.min(pct, maxPct[i]);
+      if (pct > 0) pct = Math.min(pct, maxPct[i], POS_CAP);
       alloc[i] = pct;
       allocSum2 += pct;
     }
     if (allocSum2 <= 0) continue;
+    // Re-normalize so total = deployAmt, but re-check caps after
     for (let i = 0; i < n; i++) alloc[i] = (alloc[i] / allocSum2) * deployAmt;
+    // Post-normalize cap enforcement: if re-normalization pushed anyone over 30%, cap and redistribute
+    for (let pass = 0; pass < 3; pass++) {
+      let excess = 0, uncappedTotal = 0;
+      const maxDollars = deployAmt * POS_CAP;
+      for (let i = 0; i < n; i++) {
+        if (alloc[i] > maxDollars) { excess += alloc[i] - maxDollars; alloc[i] = maxDollars; }
+        else if (alloc[i] > 0) uncappedTotal += alloc[i];
+      }
+      if (excess <= 0) break;
+      // Distribute excess proportionally to uncapped positions
+      if (uncappedTotal > 0) for (let i = 0; i < n; i++) {
+        if (alloc[i] > 0 && alloc[i] < maxDollars) alloc[i] += excess * (alloc[i] / uncappedTotal);
+      }
+    }
 
     // Build item arrays (existing + new alloc)
     for (let i = 0; i < nEx; i++) { itemW[i] = exW[i]; itemVol[i] = exVol[i]; }
@@ -1019,8 +1038,9 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     else if (activeCount <= 7) divScore = 0.03;    // good diversification
     else divScore = 0.01;                          // 8+: slight bonus
 
-    // Single-position concentration penalty (even within 3+ portfolio)
-    const concPenalty = maxSingleWt > 0.35 ? -0.15 * (maxSingleWt - 0.35) / 0.65 : 0;
+    // Single-position concentration penalty — progressive above 25%
+    // Even within the 30% hard cap, softer concentration is preferred
+    const concPenalty = maxSingleWt > 0.25 ? -0.20 * (maxSingleWt - 0.25) / 0.75 : 0;
 
     let sc;
     const divAdj = divScore + concPenalty;
@@ -1059,14 +1079,28 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const deployed = filtered.reduce((s, r) => s + r.dollars, 0);
   const minDeploy = cash * 0.9;
   if (deployed < minDeploy && filtered.length > 0) {
+    // Distribute shortfall EQUALLY (not proportionally) to avoid making big positions bigger
     const shortfall = minDeploy - deployed;
-    const totalRaw = filtered.reduce((s, r) => s + r.dollars, 0) || 1;
+    const perPos = Math.round(shortfall / filtered.length);
     filtered.forEach(r => {
-      const extra = Math.round(shortfall * (r.dollars / totalRaw));
-      r.dollars += extra;
+      r.dollars += perPos;
       r.pct = +((r.dollars / cash) * 100).toFixed(1);
     });
   }
+  // Final max cap enforcement: no single position > 30% of total deployment
+  const finalTotal = filtered.reduce((s, r) => s + r.dollars, 0) || 1;
+  const maxPosDollars = finalTotal * 0.30;
+  for (let pass = 0; pass < 3; pass++) {
+    let excess = 0, nUnder = 0;
+    filtered.forEach(r => {
+      if (r.dollars > maxPosDollars) { excess += r.dollars - maxPosDollars; r.dollars = maxPosDollars; }
+      else nUnder++;
+    });
+    if (excess <= 0) break;
+    const perPos = nUnder > 0 ? Math.round(excess / nUnder) : 0;
+    if (perPos > 0) filtered.forEach(r => { if (r.dollars < maxPosDollars) r.dollars += perPos; });
+  }
+  filtered.forEach(r => { r.pct = +((r.dollars / cash) * 100).toFixed(1); });
   return filtered;
 }
 
