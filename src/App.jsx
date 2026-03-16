@@ -652,6 +652,101 @@ function getRegimeDurationFwd(model, state5, duration) {
   return { fwd: b.avgFwd || 0, confidence: b.confidence || 0, count: b.count || 0, std: b.stdFwd || 0 };
 }
 
+// ── Three-Stage Regime Context ──
+// Tracks the pattern: prevRegime → bridgeRegime → currentRegime
+// This distinguishes: bull→neutral(1m)→bull (brief pause) from bear→neutral(3m)→bull (genuine reversal)
+function computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) {
+  if (!historicalRegimes || mIdx < 3) return null;
+  const dateKey = sortedDates[mIdx];
+  const current = historicalRegimes[dateKey];
+  if (!current) return null;
+
+  const curRegime = current.regime; // bull/neutral/bear (3-state)
+
+  // Walk backward to find: current run → bridge regime → previous regime
+  let curDuration = 1;
+  let bridgeRegime = null, bridgeDuration = 0;
+  let prevRegime = null, prevDuration = 0;
+  let phase = "current"; // current → bridge → prev
+
+  for (let lb = 1; lb <= 60 && mIdx - lb >= 0; lb++) {
+    const prev = historicalRegimes[sortedDates[mIdx - lb]];
+    if (!prev) continue;
+    const r = prev.regime;
+
+    if (phase === "current") {
+      if (r === curRegime) { curDuration++; }
+      else { bridgeRegime = r; bridgeDuration = 1; phase = "bridge"; }
+    } else if (phase === "bridge") {
+      if (r === bridgeRegime) { bridgeDuration++; }
+      else { prevRegime = r; prevDuration = 1; phase = "prev"; }
+    } else if (phase === "prev") {
+      if (r === prevRegime) { prevDuration++; }
+      else break; // found all three stages
+    }
+  }
+
+  if (!bridgeRegime) return null; // no transition found (been in same regime entire history)
+
+  // Classify the pattern
+  let patternType, patternSignal;
+  const fullPattern = `${prevRegime || "?"}→${bridgeRegime}→${curRegime}`;
+
+  if (prevRegime === curRegime) {
+    // Same regime before and after the bridge
+    if (bridgeDuration <= 2) {
+      patternType = "continuation_brief"; // brief pause, resume — treat as extended run
+      patternSignal = 0; // no special signal, just extend duration
+    } else if (bridgeDuration <= 6) {
+      patternType = "continuation_extended"; // consolidation then re-entry
+      patternSignal = curRegime === "bull" ? 0.03 : curRegime === "bear" ? -0.03 : 0;
+    } else {
+      patternType = "consolidation_reset"; // long pause = fresh start, don't extend duration
+      patternSignal = 0;
+    }
+  } else if (prevRegime && prevRegime !== curRegime) {
+    // Different regime — genuine reversal
+    if (prevRegime === "bear" && curRegime === "bull") {
+      patternType = "reversal_bear_to_bull";
+      patternSignal = bridgeDuration <= 3 ? 0.10 : bridgeDuration <= 6 ? 0.06 : 0.03; // shorter bridge = sharper reversal = stronger signal
+    } else if (prevRegime === "bull" && curRegime === "bear") {
+      patternType = "reversal_bull_to_bear";
+      patternSignal = bridgeDuration <= 3 ? -0.10 : bridgeDuration <= 6 ? -0.06 : -0.03;
+    } else if (prevRegime === "bear" && curRegime === "neutral") {
+      patternType = "recovery_emerging";
+      patternSignal = 0.04; // cautious optimism
+    } else if (prevRegime === "bull" && curRegime === "neutral") {
+      patternType = "topping_emerging";
+      patternSignal = -0.04; // cautious pessimism
+    } else {
+      patternType = "transition";
+      patternSignal = 0;
+    }
+  } else {
+    patternType = "unknown";
+    patternSignal = 0;
+  }
+
+  // For continuation patterns with brief bridge, compute effective duration
+  // bull(12m) → neutral(1m) → bull(3m) should feel like bull for ~15 months, not 3
+  let effectiveDuration = curDuration;
+  if (patternType === "continuation_brief" && prevDuration > 0) {
+    effectiveDuration = curDuration + bridgeDuration + prevDuration; // full run including bridge
+  } else if (patternType === "continuation_extended") {
+    effectiveDuration = curDuration + Math.floor(prevDuration * 0.5); // partial credit for pre-bridge
+  }
+
+  return {
+    pattern: fullPattern,
+    patternType,
+    patternSignal, // additional tilt adjustment
+    prevRegime, prevDuration,
+    bridgeRegime, bridgeDuration,
+    currentRegime: curRegime, currentDuration: curDuration,
+    effectiveDuration, // used instead of raw duration for tilt scaling
+  };
+}
+
 // 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
 const REGIME_TILTS = {
   strong_risk_on: [-0.12, +0.15, 1.0],
@@ -669,7 +764,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const numIterations = iterations || 6000;
 
   // Parse regimeCtx
-  let state5 = "neutral", acceleration = 0, duration = 1, transition = null, durationModel = null;
+  let state5 = "neutral", acceleration = 0, duration = 1, transition = null, durationModel = null, threeStage = null;
   if (typeof regimeCtx === "string") {
     if (regimeCtx === "bull") state5 = "mild_risk_on";
     else if (regimeCtx === "bear") state5 = "mild_risk_off";
@@ -680,6 +775,12 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     duration = regimeCtx.duration || 1;
     transition = regimeCtx.transition || null;
     durationModel = regimeCtx.durationModel || null;
+    threeStage = regimeCtx.threeStage || null;
+  }
+
+  // If three-stage context available, use effectiveDuration instead of raw duration
+  if (threeStage?.effectiveDuration > 0) {
+    duration = threeStage.effectiveDuration;
   }
 
   const [baseDefBonus, baseAggBonus, baseKellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
@@ -714,7 +815,13 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   let entryBonus = 0;
-  if (transition) {
+  // Three-stage pattern signal overrides simple transition when available
+  if (threeStage && threeStage.patternSignal !== 0) {
+    entryBonus = threeStage.patternSignal;
+    // Scale by how fresh the current stage is (strongest in months 1-6)
+    if (threeStage.currentDuration > 8) entryBonus *= 0.5; // fade after 8 months
+  } else if (transition) {
+    // Fallback: simple two-stage transition (backward compat)
     const [from, to] = transition.includes("→") ? transition.split("→") : [null, null];
     if (from === "bear" && (to === "bull" || to === "neutral") && duration >= 2 && duration <= 8) entryBonus = 0.08;
     else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) entryBonus = 0.04;
@@ -1394,7 +1501,8 @@ export default function App() {
             const prev = historicalRegimes[sortedDates[mIdx - lb]];
             if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
           }
-          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition, durationModel: regimeDurModel };
+          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition, durationModel: regimeDurModel,
+            threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) };
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
         }
       }
@@ -1605,7 +1713,8 @@ export default function App() {
           grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
           lossOffset: Math.round(Math.min(grossGains, availableLosses)), lossCarryover: Math.round(newCarryover),
           returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition,
-          fwdSignal: regimeDurModel ? getRegimeDurationFwd(regimeDurModel, btState5 || "neutral", btDuration) : null });
+          fwdSignal: regimeDurModel ? getRegimeDurationFwd(regimeDurModel, btState5 || "neutral", btDuration) : null,
+          threeStage: btRegime?.threeStage ? { pattern: btRegime.threeStage.pattern, type: btRegime.threeStage.patternType, signal: btRegime.threeStage.patternSignal, bridgeDur: btRegime.threeStage.bridgeDuration, effDur: btRegime.threeStage.effectiveDuration } : null });
       }
 
       } catch (e) { console.error(`Backtest error at ${monthKey}:`, e); }
@@ -2275,6 +2384,45 @@ useEffect(() => {
         }
         regimeCtx.durationModel = model;
       }
+      // Build three-stage context from analytics
+      if (regimeAnalytics?.current) {
+        const ac = regimeAnalytics.current;
+        const curRegime = ac.regime || "neutral";
+        const prevRegime = ac.prevRegime || null;
+        const prevDuration = ac.prevDuration || 0;
+        const runLength = ac.runLength || 1;
+        // Determine bridge: if transition exists, parse it
+        let bridgeRegime = null, bridgeDuration = 0;
+        if (ac.transition) {
+          const [from] = ac.transition.includes("→") ? ac.transition.split("→") : [null];
+          if (from && from !== curRegime) {
+            bridgeRegime = from;
+            // Estimate bridge duration from analytics (not always available, default to short)
+            bridgeDuration = prevRegime && prevRegime !== from ? Math.min(prevDuration, 6) : 1;
+          }
+        }
+        if (prevRegime && bridgeRegime) {
+          // Classify pattern
+          let patternType, patternSignal;
+          if (prevRegime === curRegime) {
+            patternType = bridgeDuration <= 2 ? "continuation_brief" : bridgeDuration <= 6 ? "continuation_extended" : "consolidation_reset";
+            patternSignal = patternType === "continuation_extended" ? (curRegime === "bull" ? 0.03 : curRegime === "bear" ? -0.03 : 0) : 0;
+          } else {
+            if (prevRegime === "bear" && curRegime === "bull") { patternType = "reversal_bear_to_bull"; patternSignal = bridgeDuration <= 3 ? 0.10 : 0.06; }
+            else if (prevRegime === "bull" && curRegime === "bear") { patternType = "reversal_bull_to_bear"; patternSignal = bridgeDuration <= 3 ? -0.10 : -0.06; }
+            else { patternType = "transition"; patternSignal = 0; }
+          }
+          const effectiveDuration = patternType === "continuation_brief" ? runLength + bridgeDuration + prevDuration : runLength;
+          regimeCtx.threeStage = {
+            pattern: `${prevRegime}→${bridgeRegime}→${curRegime}`,
+            patternType, patternSignal,
+            prevRegime, prevDuration,
+            bridgeRegime, bridgeDuration,
+            currentRegime: curRegime, currentDuration: runLength,
+            effectiveDuration,
+          };
+        }
+      }
     }
     setLastRegimeCtx(regimeCtx); // store for UI display
     const candidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
@@ -2636,15 +2784,23 @@ useEffect(() => {
             {lastRegimeCtx && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, padding: "6px 8px", borderRadius: 5, background: "rgba(251,191,36,.03)", border: "1px solid rgba(251,191,36,.06)" }}>
               <span style={{ fontSize: 8, fontWeight: 600, color: cs.yellow }}>🌊 Regime Context:</span>
               <span style={{ fontSize: 8, fontFamily: mono2, color: cs.text }}>{lastRegimeCtx.state5?.replace(/_/g, " ")}</span>
-              <span style={{ fontSize: 8, fontFamily: mono2, color: cs.dim }}>Duration: <span style={{ color: cs.text }}>{lastRegimeCtx.duration}m</span></span>
+              <span style={{ fontSize: 8, fontFamily: mono2, color: cs.dim }}>Duration: <span style={{ color: cs.text }}>{lastRegimeCtx.threeStage?.effectiveDuration || lastRegimeCtx.duration}m{lastRegimeCtx.threeStage?.effectiveDuration && lastRegimeCtx.threeStage.effectiveDuration !== lastRegimeCtx.threeStage.currentDuration ? ` (eff.)` : ""}</span></span>
               {lastRegimeCtx.acceleration != null && <span style={{ fontSize: 8, fontFamily: mono2, color: lastRegimeCtx.acceleration > 0.1 ? cs.red : lastRegimeCtx.acceleration < -0.1 ? cs.green : cs.dim }}>Accel: {lastRegimeCtx.acceleration > 0 ? "+" : ""}{lastRegimeCtx.acceleration.toFixed(2)}</span>}
-              {lastRegimeCtx.transition && <span style={{ fontSize: 8, fontFamily: mono2, color: cs.blue }}>Transition: {lastRegimeCtx.transition}</span>}
-              {lastRegimeCtx.transition && (() => {
-                const [from, to] = lastRegimeCtx.transition.includes("→") ? lastRegimeCtx.transition.split("→") : [null, null];
-                if (from === "bear" && (to === "bull" || to === "neutral") && lastRegimeCtx.duration >= 2 && lastRegimeCtx.duration <= 8) return <Badge color={cs.green}>ENTRY SIGNAL +8%</Badge>;
-                if (from === "neutral" && to === "bull" && lastRegimeCtx.duration >= 1 && lastRegimeCtx.duration <= 4) return <Badge color={cs.green}>ENTRY SIGNAL +4%</Badge>;
-                return null;
-              })()}
+              {/* Three-stage pattern display */}
+              {lastRegimeCtx.threeStage ? <>
+                <span style={{ fontSize: 8, fontFamily: mono2, color: cs.blue }}>{lastRegimeCtx.threeStage.pattern} <span style={{ color: cs.dim }}>({lastRegimeCtx.threeStage.bridgeDuration}m bridge)</span></span>
+                <Badge color={lastRegimeCtx.threeStage.patternSignal > 0 ? cs.green : lastRegimeCtx.threeStage.patternSignal < 0 ? cs.red : cs.dim}>
+                  {lastRegimeCtx.threeStage.patternType?.replace(/_/g, " ").toUpperCase()} {lastRegimeCtx.threeStage.patternSignal !== 0 ? `${lastRegimeCtx.threeStage.patternSignal > 0 ? "+" : ""}${(lastRegimeCtx.threeStage.patternSignal * 100).toFixed(0)}%` : ""}
+                </Badge>
+              </> : lastRegimeCtx.transition && <>
+                <span style={{ fontSize: 8, fontFamily: mono2, color: cs.blue }}>Transition: {lastRegimeCtx.transition}</span>
+                {(() => {
+                  const [from, to] = lastRegimeCtx.transition.includes("→") ? lastRegimeCtx.transition.split("→") : [null, null];
+                  if (from === "bear" && (to === "bull" || to === "neutral") && lastRegimeCtx.duration >= 2 && lastRegimeCtx.duration <= 8) return <Badge color={cs.green}>ENTRY +8%</Badge>;
+                  if (from === "neutral" && to === "bull" && lastRegimeCtx.duration >= 1 && lastRegimeCtx.duration <= 4) return <Badge color={cs.green}>ENTRY +4%</Badge>;
+                  return null;
+                })()}
+              </>}
               {lastRegimeCtx.durationModel && (() => {
                 const fwd = getRegimeDurationFwd(lastRegimeCtx.durationModel, lastRegimeCtx.state5, lastRegimeCtx.duration);
                 if (fwd.confidence > 0.3) return <span style={{ fontSize: 8, fontFamily: mono2, color: fwd.fwd > 10 ? cs.green : fwd.fwd < 0 ? cs.red : cs.dim }}>Fwd 6m: <span style={{ fontWeight: 600 }}>{fwd.fwd > 0 ? "+" : ""}{fwd.fwd.toFixed(1)}%</span> <span style={{ fontSize: 7, color: cs.dim }}>({fwd.count} obs, {(fwd.confidence * 100).toFixed(0)}% conf)</span></span>;
@@ -3388,6 +3544,7 @@ useEffect(() => {
                                           {evt.regime && <span style={{ color: cs.yellow, fontWeight: 400 }}> · {evt.regime.replace(/_/g," ")}</span>}
                                           {evt.duration > 0 && <span style={{ color: cs.dim, fontWeight: 400 }}> · {evt.duration}m</span>}
                                           {evt.fwdSignal?.confidence > 0.3 && <span style={{ color: evt.fwdSignal.fwd > 10 ? cs.green : evt.fwdSignal.fwd < 0 ? cs.red : cs.dim, fontWeight: 400 }}> · Fwd 6m: {evt.fwdSignal.fwd > 0 ? "+" : ""}{evt.fwdSignal.fwd.toFixed(1)}%</span>}
+                                          {evt.threeStage && <span style={{ color: evt.threeStage.signal > 0 ? cs.green : evt.threeStage.signal < 0 ? cs.red : cs.dim, fontWeight: 400 }}> · {evt.threeStage.pattern} ({evt.threeStage.type?.replace(/_/g," ")})</span>}
                                         </div>
                                         <div style={{ fontSize: 8, fontFamily: mono2, color: cs.dim, marginBottom: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
                                           <span>Gains: <span style={{ color: cs.green }}>{fmt$(evt.grossGains || 0)}</span></span>
