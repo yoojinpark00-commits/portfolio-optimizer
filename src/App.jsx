@@ -1164,8 +1164,8 @@ export default function App() {
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
         }
       }
-      if (!(isFirstAllocation || regimeChanged || mMonth % 3 === 0)) { continue; }
-      if (!isFirstAllocation && monthsSinceRebal < 2) { continue; }
+      if (!(isFirstAllocation || regimeChanged || (mMonth === 0 || mMonth === 6))) { continue; } // Semi-annual (Jan, Jul) + regime changes
+      if (!isFirstAllocation && monthsSinceRebal < 4) { continue; } // Minimum 4 months between rebalances
       // Yield to UI every evaluation to prevent freeze
       setBtProgress(`Evaluating ${monthKey}...`);
       await new Promise(r => setTimeout(r, 0));
@@ -1325,9 +1325,33 @@ export default function App() {
       const estTC = netTax;
       const tcPct = optValue > 0 ? (estTC / optValue) * 100 : 0;
 
-      // Step 7: Decision
+      // Step 7: Decision — requires meaningful improvement to justify rebalance
       const retImp = propExpRet - currExpRet; const curAlpha = currExpRet - spyExpRet;
-      let hurdle; if (isFirstAllocation) hurdle = -999; else if (btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8) hurdle = tcPct * 1.0; else if (curAlpha > 3) hurdle = tcPct * 2.5; else if (curAlpha < -2) hurdle = tcPct * 1.2; else hurdle = tcPct * 1.5;
+
+      // Turnover cost: penalize allocations that change a lot of the portfolio
+      // Each % of portfolio traded incurs implicit transaction costs beyond taxes
+      let turnoverPct = 0;
+      for (const [ticker, newWt] of Object.entries(newAlloc)) {
+        turnoverPct += Math.abs(newWt - (prevAlloc[ticker] || 0));
+      }
+      for (const ticker of prevTickers) {
+        if (!newAlloc[ticker]) turnoverPct += prevAlloc[ticker] || 0;
+      }
+      turnoverPct *= 50; // convert to percentage points (0-100 scale)
+
+      // Holding period bonus: the longer we've held, the higher the bar
+      // This rewards patience and prevents churning
+      const holdingBonus = Math.min(monthsSinceRebal * 0.3, 3.0); // +0.3% per month held, cap at 3%
+
+      // Minimum hurdle floor: always require at least 3% expected return improvement
+      // (even if tax cost is zero due to loss carryover)
+      const taxHurdle = isFirstAllocation ? -999 :
+        btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8 ? tcPct * 1.0 :
+        curAlpha > 3 ? tcPct * 2.5 :
+        curAlpha < -2 ? tcPct * 1.2 :
+        tcPct * 1.5;
+      const minFloor = isFirstAllocation ? -999 : 3.0; // minimum 3% improvement always required
+      const hurdle = Math.max(taxHurdle, minFloor) + holdingBonus + turnoverPct * 0.02;
 
       if (isFirstAllocation || retImp > hurdle) {
         // ── Update cost basis, shares, and cost-per-share maps ──
@@ -1614,12 +1638,12 @@ export default function App() {
           optValue *= (1 + mRet);
         }
 
-        // Only evaluate quarterly
-        if (mMonth % 3 !== 0) continue;
+        // Semi-annual evaluation (Jan, Jul) — matches main backtest
+        if (!(mMonth === 0 || mMonth === 6)) continue;
         const prevTickers = Object.keys(optAlloc);
         const isFirst = prevTickers.length === 0;
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
-        if (!isFirst && mSinceRebal < 2) continue;
+        if (!isFirst && mSinceRebal < 4) continue;
 
         // Trailing stats with recency weighting + mean reversion (matches main backtest)
         const trailingStats = {};
@@ -1705,14 +1729,16 @@ export default function App() {
         const estTax = netGains * (taxRate / 100);
         const tcPct = optValue > 0 ? (estTax / optValue) * 100 : 0;
 
-        // Hurdle: same logic as main backtest
+        // Hurdle: matches main backtest — minimum floor + turnover + holding bonus
         const retImp = propExp - currExp;
         const curAlpha = currExp - spyExp;
-        let hurdle;
-        if (isFirst) hurdle = -999;
-        else if (curAlpha > 3) hurdle = tcPct * 2.5;
-        else if (curAlpha < -2) hurdle = tcPct * 1.2;
-        else hurdle = tcPct * 1.5;
+        let simTurnover = 0;
+        for (const [ticker, newWt] of Object.entries(newAlloc)) simTurnover += Math.abs(newWt - (optAlloc[ticker] || 0));
+        for (const ticker of prevTickers) if (!newAlloc[ticker]) simTurnover += optAlloc[ticker] || 0;
+        simTurnover *= 50;
+        const simHoldBonus = Math.min(mSinceRebal * 0.3, 3.0);
+        const simTaxHurdle = isFirst ? -999 : curAlpha > 3 ? tcPct * 2.5 : curAlpha < -2 ? tcPct * 1.2 : tcPct * 1.5;
+        const hurdle = isFirst ? -999 : Math.max(simTaxHurdle, 3.0) + simHoldBonus + simTurnover * 0.02;
 
         if (isFirst || retImp > hurdle) {
           // Update cost basis map
@@ -2926,7 +2952,7 @@ useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
               <span style={{ fontSize: 16 }}>📈</span><div style={{ fontSize: 13, fontWeight: 700 }}>Backtest: 2016–2025</div>
             </div>
-            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2016–2025). Monthly monitoring with tax-aware conditional rebalancing. VaR Sharpe mode applies drawdown penalty to Max Return objective. Return shrinkage, diversification constraints, and actual cost basis tracking applied.</div>
+            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2016-2025). Semi-annual evaluation (Jan/Jul) + regime-triggered reviews. Rebalance requires minimum 3% expected improvement + turnover cost + holding period bonus. Return shrinkage, diversification constraints, and actual cost basis tracking applied.</div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -3155,7 +3181,7 @@ useEffect(() => {
                                         ))}
                                       </div>
                                     ))}
-                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation" : "Portfolio held — rebalance tax cost exceeded expected improvement every month"}</div>}
+                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation" : "Portfolio held — improvement did not exceed hurdle (3% min + turnover cost + holding bonus)"}</div>}
                                 </div>
                               </div>
                               {/* Regime Context for this year */}
@@ -3197,7 +3223,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Monthly monitoring, tax-aware conditional rebalancing · Actual cost basis tracking · Return shrinkage (stocks 50%, ETFs 80%) · Min 3 positions, 25% stock cap · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
+                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Semi-annual + regime-triggered rebalancing · Min 3% improvement hurdle + turnover cost · Actual cost basis · Return shrinkage (stocks 50%, ETFs 80%) · Min 3 positions, 25% stock cap · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
               </div>
             </>;
           })()}
