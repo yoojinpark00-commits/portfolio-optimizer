@@ -581,6 +581,77 @@ function getAdjustedReturn(r, v, leverage) {
   return r + decay; // decay is negative, so this reduces the return
 }
 
+// ── Regime-Duration-Return Model ──
+// Computes average forward 6-month SPY returns for each (state5, duration_bucket) combination
+// This tells the optimizer: "Given we're in strong_risk_off for 6 months, what historically happens next?"
+// Duration buckets: [1-3, 4-6, 7-12, 13-24, 24+] months
+function buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym) {
+  if (!historicalRegimes || !sortedDates || !returnsByDateSym) return null;
+  const buckets = [[1,3],[4,6],[7,12],[13,24],[25,999]];
+  const bucketLabels = ["1-3m","4-6m","7-12m","13-24m","24m+"];
+  const model = {}; // state5 → [{fwdReturn, count, label}]
+
+  // For each month in history, compute: what regime state + duration are we in, and what does SPY do over the next 6 months?
+  for (let i = 12; i < sortedDates.length - 6; i++) { // need 12m lookback and 6m forward
+    const dateKey = sortedDates[i];
+    const regData = historicalRegimes[dateKey];
+    if (!regData || !regData.state5) continue;
+
+    const state5 = regData.state5;
+    const regime3 = regData.regime;
+
+    // Compute duration at this point (how long has this regime been running?)
+    let dur = 1;
+    for (let lb = 1; lb <= 36 && i - lb >= 0; lb++) {
+      const prevReg = historicalRegimes[sortedDates[i - lb]];
+      if (prevReg && prevReg.regime === regime3) dur++;
+      else break;
+    }
+
+    // Compute forward 6-month SPY return from this point
+    let fwd6m = 0, fwdCount = 0;
+    for (let f = 1; f <= 6 && i + f < sortedDates.length; f++) {
+      const fwdData = returnsByDateSym[sortedDates[i + f]];
+      if (fwdData?.SPY) { fwd6m += fwdData.SPY.ret; fwdCount++; }
+    }
+    if (fwdCount < 3) continue; // need at least 3 months of forward data
+    const fwd6mAnn = fwd6m * (12 / fwdCount) * 100; // annualize
+
+    // Find bucket
+    const bIdx = buckets.findIndex(b => dur >= b[0] && dur <= b[1]);
+    if (bIdx < 0) continue;
+
+    if (!model[state5]) model[state5] = buckets.map((_, j) => ({ fwdReturn: 0, fwdReturnSq: 0, count: 0, label: bucketLabels[j] }));
+    model[state5][bIdx].fwdReturn += fwd6mAnn;
+    model[state5][bIdx].fwdReturnSq += fwd6mAnn * fwd6mAnn;
+    model[state5][bIdx].count++;
+  }
+
+  // Compute averages and confidence
+  for (const state of Object.keys(model)) {
+    for (const b of model[state]) {
+      if (b.count > 0) {
+        b.avgFwd = b.fwdReturn / b.count;
+        b.stdFwd = Math.sqrt(Math.max(0, b.fwdReturnSq / b.count - b.avgFwd * b.avgFwd));
+        b.confidence = Math.min(1, b.count / 12); // full confidence at 12+ observations
+      } else {
+        b.avgFwd = 0; b.stdFwd = 0; b.confidence = 0;
+      }
+    }
+  }
+  return model;
+}
+
+// Lookup: given state5 + duration, get the historical forward return modifier
+function getRegimeDurationFwd(model, state5, duration) {
+  if (!model || !model[state5]) return { fwd: 0, confidence: 0 };
+  const buckets = [[1,3],[4,6],[7,12],[13,24],[25,999]];
+  const bIdx = buckets.findIndex(b => duration >= b[0] && duration <= b[1]);
+  if (bIdx < 0) return { fwd: 0, confidence: 0 };
+  const b = model[state5][bIdx];
+  return { fwd: b.avgFwd || 0, confidence: b.confidence || 0, count: b.count || 0, std: b.stdFwd || 0 };
+}
+
 // 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
 const REGIME_TILTS = {
   strong_risk_on: [-0.12, +0.15, 1.0],
@@ -590,7 +661,7 @@ const REGIME_TILTS = {
   strong_risk_off: [+0.15, -0.12, 0.5],
 };
 
-// regimeCtx: { state5, acceleration, duration, transition } or just a string for backward compat
+// regimeCtx: { state5, acceleration, duration, transition, durationModel } or just a string
 // prevBest: optional previous allocation weights to warm-start from
 function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest) {
   if (!candidates.length || cash <= 0) return [];
@@ -598,7 +669,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const numIterations = iterations || 6000;
 
   // Parse regimeCtx
-  let state5 = "neutral", acceleration = 0, duration = 1, transition = null;
+  let state5 = "neutral", acceleration = 0, duration = 1, transition = null, durationModel = null;
   if (typeof regimeCtx === "string") {
     if (regimeCtx === "bull") state5 = "mild_risk_on";
     else if (regimeCtx === "bear") state5 = "mild_risk_off";
@@ -608,6 +679,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     acceleration = regimeCtx.acceleration || 0;
     duration = regimeCtx.duration || 1;
     transition = regimeCtx.transition || null;
+    durationModel = regimeCtx.durationModel || null;
   }
 
   const [baseDefBonus, baseAggBonus, baseKellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
@@ -616,6 +688,31 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   if (state5.includes("risk_off")) accelMod = acceleration < -0.15 ? 0.6 : acceleration > 0.15 ? 1.3 : 1.0;
   else if (state5.includes("risk_on")) accelMod = acceleration > 0.15 ? 0.6 : acceleration < -0.15 ? 1.2 : 1.0;
 
+  // ── Regime-Duration Forward Return Signal ──
+  // Historical data tells us: at this state + duration, what does the market typically do next?
+  // Use this to amplify or dampen regime tilts beyond the simple duration scaling
+  let durationFwdMod = 1.0;
+  if (durationModel) {
+    const fwdData = getRegimeDurationFwd(durationModel, state5, duration);
+    if (fwdData.confidence > 0.3) {
+      // Strong forward signal: if historical forward returns are very positive during risk-off (bottom signal)
+      // or very negative during risk-on (top signal), amplify the tilt
+      if (state5.includes("risk_off") && fwdData.fwd > 10) {
+        // Extended risk-off with positive forward returns = near bottom, START scaling back defensive
+        durationFwdMod = Math.max(0.3, 1.0 - (fwdData.fwd - 10) * 0.03 * fwdData.confidence);
+      } else if (state5.includes("risk_off") && fwdData.fwd < -5) {
+        // Risk-off with negative forward returns = more downside ahead, INCREASE defensive
+        durationFwdMod = Math.min(2.0, 1.0 + Math.abs(fwdData.fwd + 5) * 0.04 * fwdData.confidence);
+      } else if (state5.includes("risk_on") && fwdData.fwd > 15) {
+        // Risk-on with strong forward returns = momentum continues, INCREASE aggressive
+        durationFwdMod = Math.min(1.8, 1.0 + (fwdData.fwd - 15) * 0.02 * fwdData.confidence);
+      } else if (state5.includes("risk_on") && fwdData.fwd < 5) {
+        // Extended risk-on with weak forward returns = overextended, DAMPEN aggressive
+        durationFwdMod = Math.max(0.4, 1.0 - (5 - fwdData.fwd) * 0.04 * fwdData.confidence);
+      }
+    }
+  }
+
   let entryBonus = 0;
   if (transition) {
     const [from, to] = transition.includes("→") ? transition.split("→") : [null, null];
@@ -623,8 +720,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) entryBonus = 0.04;
   }
 
-  const defBonus = baseDefBonus * durationScale * accelMod;
-  const aggBonus = baseAggBonus * durationScale * accelMod + (state5.includes("risk_on") ? entryBonus : 0);
+  const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod;
+  const aggBonus = baseAggBonus * durationScale * accelMod * durationFwdMod + (state5.includes("risk_on") ? entryBonus : 0);
   const kellyMult = baseKellyMult;
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
@@ -1250,6 +1347,14 @@ export default function App() {
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
     const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
 
+    // ── Build regime-duration-return model from historical data ──
+    // This tells the optimizer: "Given state X at duration Y, forward returns are historically Z"
+    let regimeDurModel = null;
+    if (historicalRegimes) {
+      setBtProgress("Building regime-duration-return model...");
+      regimeDurModel = buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym);
+    }
+
     for (let mi = 0; mi < simDates.length; mi++) {
       const monthKey = simDates[mi];
       const mIdx = dateToIdx[monthKey];
@@ -1289,7 +1394,7 @@ export default function App() {
             const prev = historicalRegimes[sortedDates[mIdx - lb]];
             if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
           }
-          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition };
+          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition, durationModel: regimeDurModel };
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
         }
       }
@@ -1499,7 +1604,8 @@ export default function App() {
           taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
           grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
           lossOffset: Math.round(Math.min(grossGains, availableLosses)), lossCarryover: Math.round(newCarryover),
-          returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition });
+          returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition,
+          fwdSignal: regimeDurModel ? getRegimeDurationFwd(regimeDurModel, btState5 || "neutral", btDuration) : null });
       }
 
       } catch (e) { console.error(`Backtest error at ${monthKey}:`, e); }
@@ -1639,6 +1745,7 @@ export default function App() {
       startCash,
       etfsUsed: available.length,
       regimeSource: historicalRegimes ? "FRED (12-series, 5-state, daily EMA)" : "Proxy (SPY momentum/vol)",
+      regimeDurationModel: regimeDurModel ? true : false,
       tax: {
         totalPaid: Math.round(totalTaxPaid),
         totalSaved: Math.round(totalTaxSaved),
@@ -2146,6 +2253,28 @@ useEffect(() => {
         regimeCtx.duration = regimeAnalytics.current.runLength || 1;
         regimeCtx.transition = regimeAnalytics.current.transition || null;
       }
+      // Build duration model from analytics durationReturns data
+      if (regimeAnalytics?.durationReturns) {
+        const dr = regimeAnalytics.durationReturns;
+        const buckets = [[1,3],[4,6],[7,12],[13,24],[25,999]];
+        const bucketLabels = ["1-3m","4-6m","7-12m","13-24m","24m+"];
+        const model = {};
+        // Map 3-state (bull/neutral/bear) to 5-state
+        const stateMap = { bull: ["strong_risk_on","mild_risk_on"], neutral: ["neutral"], bear: ["mild_risk_off","strong_risk_off"] };
+        for (const [regime3, states5] of Object.entries(stateMap)) {
+          if (!dr[regime3]) continue;
+          for (const s5 of states5) {
+            model[s5] = bucketLabels.map((label, i) => {
+              const bData = dr[regime3][label];
+              if (!bData) return { avgFwd: 0, stdFwd: 0, confidence: 0, count: 0, label };
+              // Use 6-month forward return as primary signal
+              const fwd = bData.avg?.["6m"] || bData.avg?.["3m"] || 0;
+              return { avgFwd: fwd, stdFwd: 0, confidence: Math.min(1, (bData.n || 0) / 12), count: bData.n || 0, label };
+            });
+          }
+        }
+        regimeCtx.durationModel = model;
+      }
     }
     setLastRegimeCtx(regimeCtx); // store for UI display
     const candidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
@@ -2514,6 +2643,11 @@ useEffect(() => {
                 const [from, to] = lastRegimeCtx.transition.includes("→") ? lastRegimeCtx.transition.split("→") : [null, null];
                 if (from === "bear" && (to === "bull" || to === "neutral") && lastRegimeCtx.duration >= 2 && lastRegimeCtx.duration <= 8) return <Badge color={cs.green}>ENTRY SIGNAL +8%</Badge>;
                 if (from === "neutral" && to === "bull" && lastRegimeCtx.duration >= 1 && lastRegimeCtx.duration <= 4) return <Badge color={cs.green}>ENTRY SIGNAL +4%</Badge>;
+                return null;
+              })()}
+              {lastRegimeCtx.durationModel && (() => {
+                const fwd = getRegimeDurationFwd(lastRegimeCtx.durationModel, lastRegimeCtx.state5, lastRegimeCtx.duration);
+                if (fwd.confidence > 0.3) return <span style={{ fontSize: 8, fontFamily: mono2, color: fwd.fwd > 10 ? cs.green : fwd.fwd < 0 ? cs.red : cs.dim }}>Fwd 6m: <span style={{ fontWeight: 600 }}>{fwd.fwd > 0 ? "+" : ""}{fwd.fwd.toFixed(1)}%</span> <span style={{ fontSize: 7, color: cs.dim }}>({fwd.count} obs, {(fwd.confidence * 100).toFixed(0)}% conf)</span></span>;
                 return null;
               })()}
               {!regimeAnalytics?.current && <span style={{ fontSize: 7, color: cs.yellow }}>(analytics loading — duration/entry signals pending)</span>}
@@ -3250,7 +3384,11 @@ useEffect(() => {
                                   {a.rebalanceEvents?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                                     {a.rebalanceEvents.map((evt, ei) => (
                                       <div key={ei} style={{ padding: "6px 8px", borderRadius: 5, background: "rgba(110,231,183,.02)", border: "1px solid rgba(110,231,183,.06)" }}>
-                                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginBottom: 3 }}>📅 {evt.date} · {evt.taxType} rate ({evt.taxRate?.toFixed(1)}%)</div>
+                                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginBottom: 3 }}>📅 {evt.date} · {evt.taxType} rate ({evt.taxRate?.toFixed(1)}%)
+                                          {evt.regime && <span style={{ color: cs.yellow, fontWeight: 400 }}> · {evt.regime.replace(/_/g," ")}</span>}
+                                          {evt.duration > 0 && <span style={{ color: cs.dim, fontWeight: 400 }}> · {evt.duration}m</span>}
+                                          {evt.fwdSignal?.confidence > 0.3 && <span style={{ color: evt.fwdSignal.fwd > 10 ? cs.green : evt.fwdSignal.fwd < 0 ? cs.red : cs.dim, fontWeight: 400 }}> · Fwd 6m: {evt.fwdSignal.fwd > 0 ? "+" : ""}{evt.fwdSignal.fwd.toFixed(1)}%</span>}
+                                        </div>
                                         <div style={{ fontSize: 8, fontFamily: mono2, color: cs.dim, marginBottom: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
                                           <span>Gains: <span style={{ color: cs.green }}>{fmt$(evt.grossGains || 0)}</span></span>
                                           <span>Losses: <span style={{ color: cs.red }}>{fmt$(evt.grossLosses || 0)}</span></span>
@@ -3316,7 +3454,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Quarterly + regime-triggered rebalancing · 1.5% min hurdle + turnover cost · SPY-overlap penalty · Actual cost basis · Return shrinkage (stocks 80%, ETFs 120%) · Min 3 positions, 25% stock cap · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
+                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Quarterly + regime-triggered · 1.5% hurdle · SPY-overlap penalty · Return shrinkage · {ot.replace("_"," ")} · {srLabel}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})${btResult.regimeDurationModel ? " + Duration Model" : ""}` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
               </div>
             </>;
           })()}
