@@ -2916,6 +2916,210 @@ useEffect(() => {
                   </div>;
                 })()}
               </div>}
+
+              {/* ── Rebalance Advisor ── */}
+              {optResult && optResult.length > 0 && metrics && <div style={{ ...cardS, background: "rgba(110,231,183,.02)", borderColor: "rgba(110,231,183,.12)" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.green, marginBottom: 2 }}>🎯 Rebalance Advisor</div>
+                <div style={{ fontSize: 8, color: cs.dim, marginBottom: 10 }}>Uses the same decision logic as the backtest: compares proposed vs current portfolio, computes tax cost, turnover, and hurdle rate.</div>
+
+                {(() => {
+                  // ── Compute proposed portfolio metrics ──
+                  const newPos = [...allPos, ...optResult.map(r => ({ dollars: r.dollars, r: r.r, v: r.v, d: r.d || 0, cat: r.cat, er: r.er, type: "etf" }))];
+                  const proposed = calcMetrics(newPos, 0, totalVal);
+                  if (!proposed) return <div style={{ fontSize: 9, color: cs.muted }}>Unable to compute proposed metrics.</div>;
+
+                  const currReturn = metrics.er;
+                  const propReturn = proposed.er;
+                  const retImprovement = propReturn - currReturn;
+
+                  // ── Compute tax cost from selling current positions ──
+                  let grossGains = 0, grossLosses = 0, stGains = 0, ltGains = 0, stLosses = 0, ltLosses = 0;
+                  let positionsToSell = 0, positionsToKeep = 0, positionsToAdd = 0;
+
+                  // Which current positions would be sold?
+                  const optTickers = new Set(optResult.map(r => r.ticker));
+                  [...etfV, ...stockV].forEach(p => {
+                    const shares = p.shares || 0, cb = p.costBasis || 0, mv = p.mktValue || 0;
+                    if (shares <= 0 || cb <= 0) return;
+                    if (!optTickers.has(p.ticker) && !p.locked) {
+                      positionsToSell++;
+                      const gl = mv - (shares * cb);
+                      const hp = holdingPeriod(p.purchaseDate);
+                      if (gl >= 0) { grossGains += gl; if (hp?.isLT) ltGains += gl; else stGains += gl; }
+                      else { grossLosses += Math.abs(gl); if (hp?.isLT) ltLosses += Math.abs(gl); else stLosses += gl; }
+                    } else {
+                      positionsToKeep++;
+                    }
+                  });
+                  positionsToAdd = optResult.filter(r => !etfV.find(e => e.ticker === r.ticker) && !stockV.find(s => s.ticker === r.ticker)).length;
+
+                  const netGains = Math.max(0, grossGains - grossLosses);
+                  const estTax = (Math.min(stGains, netGains) * taxRates.st / 100) + (Math.max(0, netGains - stGains) * taxRates.lt / 100);
+                  const taxSavingsFromLosses = grossLosses > 0 ? Math.min(grossGains, grossLosses) * ((taxRates.st + taxRates.lt) / 2 / 100) : 0;
+                  const tcPct = totalVal > 0 ? (estTax / totalVal) * 100 : 0;
+
+                  // ── Compute turnover ──
+                  let turnoverDollars = 0;
+                  optResult.forEach(r => { turnoverDollars += r.dollars; });
+                  const turnoverPct = totalVal > 0 ? (turnoverDollars / totalVal) * 100 : 0;
+
+                  // ── Apply hurdle logic (matches backtest exactly) ──
+                  // SPY expected return proxy
+                  const spyExpRet = 10; // long-term SPY average ~10%
+                  const curAlpha = currReturn - spyExpRet;
+
+                  const taxHurdle = curAlpha > 3 ? tcPct * 2.0 : curAlpha < -2 ? tcPct * 0.8 : tcPct * 1.2;
+                  const minFloor = 1.5;
+                  const turnoverCost = turnoverPct * 0.01;
+                  const totalHurdle = Math.max(taxHurdle, minFloor) + turnoverCost;
+
+                  const shouldRebalance = retImprovement > totalHurdle;
+
+                  // ── Regime context reasoning ──
+                  const regimeReason = lastRegimeCtx ? (() => {
+                    const s5 = lastRegimeCtx.state5;
+                    const ts = lastRegimeCtx.threeStage;
+                    const dur = lastRegimeCtx.threeStage?.effectiveDuration || lastRegimeCtx.duration || 0;
+                    const reasons = [];
+                    if (s5?.includes("risk_off")) reasons.push(`Market is in ${s5.replace(/_/g," ")} — defensive positioning recommended`);
+                    else if (s5?.includes("risk_on")) reasons.push(`Market is in ${s5.replace(/_/g," ")} — growth positioning favored`);
+                    if (dur > 12) reasons.push(`Regime has persisted ${dur} months — tilt amplified (${Math.min(2.0, 0.5 + (dur/12)*1.5).toFixed(1)}× scaling)`);
+                    if (ts?.patternType === "reversal_bear_to_bull") reasons.push(`Three-stage pattern: ${ts.pattern} — strong entry signal (+${(ts.patternSignal*100).toFixed(0)}%)`);
+                    else if (ts?.patternType === "reversal_bull_to_bear") reasons.push(`Three-stage pattern: ${ts.pattern} — strong defensive signal (${(ts.patternSignal*100).toFixed(0)}%)`);
+                    else if (ts?.patternType === "continuation_brief") reasons.push(`Three-stage: ${ts.pattern} — brief pause in ongoing trend, effective duration ${ts.effectiveDuration}m`);
+                    if (lastRegimeCtx.durationModel) {
+                      const fwd = getRegimeDurationFwd(lastRegimeCtx.durationModel, s5 || "neutral", dur);
+                      if (fwd.confidence > 0.3) reasons.push(`Historical forward 6m return at this state+duration: ${fwd.fwd > 0 ? "+" : ""}${fwd.fwd.toFixed(1)}% (${fwd.count} observations)`);
+                    }
+                    return reasons;
+                  })() : [];
+
+                  // ── SPY overlap analysis ──
+                  const spyCorrPos = [...allPos, ...optResult.map(r => ({ cat: r.cat, dollars: r.dollars }))];
+                  const spyCorrTotal = spyCorrPos.reduce((s, p) => s + (p.dollars || 0), 0) || 1;
+                  let wtdSpyCorrVal = 0;
+                  spyCorrPos.forEach(p => { wtdSpyCorrVal += ((p.dollars || 0) / spyCorrTotal) * gc(p.cat || "Stock", "US Large Cap"); });
+
+                  return <div>
+                    {/* Verdict Banner */}
+                    <div style={{ padding: "12px 14px", borderRadius: 8, background: shouldRebalance ? "rgba(110,231,183,.06)" : "rgba(251,191,36,.06)", border: `1px solid ${shouldRebalance ? "rgba(110,231,183,.2)" : "rgba(251,191,36,.2)"}`, marginBottom: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 20 }}>{shouldRebalance ? "✅" : "⏸️"}</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: shouldRebalance ? cs.green : cs.yellow }}>{shouldRebalance ? "REBALANCE RECOMMENDED" : "HOLD CURRENT PORTFOLIO"}</div>
+                          <div style={{ fontSize: 9, color: cs.dim }}>Expected improvement {retImprovement > 0 ? "+" : ""}{retImprovement.toFixed(2)}% vs hurdle of {totalHurdle.toFixed(2)}%</div>
+                        </div>
+                      </div>
+                      {!shouldRebalance && <div style={{ fontSize: 9, color: cs.muted, lineHeight: 1.6 }}>
+                        The optimizer found a portfolio with {retImprovement > 0 ? "marginally higher" : "lower"} expected return, but the improvement ({retImprovement.toFixed(2)}%) does not justify the rebalancing costs ({totalHurdle.toFixed(2)}% hurdle). Hold current positions.
+                      </div>}
+                      {shouldRebalance && <div style={{ fontSize: 9, color: cs.muted, lineHeight: 1.6 }}>
+                        The proposed portfolio offers {retImprovement.toFixed(2)}% higher expected return, clearing the {totalHurdle.toFixed(2)}% hurdle. The improvement is sufficient to justify the tax and transaction costs.
+                      </div>}
+                    </div>
+
+                    {/* Comparison Grid */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Current vs Proposed Portfolio</div>
+                    <div style={{ overflowX: "auto", marginBottom: 12 }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                        <thead><tr>
+                          <th style={{ padding: "5px 8px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Metric</th>
+                          <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Current</th>
+                          <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Proposed</th>
+                          <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Change</th>
+                        </tr></thead>
+                        <tbody>
+                          {[
+                            { l: "Expected Return", c: metrics.er, p: proposed.er, f: v => `${v.toFixed(2)}%`, better: "higher" },
+                            { l: "Volatility", c: metrics.vol, p: proposed.vol, f: v => `${v.toFixed(2)}%`, better: "lower" },
+                            { l: srLabel, c: getSR(metrics), p: getSR(proposed), f: v => v.toFixed(3), better: "higher" },
+                            { l: "VaR (95%)", c: metrics.var95, p: proposed.var95, f: v => `${v.toFixed(2)}%`, better: "lower" },
+                            { l: "Max Drawdown", c: metrics.md, p: proposed.md, f: v => `-${v.toFixed(1)}%`, better: "lower" },
+                            { l: "Net Return", c: metrics.nr, p: proposed.nr, f: v => `${v.toFixed(2)}%`, better: "higher" },
+                          ].map(row => {
+                            const delta = row.p - row.c;
+                            const improved = row.better === "higher" ? delta > 0 : delta < 0;
+                            return <tr key={row.l} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                              <td style={{ padding: "5px 8px", color: cs.dim }}>{row.l}</td>
+                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text }}>{row.f(row.c)}</td>
+                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text, fontWeight: 600 }}>{row.f(row.p)}</td>
+                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, fontWeight: 600, color: improved ? cs.green : delta === 0 ? cs.dim : cs.red }}>{delta > 0 ? "+" : ""}{row.better === "lower" && row.l !== "Max Drawdown" ? (-delta).toFixed(2) : delta.toFixed(2)}{row.l.includes("%") || row.l.includes("VaR") || row.l.includes("Return") || row.l.includes("Vol") || row.l.includes("Draw") ? "%" : ""}</td>
+                            </tr>;
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Hurdle Breakdown */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Hurdle Rate Breakdown</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 6, marginBottom: 12 }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                        <div style={{ fontSize: 7, color: cs.dim }}>Tax Cost</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{tcPct.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>Est. {fmt$(estTax)} tax on {fmt$(grossGains)} gains</div>
+                      </div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                        <div style={{ fontSize: 7, color: cs.dim }}>Tax Hurdle</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.yellow }}>{taxHurdle.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>{curAlpha > 3 ? "2.0× (outperforming SPY)" : curAlpha < -2 ? "0.8× (underperforming)" : "1.2× (default)"}</div>
+                      </div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                        <div style={{ fontSize: 7, color: cs.dim }}>Min Floor</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.blue }}>{minFloor.toFixed(1)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>Always required</div>
+                      </div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                        <div style={{ fontSize: 7, color: cs.dim }}>Turnover Cost</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.purple }}>{turnoverCost.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>{turnoverPct.toFixed(0)}% portfolio change</div>
+                      </div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(251,191,36,.04)", border: `1px solid ${shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(251,191,36,.15)"}` }}>
+                        <div style={{ fontSize: 7, color: cs.dim }}>Total Hurdle</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: shouldRebalance ? cs.green : cs.yellow }}>{totalHurdle.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>max(tax,floor) + turnover</div>
+                      </div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(248,113,113,.04)", border: `1px solid ${shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(248,113,113,.15)"}` }}>
+                        <div style={{ fontSize: 7, color: cs.dim }}>Return Improvement</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: retImprovement > totalHurdle ? cs.green : cs.red }}>{retImprovement > 0 ? "+" : ""}{retImprovement.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>{shouldRebalance ? "Exceeds hurdle ✓" : "Below hurdle ✗"}</div>
+                      </div>
+                    </div>
+
+                    {/* Trade Summary */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Proposed Changes</div>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 9 }}>
+                      <span style={{ fontFamily: mono2 }}>Keep: <span style={{ color: cs.blue, fontWeight: 600 }}>{positionsToKeep}</span></span>
+                      <span style={{ fontFamily: mono2 }}>Sell: <span style={{ color: cs.red, fontWeight: 600 }}>{positionsToSell}</span></span>
+                      <span style={{ fontFamily: mono2 }}>Buy: <span style={{ color: cs.green, fontWeight: 600 }}>{positionsToAdd}</span></span>
+                      <span style={{ fontFamily: mono2 }}>SPY Corr: <span style={{ color: wtdSpyCorrVal > 0.85 ? cs.red : wtdSpyCorrVal < 0.5 ? cs.green : cs.dim, fontWeight: 600 }}>{(wtdSpyCorrVal * 100).toFixed(0)}%</span></span>
+                      {grossLosses > 0 && <span style={{ fontFamily: mono2 }}>TLH Opportunity: <span style={{ color: cs.purple, fontWeight: 600 }}>{fmt$(grossLosses)} in losses</span></span>}
+                    </div>
+
+                    {/* Regime Reasoning */}
+                    {regimeReason.length > 0 && <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 4 }}>Regime Context</div>
+                      {regimeReason.map((r, i) => <div key={i} style={{ fontSize: 9, color: cs.dim, lineHeight: 1.6, paddingLeft: 10, borderLeft: "2px solid rgba(251,191,36,.15)", marginBottom: 3 }}>{r}</div>)}
+                    </div>}
+
+                    {/* Decision Logic Summary */}
+                    <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.muted, lineHeight: 1.7 }}>
+                      <span style={{ fontWeight: 600, color: cs.text }}>Decision Logic: </span>
+                      Return improvement ({retImprovement > 0 ? "+" : ""}{retImprovement.toFixed(2)}%) {shouldRebalance ? ">" : "≤"} hurdle ({totalHurdle.toFixed(2)}%)
+                      {" = "}max(tax hurdle {taxHurdle.toFixed(2)}%, floor {minFloor}%) + turnover {turnoverCost.toFixed(2)}%.
+                      {curAlpha > 3 ? " Portfolio outperforming SPY — higher bar (2.0× tax cost) to avoid disrupting a winning strategy." :
+                       curAlpha < -2 ? " Portfolio underperforming SPY — lower bar (0.8× tax cost) to encourage improvement." :
+                       " Portfolio near SPY — standard hurdle (1.2× tax cost)."}
+                      {wtdSpyCorrVal > 0.85 && " Warning: proposed portfolio has >85% SPY correlation — consider whether active management adds value over a simple index fund."}
+                      {grossLosses > 0 && ` Tax-loss harvesting opportunity: ${fmt$(grossLosses)} in unrealized losses could offset ${fmt$(Math.min(grossGains, grossLosses))} in gains.`}
+                    </div>
+                  </div>;
+                })()}
+              </div>}
+              {!optResult && metrics && <div style={{ ...cardS, background: "rgba(110,231,183,.02)", borderColor: "rgba(110,231,183,.08)" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: cs.green, marginBottom: 4 }}>🎯 Rebalance Advisor</div>
+                <div style={{ fontSize: 9, color: cs.muted }}>Run the optimizer in the Deploy Cash tab first, then return here for a detailed rebalance recommendation with hurdle analysis, tax impact, and regime context.</div>
+              </div>}
+
               {totalVal > 0 && <div style={cardS}>
                 <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 10 }}>Growth Projection ({fmt$(totalVal)})</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
@@ -3135,6 +3339,150 @@ useEffect(() => {
                         <div style={{ fontSize: 8, color: cs.muted, marginTop: 3 }}>Avg SPY forward returns when {a.current.transition} lasted ~{a.current.runLength}m historically</div>
                       </div>}
                     </div>}
+
+                    {/* ── Three-Stage Context Analysis ── */}
+                    {a.episodes?.length > 2 && (() => {
+                      // Build three-stage patterns from episode history
+                      const eps = a.episodes;
+                      const patterns = [];
+                      for (let i = 2; i < eps.length; i++) {
+                        const prev = eps[i - 2], bridge = eps[i - 1], cur = eps[i];
+                        let patternType, signal;
+                        if (prev.regime === cur.regime) {
+                          patternType = bridge.months <= 2 ? "continuation_brief" : bridge.months <= 6 ? "continuation_extended" : "consolidation_reset";
+                          signal = patternType === "continuation_extended" ? (cur.regime === "bull" ? 0.03 : cur.regime === "bear" ? -0.03 : 0) : 0;
+                        } else if (prev.regime === "bear" && cur.regime === "bull") {
+                          patternType = "reversal_bear_to_bull";
+                          signal = bridge.months <= 3 ? 0.10 : bridge.months <= 6 ? 0.06 : 0.03;
+                        } else if (prev.regime === "bull" && cur.regime === "bear") {
+                          patternType = "reversal_bull_to_bear";
+                          signal = bridge.months <= 3 ? -0.10 : bridge.months <= 6 ? -0.06 : -0.03;
+                        } else if (prev.regime === "bear" && cur.regime === "neutral") {
+                          patternType = "recovery_emerging"; signal = 0.04;
+                        } else if (prev.regime === "bull" && cur.regime === "neutral") {
+                          patternType = "topping_emerging"; signal = -0.04;
+                        } else {
+                          patternType = "transition"; signal = 0;
+                        }
+                        const effDur = patternType === "continuation_brief" ? cur.months + bridge.months + prev.months : patternType === "continuation_extended" ? cur.months + Math.floor(prev.months * 0.5) : cur.months;
+                        patterns.push({
+                          pattern: `${prev.regime}→${bridge.regime}→${cur.regime}`,
+                          patternType, signal,
+                          prevDur: prev.months, bridgeDur: bridge.months, curDur: cur.months,
+                          effDur, start: prev.start, end: cur.end,
+                        });
+                      }
+
+                      // Group by pattern type and count
+                      const typeCounts = {};
+                      patterns.forEach(p => {
+                        if (!typeCounts[p.patternType]) typeCounts[p.patternType] = { count: 0, patterns: [], totalSignal: 0, bridges: [] };
+                        typeCounts[p.patternType].count++;
+                        typeCounts[p.patternType].patterns.push(p);
+                        typeCounts[p.patternType].totalSignal += p.signal;
+                        typeCounts[p.patternType].bridges.push(p.bridgeDur);
+                      });
+
+                      // Current three-stage context
+                      const curThreeStage = a.current && eps.length >= 2 ? (() => {
+                        const curEp = eps[eps.length - 1];
+                        const bridgeEp = eps[eps.length - 2];
+                        const prevEp = eps.length >= 3 ? eps[eps.length - 3] : null;
+                        if (!prevEp) return null;
+                        const p = patterns[patterns.length - 1];
+                        return p;
+                      })() : null;
+
+                      const typeLabels = {
+                        continuation_brief: { label: "Continuation (Brief Pause)", emoji: "⏩", desc: "Same regime before & after a 1-2 month bridge. Effective duration extends through the bridge." },
+                        continuation_extended: { label: "Continuation (Extended Pause)", emoji: "⏸️", desc: "Same regime resumes after 3-6 month bridge. Partial duration credit for pre-bridge run." },
+                        consolidation_reset: { label: "Consolidation Reset", emoji: "🔄", desc: "Long bridge (7m+) breaks the trend. New regime treated as fresh start." },
+                        reversal_bear_to_bull: { label: "Reversal: Bear → Bull", emoji: "🚀", desc: "Bear market ends, bull begins. Strongest entry signal. Shorter bridge = sharper V-recovery." },
+                        reversal_bull_to_bear: { label: "Reversal: Bull → Bear", emoji: "📉", desc: "Bull market ends, bear begins. Strongest defensive signal." },
+                        recovery_emerging: { label: "Recovery Emerging", emoji: "🌱", desc: "Bear ends, settling into neutral. Cautious optimism — bull may follow." },
+                        topping_emerging: { label: "Topping Emerging", emoji: "⚠️", desc: "Bull ends, settling into neutral. Cautious pessimism — bear may follow." },
+                        transition: { label: "Other Transition", emoji: "↔️", desc: "Regime change without strong directional signal." },
+                      };
+
+                      return <div style={{ padding: "12px 14px", borderRadius: 8, background: "rgba(167,139,250,.04)", border: "1px solid rgba(167,139,250,.12)", marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: cs.purple, marginBottom: 2 }}>🔮 Three-Stage Regime Context</div>
+                        <div style={{ fontSize: 8, color: cs.dim, marginBottom: 10 }}>Analyzes the pattern: prevRegime → bridgeRegime → currentRegime. Bridge duration determines whether a pause is a continuation or a genuine reversal.</div>
+
+                        {/* Current Three-Stage */}
+                        {curThreeStage && <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.02)", marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: cs.text, marginBottom: 4 }}>Current Pattern</div>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 14 }}>{typeLabels[curThreeStage.patternType]?.emoji || "↔️"}</span>
+                            <span style={{ fontSize: 10, fontFamily: mono2, fontWeight: 600, color: cs.text }}>{curThreeStage.pattern}</span>
+                            <Badge color={curThreeStage.signal > 0 ? cs.green : curThreeStage.signal < 0 ? cs.red : cs.dim}>
+                              {typeLabels[curThreeStage.patternType]?.label || curThreeStage.patternType} {curThreeStage.signal !== 0 ? `${curThreeStage.signal > 0 ? "+" : ""}${(curThreeStage.signal * 100).toFixed(0)}%` : ""}
+                            </Badge>
+                          </div>
+                          <div style={{ fontSize: 9, color: cs.dim, marginTop: 4, lineHeight: 1.6 }}>
+                            Previous <span style={{ color: regColors[curThreeStage.pattern.split("→")[0]], fontWeight: 600 }}>{curThreeStage.pattern.split("→")[0]}</span> lasted <span style={{ fontFamily: mono2, color: cs.text }}>{curThreeStage.prevDur}m</span>
+                            {" → "} Bridge <span style={{ color: regColors[curThreeStage.pattern.split("→")[1]], fontWeight: 600 }}>{curThreeStage.pattern.split("→")[1]}</span> lasted <span style={{ fontFamily: mono2, color: cs.text }}>{curThreeStage.bridgeDur}m</span>
+                            {" → "} Current <span style={{ color: regColors[curThreeStage.pattern.split("→")[2]], fontWeight: 600 }}>{curThreeStage.pattern.split("→")[2]}</span> for <span style={{ fontFamily: mono2, color: cs.text }}>{curThreeStage.curDur}m</span>
+                            {curThreeStage.effDur !== curThreeStage.curDur && <span> · <span style={{ color: cs.purple, fontWeight: 600 }}>Effective duration: {curThreeStage.effDur}m</span></span>}
+                          </div>
+                          <div style={{ fontSize: 8, color: cs.muted, marginTop: 3 }}>{typeLabels[curThreeStage.patternType]?.desc}</div>
+                        </div>}
+
+                        {/* Pattern History Table */}
+                        <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Historical Three-Stage Patterns ({patterns.length} total)</div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                            <thead><tr>
+                              <th style={{ padding: "5px 6px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Pattern Type</th>
+                              <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Count</th>
+                              <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Avg Bridge</th>
+                              <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Signal</th>
+                              <th style={{ padding: "5px 6px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Effect on Optimizer</th>
+                            </tr></thead>
+                            <tbody>
+                              {Object.entries(typeCounts).sort((a, b) => b[1].count - a[1].count).map(([type, data]) => {
+                                const info = typeLabels[type] || { label: type, emoji: "↔️" };
+                                const avgBridge = data.bridges.length > 0 ? (data.bridges.reduce((s, v) => s + v, 0) / data.bridges.length).toFixed(1) : "—";
+                                const avgSignal = data.count > 0 ? data.totalSignal / data.count : 0;
+                                return <tr key={type} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                                  <td style={{ padding: "5px 6px" }}><span style={{ marginRight: 3 }}>{info.emoji}</span> <span style={{ fontWeight: 600, color: cs.text }}>{info.label}</span></td>
+                                  <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2 }}>{data.count}</td>
+                                  <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2 }}>{avgBridge}m</td>
+                                  <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, fontWeight: 600, color: avgSignal > 0 ? cs.green : avgSignal < 0 ? cs.red : cs.dim }}>{avgSignal !== 0 ? `${avgSignal > 0 ? "+" : ""}${(avgSignal * 100).toFixed(1)}%` : "—"}</td>
+                                  <td style={{ padding: "5px 6px", fontSize: 8, color: cs.muted }}>{type.includes("continuation_brief") ? "Extends effective duration through bridge" : type.includes("continuation_extended") ? "50% duration credit for pre-bridge run" : type.includes("reversal") ? "Strong entry/exit signal, fresh duration" : type.includes("recovery") ? "+4% aggressive bonus" : type.includes("topping") ? "-4% defensive signal" : "No special adjustment"}</td>
+                                </tr>;
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Recent Episodes with Three-Stage Context */}
+                        <div style={{ fontSize: 10, fontWeight: 600, marginTop: 10, marginBottom: 6 }}>Recent Three-Stage Episodes</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                          {patterns.slice(-8).reverse().map((p, i) => {
+                            const info = typeLabels[p.patternType] || { emoji: "↔️", label: p.patternType };
+                            const parts = p.pattern.split("→");
+                            return <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderRadius: 5, background: i === 0 ? "rgba(167,139,250,.04)" : "rgba(255,255,255,.01)", border: `1px solid ${i === 0 ? "rgba(167,139,250,.12)" : "rgba(255,255,255,.03)"}`, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 11 }}>{info.emoji}</span>
+                              <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: regColors[parts[0]], fontWeight: 600 }}>{parts[0]}</span>
+                                <span style={{ fontSize: 8, color: cs.dim }}>({p.prevDur}m)</span>
+                                <span style={{ fontSize: 8, color: cs.dim }}>→</span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: regColors[parts[1]], fontWeight: 600 }}>{parts[1]}</span>
+                                <span style={{ fontSize: 8, color: cs.dim }}>({p.bridgeDur}m)</span>
+                                <span style={{ fontSize: 8, color: cs.dim }}>→</span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: regColors[parts[2]], fontWeight: 600 }}>{parts[2]}</span>
+                                <span style={{ fontSize: 8, color: cs.dim }}>({p.curDur}m)</span>
+                              </div>
+                              <Badge color={p.signal > 0 ? cs.green : p.signal < 0 ? cs.red : cs.dim}>
+                                {info.label.split("(")[0].trim()} {p.signal !== 0 ? `${p.signal > 0 ? "+" : ""}${(p.signal * 100).toFixed(0)}%` : ""}
+                              </Badge>
+                              {p.effDur !== p.curDur && <span style={{ fontSize: 8, fontFamily: mono2, color: cs.purple }}>eff: {p.effDur}m</span>}
+                              <span style={{ fontSize: 7, fontFamily: mono2, color: cs.muted }}>{p.start}–{p.end}</span>
+                            </div>;
+                          })}
+                        </div>
+                      </div>;
+                    })()}
 
                     {/* Regime Timeline */}
                     <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Regime Timeline ({a.episodes?.length} episodes, {a.totalMonths} months)</div>
