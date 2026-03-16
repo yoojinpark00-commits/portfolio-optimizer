@@ -1281,6 +1281,8 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [addType, setAddType] = useState("stock"); // "stock" or "etf"
   const [accepted, setAccepted] = useState(new Set()); // tickers accepted from optimizer
+  const [rebalAnalysis, setRebalAnalysis] = useState(null); // full rebalance analysis result
+  const [rebalRunning, setRebalRunning] = useState(false);
 
   // ── Backtest state ──
   const [btRunning, setBtRunning] = useState(false);
@@ -2918,132 +2920,187 @@ useEffect(() => {
               </div>}
 
               {/* ── Rebalance Advisor ── */}
-              {optResult && optResult.length > 0 && metrics && <div style={{ ...cardS, background: "rgba(110,231,183,.02)", borderColor: "rgba(110,231,183,.12)" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.green, marginBottom: 2 }}>🎯 Rebalance Advisor</div>
-                <div style={{ fontSize: 8, color: cs.dim, marginBottom: 10 }}>Uses the same decision logic as the backtest: compares proposed vs current portfolio, computes tax cost, turnover, and hurdle rate.</div>
-
-                {(() => {
-                  // ── Compute proposed portfolio metrics ──
-                  const newPos = [...allPos, ...optResult.map(r => ({ dollars: r.dollars, r: r.r, v: r.v, d: r.d || 0, cat: r.cat, er: r.er, type: "etf" }))];
-                  const proposed = calcMetrics(newPos, 0, totalVal);
-                  if (!proposed) return <div style={{ fontSize: 9, color: cs.muted }}>Unable to compute proposed metrics.</div>;
-
-                  const currReturn = metrics.er;
-                  const propReturn = proposed.er;
-                  const retImprovement = propReturn - currReturn;
-
-                  // ── Compute tax cost from selling current positions ──
-                  let grossGains = 0, grossLosses = 0, stGains = 0, ltGains = 0, stLosses = 0, ltLosses = 0;
-                  let positionsToSell = 0, positionsToKeep = 0, positionsToAdd = 0;
-
-                  // Which current positions would be sold?
-                  const optTickers = new Set(optResult.map(r => r.ticker));
-                  [...etfV, ...stockV].forEach(p => {
-                    const shares = p.shares || 0, cb = p.costBasis || 0, mv = p.mktValue || 0;
-                    if (shares <= 0 || cb <= 0) return;
-                    if (!optTickers.has(p.ticker) && !p.locked) {
-                      positionsToSell++;
-                      const gl = mv - (shares * cb);
-                      const hp = holdingPeriod(p.purchaseDate);
-                      if (gl >= 0) { grossGains += gl; if (hp?.isLT) ltGains += gl; else stGains += gl; }
-                      else { grossLosses += Math.abs(gl); if (hp?.isLT) ltLosses += Math.abs(gl); else stLosses += gl; }
-                    } else {
-                      positionsToKeep++;
+              {metrics && totalVal > 0 && <div style={{ ...cardS, background: "rgba(110,231,183,.02)", borderColor: "rgba(110,231,183,.12)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>🎯 Rebalance Advisor</div>
+                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Runs the optimizer on your full portfolio value to find the optimal allocation from scratch, then compares it against your current holdings using the same hurdle logic as the backtest.</div>
+                  </div>
+                  <button onClick={() => {
+                    setRebalRunning(true);
+                    // Build regime context (same as Deploy Cash optimizer)
+                    let regimeCtx = null;
+                    if (useRegime && regimeData?.regime) {
+                      const r = regimeData.regime;
+                      regimeCtx = { state5: r.state5 || r.regime || "neutral", acceleration: r.acceleration || 0, duration: 1, transition: null };
+                      if (regimeAnalytics?.current) { regimeCtx.duration = regimeAnalytics.current.runLength || 1; regimeCtx.transition = regimeAnalytics.current.transition || null; }
+                      if (regimeAnalytics?.durationReturns) {
+                        const dr = regimeAnalytics.durationReturns;
+                        const bucketLabels = ["1-3m","4-6m","7-12m","13-24m","24m+"];
+                        const model = {};
+                        const stateMap = { bull: ["strong_risk_on","mild_risk_on"], neutral: ["neutral"], bear: ["mild_risk_off","strong_risk_off"] };
+                        for (const [regime3, states5] of Object.entries(stateMap)) { if (!dr[regime3]) continue; for (const s5 of states5) { model[s5] = bucketLabels.map((label, i) => { const bData = dr[regime3][label]; if (!bData) return { avgFwd: 0, stdFwd: 0, confidence: 0, count: 0, label }; const fwd = bData.avg?.["6m"] || bData.avg?.["3m"] || 0; return { avgFwd: fwd, stdFwd: 0, confidence: Math.min(1, (bData.n || 0) / 12), count: bData.n || 0, label }; }); } }
+                        regimeCtx.durationModel = model;
+                      }
+                      if (regimeAnalytics?.current) {
+                        const ac = regimeAnalytics.current;
+                        const curRegime = ac.regime || "neutral"; const prevRegime = ac.prevRegime || null; const prevDuration = ac.prevDuration || 0;
+                        let bridgeRegime = null, bridgeDuration = 0;
+                        if (ac.transition) { const [from] = ac.transition.includes("→") ? ac.transition.split("→") : [null]; if (from && from !== curRegime) { bridgeRegime = from; bridgeDuration = prevRegime && prevRegime !== from ? Math.min(prevDuration, 6) : 1; } }
+                        if (prevRegime && bridgeRegime) {
+                          let patternType, patternSignal;
+                          if (prevRegime === curRegime) { patternType = bridgeDuration <= 2 ? "continuation_brief" : bridgeDuration <= 6 ? "continuation_extended" : "consolidation_reset"; patternSignal = patternType === "continuation_extended" ? (curRegime === "bull" ? 0.03 : curRegime === "bear" ? -0.03 : 0) : 0; }
+                          else { if (prevRegime === "bear" && curRegime === "bull") { patternType = "reversal_bear_to_bull"; patternSignal = bridgeDuration <= 3 ? 0.10 : 0.06; } else if (prevRegime === "bull" && curRegime === "bear") { patternType = "reversal_bull_to_bear"; patternSignal = bridgeDuration <= 3 ? -0.10 : -0.06; } else { patternType = "transition"; patternSignal = 0; } }
+                          const runLength = ac.runLength || 1;
+                          regimeCtx.threeStage = { pattern: `${prevRegime}→${bridgeRegime}→${curRegime}`, patternType, patternSignal, prevRegime, prevDuration, bridgeRegime, bridgeDuration, currentRegime: curRegime, currentDuration: runLength, effectiveDuration: patternType === "continuation_brief" ? runLength + bridgeDuration + prevDuration : runLength };
+                        }
+                      }
                     }
-                  });
-                  positionsToAdd = optResult.filter(r => !etfV.find(e => e.ticker === r.ticker) && !stockV.find(s => s.ticker === r.ticker)).length;
+                    // Run optimizer on FULL portfolio value (not just cash)
+                    const candidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
+                    const optimalAlloc = optimizeCash([], totalVal, 0, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
 
-                  const netGains = Math.max(0, grossGains - grossLosses);
-                  const estTax = (Math.min(stGains, netGains) * taxRates.st / 100) + (Math.max(0, netGains - stGains) * taxRates.lt / 100);
-                  const taxSavingsFromLosses = grossLosses > 0 ? Math.min(grossGains, grossLosses) * ((taxRates.st + taxRates.lt) / 2 / 100) : 0;
-                  const tcPct = totalVal > 0 ? (estTax / totalVal) * 100 : 0;
+                    // Build current holdings map: ticker → { dollars, cat, r, v, costBasis, shares, purchaseDate, type }
+                    const currentMap = {};
+                    [...etfV, ...stockV].forEach(p => {
+                      if (p.mktValue > 0) currentMap[p.ticker] = { dollars: p.mktValue, cat: p.data?.c || p.sector || "Stock", r: p.data?.r || 12, v: p.data?.v || 25, costBasis: p.costBasis || 0, shares: p.shares || 0, purchaseDate: p.purchaseDate, type: p.type || "etf", locked: p.locked || false };
+                    });
 
-                  // ── Compute turnover ──
-                  let turnoverDollars = 0;
-                  optResult.forEach(r => { turnoverDollars += r.dollars; });
-                  const turnoverPct = totalVal > 0 ? (turnoverDollars / totalVal) * 100 : 0;
+                    // Build optimal holdings map
+                    const optimalMap = {};
+                    optimalAlloc.forEach(r => { optimalMap[r.ticker] = { dollars: r.dollars, pct: r.pct, cat: r.cat, r: r.r, v: r.v, name: r.name, isStock: r.isStock }; });
 
-                  // ── Apply hurdle logic (matches backtest exactly) ──
-                  // SPY expected return proxy
-                  const spyExpRet = 10; // long-term SPY average ~10%
-                  const curAlpha = currReturn - spyExpRet;
+                    // Compute changes
+                    const allTickers = [...new Set([...Object.keys(currentMap), ...Object.keys(optimalMap)])];
+                    const sells = [], buys = [], keeps = [], reduces = [], increases = [];
+                    let grossGains = 0, grossLosses = 0, stGains = 0, ltGains = 0;
+                    let turnoverDollars = 0;
 
-                  const taxHurdle = curAlpha > 3 ? tcPct * 2.0 : curAlpha < -2 ? tcPct * 0.8 : tcPct * 1.2;
-                  const minFloor = 1.5;
-                  const turnoverCost = turnoverPct * 0.01;
-                  const totalHurdle = Math.max(taxHurdle, minFloor) + turnoverCost;
+                    allTickers.forEach(ticker => {
+                      const cur = currentMap[ticker];
+                      const opt = optimalMap[ticker];
 
-                  const shouldRebalance = retImprovement > totalHurdle;
+                      if (cur && !opt) {
+                        // SELL: in current but not in optimal
+                        if (cur.locked) { keeps.push({ ticker, action: "KEEP (locked)", curDollars: cur.dollars, optDollars: 0, reason: "Locked stock — not traded" }); return; }
+                        const gl = cur.dollars - (cur.shares * cur.costBasis);
+                        const hp = holdingPeriod(cur.purchaseDate);
+                        if (gl > 0) { grossGains += gl; if (hp?.isLT) ltGains += gl; else stGains += gl; }
+                        else grossLosses += Math.abs(gl);
+                        turnoverDollars += cur.dollars;
+                        sells.push({ ticker, curDollars: cur.dollars, gl, isLT: hp?.isLT, cat: cur.cat, reason: `Not in optimal portfolio — ${gl >= 0 ? "gain" : "loss"} of ${fmt$(Math.abs(gl))} (${hp?.isLT ? "LT" : "ST"})` });
+                      } else if (!cur && opt) {
+                        // BUY: in optimal but not in current
+                        turnoverDollars += opt.dollars;
+                        buys.push({ ticker, optDollars: opt.dollars, pct: opt.pct, name: opt.name, cat: opt.cat, reason: `New position — ${opt.pct.toFixed(1)}% of portfolio` });
+                      } else if (cur && opt) {
+                        // BOTH: check if weight changed significantly
+                        const curPct = (cur.dollars / totalVal) * 100;
+                        const optPct = opt.pct;
+                        const diff = optPct - curPct;
+                        if (Math.abs(diff) < 2) {
+                          keeps.push({ ticker, curDollars: cur.dollars, optDollars: opt.dollars, curPct, optPct, reason: `Weight ~stable (${curPct.toFixed(1)}% → ${optPct.toFixed(1)}%)` });
+                        } else if (diff > 0) {
+                          turnoverDollars += (opt.dollars - cur.dollars);
+                          increases.push({ ticker, curDollars: cur.dollars, optDollars: opt.dollars, curPct, optPct, reason: `Increase ${curPct.toFixed(1)}% → ${optPct.toFixed(1)}% (+${diff.toFixed(1)}%)` });
+                        } else {
+                          const sellAmt = cur.dollars - opt.dollars;
+                          const proportion = sellAmt / cur.dollars;
+                          const gl = proportion * (cur.dollars - (cur.shares * cur.costBasis));
+                          const hp = holdingPeriod(cur.purchaseDate);
+                          if (gl > 0) { grossGains += gl; if (hp?.isLT) ltGains += gl; else stGains += gl; }
+                          else grossLosses += Math.abs(gl);
+                          turnoverDollars += sellAmt;
+                          reduces.push({ ticker, curDollars: cur.dollars, optDollars: opt.dollars, curPct, optPct, gl, reason: `Reduce ${curPct.toFixed(1)}% → ${optPct.toFixed(1)}% (${diff.toFixed(1)}%)` });
+                        }
+                      }
+                    });
 
-                  // ── Regime context reasoning ──
-                  const regimeReason = lastRegimeCtx ? (() => {
-                    const s5 = lastRegimeCtx.state5;
-                    const ts = lastRegimeCtx.threeStage;
-                    const dur = lastRegimeCtx.threeStage?.effectiveDuration || lastRegimeCtx.duration || 0;
-                    const reasons = [];
-                    if (s5?.includes("risk_off")) reasons.push(`Market is in ${s5.replace(/_/g," ")} — defensive positioning recommended`);
-                    else if (s5?.includes("risk_on")) reasons.push(`Market is in ${s5.replace(/_/g," ")} — growth positioning favored`);
-                    if (dur > 12) reasons.push(`Regime has persisted ${dur} months — tilt amplified (${Math.min(2.0, 0.5 + (dur/12)*1.5).toFixed(1)}× scaling)`);
-                    if (ts?.patternType === "reversal_bear_to_bull") reasons.push(`Three-stage pattern: ${ts.pattern} — strong entry signal (+${(ts.patternSignal*100).toFixed(0)}%)`);
-                    else if (ts?.patternType === "reversal_bull_to_bear") reasons.push(`Three-stage pattern: ${ts.pattern} — strong defensive signal (${(ts.patternSignal*100).toFixed(0)}%)`);
-                    else if (ts?.patternType === "continuation_brief") reasons.push(`Three-stage: ${ts.pattern} — brief pause in ongoing trend, effective duration ${ts.effectiveDuration}m`);
-                    if (lastRegimeCtx.durationModel) {
-                      const fwd = getRegimeDurationFwd(lastRegimeCtx.durationModel, s5 || "neutral", dur);
-                      if (fwd.confidence > 0.3) reasons.push(`Historical forward 6m return at this state+duration: ${fwd.fwd > 0 ? "+" : ""}${fwd.fwd.toFixed(1)}% (${fwd.count} observations)`);
-                    }
-                    return reasons;
-                  })() : [];
+                    // Compute tax
+                    const netGains = Math.max(0, grossGains - grossLosses);
+                    const estTax = (Math.min(stGains, netGains) * taxRates.st / 100) + (Math.max(0, netGains - stGains) * taxRates.lt / 100);
+                    const tcPct = totalVal > 0 ? (estTax / totalVal) * 100 : 0;
+                    const turnoverPct = totalVal > 0 ? (turnoverDollars / totalVal) * 100 : 0;
 
-                  // ── SPY overlap analysis ──
-                  const spyCorrPos = [...allPos, ...optResult.map(r => ({ cat: r.cat, dollars: r.dollars }))];
-                  const spyCorrTotal = spyCorrPos.reduce((s, p) => s + (p.dollars || 0), 0) || 1;
-                  let wtdSpyCorrVal = 0;
-                  spyCorrPos.forEach(p => { wtdSpyCorrVal += ((p.dollars || 0) / spyCorrTotal) * gc(p.cat || "Stock", "US Large Cap"); });
+                    // Hurdle
+                    const currReturn = metrics.er;
+                    const propPos = optimalAlloc.map(r => ({ dollars: r.dollars, r: r.r, v: r.v, d: r.d || 0, cat: r.cat, er: r.er, type: "etf" }));
+                    const propMetrics = calcMetrics(propPos, cashBalance, totalVal);
+                    const propReturn = propMetrics?.er || currReturn;
+                    const retImprovement = propReturn - currReturn;
+                    const spyExpRet = 10;
+                    const curAlpha = currReturn - spyExpRet;
+                    const taxHurdle = curAlpha > 3 ? tcPct * 2.0 : curAlpha < -2 ? tcPct * 0.8 : tcPct * 1.2;
+                    const minFloor = 1.5;
+                    const turnoverCost = turnoverPct * 0.01;
+                    const totalHurdle = Math.max(taxHurdle, minFloor) + turnoverCost;
+                    const shouldRebalance = retImprovement > totalHurdle;
 
-                  return <div>
-                    {/* Verdict Banner */}
-                    <div style={{ padding: "12px 14px", borderRadius: 8, background: shouldRebalance ? "rgba(110,231,183,.06)" : "rgba(251,191,36,.06)", border: `1px solid ${shouldRebalance ? "rgba(110,231,183,.2)" : "rgba(251,191,36,.2)"}`, marginBottom: 12 }}>
+                    // SPY correlation of proposed
+                    let wtdSpyCorrVal = 0;
+                    optimalAlloc.forEach(r => { wtdSpyCorrVal += (r.dollars / (totalVal || 1)) * gc(r.cat || "Stock", "US Large Cap"); });
+
+                    setRebalAnalysis({ shouldRebalance, retImprovement, totalHurdle, tcPct, taxHurdle, minFloor, turnoverCost, turnoverPct,
+                      currReturn, propReturn, curAlpha, estTax, grossGains, grossLosses, netGains, stGains, ltGains,
+                      sells, buys, keeps, reduces, increases,
+                      currMetrics: metrics, propMetrics, wtdSpyCorrVal, regimeCtx,
+                      optimalAlloc });
+                    setRebalRunning(false);
+                  }} disabled={rebalRunning} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 9, fontWeight: 600, cursor: rebalRunning ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    {rebalRunning ? "Analyzing..." : rebalAnalysis ? "⟳ Re-analyze" : "Run Rebalance Analysis"}
+                  </button>
+                </div>
+
+                {!rebalAnalysis && !rebalRunning && <div style={{ textAlign: "center", padding: 14, color: cs.muted, fontSize: 9, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7, marginTop: 8 }}>
+                  Runs the optimizer on your entire portfolio value ({fmt$(totalVal)}) to find the optimal allocation from scratch. Then compares the optimal portfolio against your current holdings to determine if rebalancing is justified after accounting for tax costs and transaction friction.
+                </div>}
+
+                {rebalAnalysis && (() => {
+                  const ra = rebalAnalysis;
+                  return <div style={{ marginTop: 8 }}>
+                    {/* Verdict */}
+                    <div style={{ padding: "12px 14px", borderRadius: 8, background: ra.shouldRebalance ? "rgba(110,231,183,.06)" : "rgba(251,191,36,.06)", border: `1px solid ${ra.shouldRebalance ? "rgba(110,231,183,.2)" : "rgba(251,191,36,.2)"}`, marginBottom: 12 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                        <span style={{ fontSize: 20 }}>{shouldRebalance ? "✅" : "⏸️"}</span>
+                        <span style={{ fontSize: 20 }}>{ra.shouldRebalance ? "✅" : "⏸️"}</span>
                         <div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: shouldRebalance ? cs.green : cs.yellow }}>{shouldRebalance ? "REBALANCE RECOMMENDED" : "HOLD CURRENT PORTFOLIO"}</div>
-                          <div style={{ fontSize: 9, color: cs.dim }}>Expected improvement {retImprovement > 0 ? "+" : ""}{retImprovement.toFixed(2)}% vs hurdle of {totalHurdle.toFixed(2)}%</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: ra.shouldRebalance ? cs.green : cs.yellow }}>{ra.shouldRebalance ? "REBALANCE RECOMMENDED" : "HOLD CURRENT PORTFOLIO"}</div>
+                          <div style={{ fontSize: 9, color: cs.dim }}>Expected improvement {ra.retImprovement > 0 ? "+" : ""}{ra.retImprovement.toFixed(2)}% vs hurdle of {ra.totalHurdle.toFixed(2)}%</div>
                         </div>
                       </div>
-                      {!shouldRebalance && <div style={{ fontSize: 9, color: cs.muted, lineHeight: 1.6 }}>
-                        The optimizer found a portfolio with {retImprovement > 0 ? "marginally higher" : "lower"} expected return, but the improvement ({retImprovement.toFixed(2)}%) does not justify the rebalancing costs ({totalHurdle.toFixed(2)}% hurdle). Hold current positions.
-                      </div>}
-                      {shouldRebalance && <div style={{ fontSize: 9, color: cs.muted, lineHeight: 1.6 }}>
-                        The proposed portfolio offers {retImprovement.toFixed(2)}% higher expected return, clearing the {totalHurdle.toFixed(2)}% hurdle. The improvement is sufficient to justify the tax and transaction costs.
-                      </div>}
+                      <div style={{ fontSize: 9, color: cs.muted, lineHeight: 1.6 }}>
+                        {ra.shouldRebalance
+                          ? `The optimal portfolio offers ${ra.retImprovement.toFixed(2)}% higher expected return, clearing the ${ra.totalHurdle.toFixed(2)}% hurdle. The improvement justifies the estimated ${fmt$(ra.estTax)} in tax costs and ${ra.turnoverPct.toFixed(0)}% portfolio turnover.`
+                          : ra.retImprovement > 0
+                            ? `The optimal portfolio has marginally higher return (+${ra.retImprovement.toFixed(2)}%), but the improvement doesn't justify the ${ra.totalHurdle.toFixed(2)}% hurdle (${fmt$(ra.estTax)} tax + ${ra.turnoverPct.toFixed(0)}% turnover). Hold current positions.`
+                            : `The current portfolio already matches or exceeds the optimizer's suggestion. No benefit to rebalancing.`}
+                      </div>
                     </div>
 
-                    {/* Comparison Grid */}
-                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Current vs Proposed Portfolio</div>
+                    {/* Comparison Table */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Current vs Optimal Portfolio</div>
                     <div style={{ overflowX: "auto", marginBottom: 12 }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
                         <thead><tr>
                           <th style={{ padding: "5px 8px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Metric</th>
                           <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Current</th>
-                          <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Proposed</th>
-                          <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Change</th>
+                          <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Optimal</th>
+                          <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Delta</th>
                         </tr></thead>
                         <tbody>
-                          {[
-                            { l: "Expected Return", c: metrics.er, p: proposed.er, f: v => `${v.toFixed(2)}%`, better: "higher" },
-                            { l: "Volatility", c: metrics.vol, p: proposed.vol, f: v => `${v.toFixed(2)}%`, better: "lower" },
-                            { l: srLabel, c: getSR(metrics), p: getSR(proposed), f: v => v.toFixed(3), better: "higher" },
-                            { l: "VaR (95%)", c: metrics.var95, p: proposed.var95, f: v => `${v.toFixed(2)}%`, better: "lower" },
-                            { l: "Max Drawdown", c: metrics.md, p: proposed.md, f: v => `-${v.toFixed(1)}%`, better: "lower" },
-                            { l: "Net Return", c: metrics.nr, p: proposed.nr, f: v => `${v.toFixed(2)}%`, better: "higher" },
+                          {ra.propMetrics && [
+                            { l: "Expected Return", c: ra.currMetrics.er, p: ra.propMetrics.er, u: "%", hi: true },
+                            { l: "Volatility", c: ra.currMetrics.vol, p: ra.propMetrics.vol, u: "%", hi: false },
+                            { l: srLabel, c: getSR(ra.currMetrics), p: getSR(ra.propMetrics), u: "", hi: true },
+                            { l: "VaR (95%)", c: ra.currMetrics.var95, p: ra.propMetrics.var95, u: "%", hi: false },
+                            { l: "Max Drawdown Est.", c: ra.currMetrics.md, p: ra.propMetrics.md, u: "%", hi: false },
                           ].map(row => {
-                            const delta = row.p - row.c;
-                            const improved = row.better === "higher" ? delta > 0 : delta < 0;
+                            const d = row.p - row.c;
+                            const good = row.hi ? d > 0.01 : d < -0.01;
                             return <tr key={row.l} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
                               <td style={{ padding: "5px 8px", color: cs.dim }}>{row.l}</td>
-                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text }}>{row.f(row.c)}</td>
-                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text, fontWeight: 600 }}>{row.f(row.p)}</td>
-                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, fontWeight: 600, color: improved ? cs.green : delta === 0 ? cs.dim : cs.red }}>{delta > 0 ? "+" : ""}{row.better === "lower" && row.l !== "Max Drawdown" ? (-delta).toFixed(2) : delta.toFixed(2)}{row.l.includes("%") || row.l.includes("VaR") || row.l.includes("Return") || row.l.includes("Vol") || row.l.includes("Draw") ? "%" : ""}</td>
+                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text }}>{row.c.toFixed(2)}{row.u}</td>
+                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text, fontWeight: 600 }}>{row.p.toFixed(2)}{row.u}</td>
+                              <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, fontWeight: 600, color: good ? cs.green : Math.abs(d) < 0.01 ? cs.dim : cs.red }}>{d > 0 ? "+" : ""}{d.toFixed(2)}{row.u}</td>
                             </tr>;
                           })}
                         </tbody>
@@ -3052,72 +3109,128 @@ useEffect(() => {
 
                     {/* Hurdle Breakdown */}
                     <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Hurdle Rate Breakdown</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 6, marginBottom: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 6, marginBottom: 12 }}>
                       <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Tax Cost</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{tcPct.toFixed(2)}%</div>
-                        <div style={{ fontSize: 7, color: cs.muted }}>Est. {fmt$(estTax)} tax on {fmt$(grossGains)} gains</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{ra.tcPct.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>{fmt$(ra.estTax)} on {fmt$(ra.grossGains)} gains</div>
                       </div>
                       <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Tax Hurdle</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.yellow }}>{taxHurdle.toFixed(2)}%</div>
-                        <div style={{ fontSize: 7, color: cs.muted }}>{curAlpha > 3 ? "2.0× (outperforming SPY)" : curAlpha < -2 ? "0.8× (underperforming)" : "1.2× (default)"}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.yellow }}>{ra.taxHurdle.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>{ra.curAlpha > 3 ? "2.0× (outperforming)" : ra.curAlpha < -2 ? "0.8× (underperf.)" : "1.2× (default)"}</div>
                       </div>
                       <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Min Floor</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.blue }}>{minFloor.toFixed(1)}%</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.blue }}>{ra.minFloor.toFixed(1)}%</div>
                         <div style={{ fontSize: 7, color: cs.muted }}>Always required</div>
                       </div>
                       <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Turnover Cost</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.purple }}>{turnoverCost.toFixed(2)}%</div>
-                        <div style={{ fontSize: 7, color: cs.muted }}>{turnoverPct.toFixed(0)}% portfolio change</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.purple }}>{ra.turnoverCost.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>{ra.turnoverPct.toFixed(0)}% changed</div>
                       </div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(251,191,36,.04)", border: `1px solid ${shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(251,191,36,.15)"}` }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: ra.shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(251,191,36,.04)", border: `1px solid ${ra.shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(251,191,36,.15)"}` }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Total Hurdle</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: shouldRebalance ? cs.green : cs.yellow }}>{totalHurdle.toFixed(2)}%</div>
-                        <div style={{ fontSize: 7, color: cs.muted }}>max(tax,floor) + turnover</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: ra.shouldRebalance ? cs.green : cs.yellow }}>{ra.totalHurdle.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>max(tax,floor)+turnover</div>
                       </div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(248,113,113,.04)", border: `1px solid ${shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(248,113,113,.15)"}` }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: ra.shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(248,113,113,.04)", border: `1px solid ${ra.shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(248,113,113,.15)"}` }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Return Improvement</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: retImprovement > totalHurdle ? cs.green : cs.red }}>{retImprovement > 0 ? "+" : ""}{retImprovement.toFixed(2)}%</div>
-                        <div style={{ fontSize: 7, color: cs.muted }}>{shouldRebalance ? "Exceeds hurdle ✓" : "Below hurdle ✗"}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: ra.retImprovement > ra.totalHurdle ? cs.green : cs.red }}>{ra.retImprovement > 0 ? "+" : ""}{ra.retImprovement.toFixed(2)}%</div>
+                        <div style={{ fontSize: 7, color: cs.muted }}>{ra.shouldRebalance ? "Exceeds hurdle ✓" : "Below hurdle ✗"}</div>
                       </div>
                     </div>
 
-                    {/* Trade Summary */}
-                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Proposed Changes</div>
-                    <div style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 9 }}>
-                      <span style={{ fontFamily: mono2 }}>Keep: <span style={{ color: cs.blue, fontWeight: 600 }}>{positionsToKeep}</span></span>
-                      <span style={{ fontFamily: mono2 }}>Sell: <span style={{ color: cs.red, fontWeight: 600 }}>{positionsToSell}</span></span>
-                      <span style={{ fontFamily: mono2 }}>Buy: <span style={{ color: cs.green, fontWeight: 600 }}>{positionsToAdd}</span></span>
-                      <span style={{ fontFamily: mono2 }}>SPY Corr: <span style={{ color: wtdSpyCorrVal > 0.85 ? cs.red : wtdSpyCorrVal < 0.5 ? cs.green : cs.dim, fontWeight: 600 }}>{(wtdSpyCorrVal * 100).toFixed(0)}%</span></span>
-                      {grossLosses > 0 && <span style={{ fontFamily: mono2 }}>TLH Opportunity: <span style={{ color: cs.purple, fontWeight: 600 }}>{fmt$(grossLosses)} in losses</span></span>}
+                    {/* Proposed Trades — detailed */}
+                    <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Proposed Trades</div>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 9, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: mono2 }}>Sell: <span style={{ color: cs.red, fontWeight: 600 }}>{ra.sells.length}</span></span>
+                      <span style={{ fontFamily: mono2 }}>Reduce: <span style={{ color: cs.yellow, fontWeight: 600 }}>{ra.reduces.length}</span></span>
+                      <span style={{ fontFamily: mono2 }}>Keep: <span style={{ color: cs.blue, fontWeight: 600 }}>{ra.keeps.length}</span></span>
+                      <span style={{ fontFamily: mono2 }}>Increase: <span style={{ color: cs.purple, fontWeight: 600 }}>{ra.increases.length}</span></span>
+                      <span style={{ fontFamily: mono2 }}>Buy: <span style={{ color: cs.green, fontWeight: 600 }}>{ra.buys.length}</span></span>
+                      <span style={{ fontFamily: mono2 }}>SPY Corr: <span style={{ color: ra.wtdSpyCorrVal > 0.85 ? cs.red : ra.wtdSpyCorrVal < 0.5 ? cs.green : cs.dim, fontWeight: 600 }}>{(ra.wtdSpyCorrVal * 100).toFixed(0)}%</span></span>
                     </div>
 
-                    {/* Regime Reasoning */}
-                    {regimeReason.length > 0 && <div style={{ marginBottom: 8 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 4 }}>Regime Context</div>
-                      {regimeReason.map((r, i) => <div key={i} style={{ fontSize: 9, color: cs.dim, lineHeight: 1.6, paddingLeft: 10, borderLeft: "2px solid rgba(251,191,36,.15)", marginBottom: 3 }}>{r}</div>)}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 12 }}>
+                      {ra.sells.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(248,113,113,.03)", fontSize: 9 }}>
+                        <Badge color={cs.red}>SELL</Badge>
+                        <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.red, minWidth: 40 }}>{t2.ticker}</span>
+                        <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
+                        <span style={{ fontFamily: mono2, color: cs.text }}>{fmt$(t2.curDollars)}</span>
+                      </div>)}
+                      {ra.reduces.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(251,191,36,.03)", fontSize: 9 }}>
+                        <Badge color={cs.yellow}>REDUCE</Badge>
+                        <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.yellow, minWidth: 40 }}>{t2.ticker}</span>
+                        <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
+                        <span style={{ fontFamily: mono2, color: t2.gl >= 0 ? cs.green : cs.red }}>{t2.gl >= 0 ? "+" : ""}{fmt$(t2.gl)}</span>
+                      </div>)}
+                      {ra.keeps.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(96,165,250,.02)", fontSize: 9 }}>
+                        <Badge color={cs.blue}>KEEP</Badge>
+                        <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.blue, minWidth: 40 }}>{t2.ticker}</span>
+                        <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
+                      </div>)}
+                      {ra.increases.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(167,139,250,.03)", fontSize: 9 }}>
+                        <Badge color={cs.purple}>ADD</Badge>
+                        <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.purple, minWidth: 40 }}>{t2.ticker}</span>
+                        <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
+                      </div>)}
+                      {ra.buys.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(110,231,183,.03)", fontSize: 9 }}>
+                        <Badge color={cs.green}>BUY</Badge>
+                        <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.green, minWidth: 40 }}>{t2.ticker}</span>
+                        <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
+                        <span style={{ fontFamily: mono2, color: cs.text }}>{fmt$(t2.optDollars)}</span>
+                      </div>)}
+                      {ra.sells.length === 0 && ra.buys.length === 0 && ra.reduces.length === 0 && ra.increases.length === 0 && <div style={{ fontSize: 9, color: cs.muted, padding: 6 }}>No changes needed — current portfolio is already near optimal.</div>}
+                    </div>
+
+                    {/* Tax Detail */}
+                    {(ra.grossGains > 0 || ra.grossLosses > 0) && <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 4 }}>Tax Impact</div>
+                      <div style={{ display: "flex", gap: 8, fontSize: 9, flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: mono2 }}>Realized Gains: <span style={{ color: cs.green, fontWeight: 600 }}>{fmt$(ra.grossGains)}</span> (ST: {fmt$(ra.stGains)}, LT: {fmt$(ra.ltGains)})</span>
+                        <span style={{ fontFamily: mono2 }}>Realized Losses: <span style={{ color: cs.red, fontWeight: 600 }}>{fmt$(ra.grossLosses)}</span></span>
+                        <span style={{ fontFamily: mono2 }}>Net Taxable: <span style={{ color: cs.yellow, fontWeight: 600 }}>{fmt$(ra.netGains)}</span></span>
+                        <span style={{ fontFamily: mono2 }}>Estimated Tax: <span style={{ color: cs.red, fontWeight: 600 }}>{fmt$(ra.estTax)}</span></span>
+                        {ra.grossLosses > 0 && <span style={{ fontFamily: mono2 }}>Loss Offset: <span style={{ color: cs.purple, fontWeight: 600 }}>{fmt$(Math.min(ra.grossGains, ra.grossLosses))}</span></span>}
+                      </div>
                     </div>}
 
-                    {/* Decision Logic Summary */}
+                    {/* Regime Reasoning */}
+                    {ra.regimeCtx && (() => {
+                      const reasons = [];
+                      const s5 = ra.regimeCtx.state5;
+                      const ts = ra.regimeCtx.threeStage;
+                      const dur = ts?.effectiveDuration || ra.regimeCtx.duration || 0;
+                      if (s5?.includes("risk_off")) reasons.push(`Market is in ${s5.replace(/_/g," ")} — defensive positioning recommended`);
+                      else if (s5?.includes("risk_on")) reasons.push(`Market is in ${s5.replace(/_/g," ")} — growth positioning favored`);
+                      if (dur > 12) reasons.push(`Regime has persisted ${dur} months — tilt amplified (${Math.min(2.0, 0.5 + (dur/12)*1.5).toFixed(1)}× scaling)`);
+                      if (ts?.patternType?.includes("reversal")) reasons.push(`Three-stage pattern: ${ts.pattern} (${ts.patternType.replace(/_/g," ")}) — signal: ${ts.patternSignal > 0 ? "+" : ""}${(ts.patternSignal*100).toFixed(0)}%`);
+                      else if (ts?.patternType?.includes("continuation")) reasons.push(`Three-stage: ${ts.pattern} — ${ts.patternType.replace(/_/g," ")}, effective duration ${ts.effectiveDuration}m`);
+                      if (ra.regimeCtx.durationModel) {
+                        const fwd = getRegimeDurationFwd(ra.regimeCtx.durationModel, s5 || "neutral", dur);
+                        if (fwd.confidence > 0.3) reasons.push(`Historical forward 6m return at this state+duration: ${fwd.fwd > 0 ? "+" : ""}${fwd.fwd.toFixed(1)}% (${fwd.count} obs)`);
+                      }
+                      if (reasons.length === 0) return null;
+                      return <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 4 }}>Regime Context</div>
+                        {reasons.map((r, i) => <div key={i} style={{ fontSize: 9, color: cs.dim, lineHeight: 1.6, paddingLeft: 10, borderLeft: "2px solid rgba(251,191,36,.15)", marginBottom: 3 }}>{r}</div>)}
+                      </div>;
+                    })()}
+
+                    {/* Decision Logic */}
                     <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.muted, lineHeight: 1.7 }}>
                       <span style={{ fontWeight: 600, color: cs.text }}>Decision Logic: </span>
-                      Return improvement ({retImprovement > 0 ? "+" : ""}{retImprovement.toFixed(2)}%) {shouldRebalance ? ">" : "≤"} hurdle ({totalHurdle.toFixed(2)}%)
-                      {" = "}max(tax hurdle {taxHurdle.toFixed(2)}%, floor {minFloor}%) + turnover {turnoverCost.toFixed(2)}%.
-                      {curAlpha > 3 ? " Portfolio outperforming SPY — higher bar (2.0× tax cost) to avoid disrupting a winning strategy." :
-                       curAlpha < -2 ? " Portfolio underperforming SPY — lower bar (0.8× tax cost) to encourage improvement." :
-                       " Portfolio near SPY — standard hurdle (1.2× tax cost)."}
-                      {wtdSpyCorrVal > 0.85 && " Warning: proposed portfolio has >85% SPY correlation — consider whether active management adds value over a simple index fund."}
-                      {grossLosses > 0 && ` Tax-loss harvesting opportunity: ${fmt$(grossLosses)} in unrealized losses could offset ${fmt$(Math.min(grossGains, grossLosses))} in gains.`}
+                      Return improvement ({ra.retImprovement > 0 ? "+" : ""}{ra.retImprovement.toFixed(2)}%) {ra.shouldRebalance ? ">" : "≤"} hurdle ({ra.totalHurdle.toFixed(2)}%)
+                      {" = "}max(tax {ra.taxHurdle.toFixed(2)}%, floor {ra.minFloor}%) + turnover {ra.turnoverCost.toFixed(2)}%.
+                      {ra.curAlpha > 3 ? " Outperforming SPY by " + ra.curAlpha.toFixed(1) + "% — higher bar (2.0×) to preserve winning strategy." :
+                       ra.curAlpha < -2 ? " Underperforming SPY by " + Math.abs(ra.curAlpha).toFixed(1) + "% — lower bar (0.8×) to encourage improvement." :
+                       " Near SPY — standard bar (1.2×)."}
+                      {ra.wtdSpyCorrVal > 0.85 && " ⚠ Proposed portfolio >85% SPY-correlated — consider whether active management adds value."}
                     </div>
                   </div>;
                 })()}
-              </div>}
-              {!optResult && metrics && <div style={{ ...cardS, background: "rgba(110,231,183,.02)", borderColor: "rgba(110,231,183,.08)" }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: cs.green, marginBottom: 4 }}>🎯 Rebalance Advisor</div>
-                <div style={{ fontSize: 9, color: cs.muted }}>Run the optimizer in the Deploy Cash tab first, then return here for a detailed rebalance recommendation with hurdle analysis, tax impact, and regime context.</div>
               </div>}
 
               {totalVal > 0 && <div style={cardS}>
