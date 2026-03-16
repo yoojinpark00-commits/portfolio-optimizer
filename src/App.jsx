@@ -938,6 +938,7 @@ export default function App() {
   const [taxState, setTaxState] = useState("None"); // State for tax calc
   const [includeStocks, setIncludeStocks] = useState(false); // ETF+Stocks toggle
   const [optResult, setOptResult] = useState(null);
+  const [lastRegimeCtx, setLastRegimeCtx] = useState(null); // regime context used by last optimizer run
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
   const [sf, setSf] = useState({ t: "", n: "", sh: "", cb: "", sec: "Technology" });
@@ -2017,15 +2018,16 @@ useEffect(() => {
       regimeCtx = {
         state5: r.state5 || r.regime || "neutral",
         acceleration: r.acceleration || 0,
-        duration: 1, // live = current snapshot, duration unknown without analytics
+        duration: 1,
         transition: null,
       };
-      // If we have analytics data, use the current position info
+      // Pull duration + transition from analytics (auto-fetched on mount)
       if (regimeAnalytics?.current) {
         regimeCtx.duration = regimeAnalytics.current.runLength || 1;
         regimeCtx.transition = regimeAnalytics.current.transition || null;
       }
     }
+    setLastRegimeCtx(regimeCtx); // store for UI display
     const candidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
     const result = optimizeCash(allPos, cashBalance, holdingsVal, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
     setOptResult(result);
@@ -2381,6 +2383,22 @@ useEffect(() => {
               </div>
               <div style={{ fontSize: 9, color: cs.dim }}>Click to toggle</div>
             </div>
+            {/* Regime context used for this optimization */}
+            {lastRegimeCtx && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, padding: "6px 8px", borderRadius: 5, background: "rgba(251,191,36,.03)", border: "1px solid rgba(251,191,36,.06)" }}>
+              <span style={{ fontSize: 8, fontWeight: 600, color: cs.yellow }}>🌊 Regime Context:</span>
+              <span style={{ fontSize: 8, fontFamily: mono2, color: cs.text }}>{lastRegimeCtx.state5?.replace(/_/g, " ")}</span>
+              <span style={{ fontSize: 8, fontFamily: mono2, color: cs.dim }}>Duration: <span style={{ color: cs.text }}>{lastRegimeCtx.duration}m</span></span>
+              {lastRegimeCtx.acceleration != null && <span style={{ fontSize: 8, fontFamily: mono2, color: lastRegimeCtx.acceleration > 0.1 ? cs.red : lastRegimeCtx.acceleration < -0.1 ? cs.green : cs.dim }}>Accel: {lastRegimeCtx.acceleration > 0 ? "+" : ""}{lastRegimeCtx.acceleration.toFixed(2)}</span>}
+              {lastRegimeCtx.transition && <span style={{ fontSize: 8, fontFamily: mono2, color: cs.blue }}>Transition: {lastRegimeCtx.transition}</span>}
+              {lastRegimeCtx.transition && (() => {
+                const [from, to] = lastRegimeCtx.transition.includes("→") ? lastRegimeCtx.transition.split("→") : [null, null];
+                if (from === "bear" && (to === "bull" || to === "neutral") && lastRegimeCtx.duration >= 2 && lastRegimeCtx.duration <= 8) return <Badge color={cs.green}>ENTRY SIGNAL +8%</Badge>;
+                if (from === "neutral" && to === "bull" && lastRegimeCtx.duration >= 1 && lastRegimeCtx.duration <= 4) return <Badge color={cs.green}>ENTRY SIGNAL +4%</Badge>;
+                return null;
+              })()}
+              {!regimeAnalytics?.current && <span style={{ fontSize: 7, color: cs.yellow }}>(analytics loading — duration/entry signals pending)</span>}
+            </div>}
+            {useRegime && !lastRegimeCtx && <div style={{ fontSize: 8, color: cs.yellow, marginBottom: 6 }}>⚠ Regime enabled but data not yet loaded — optimizer ran without regime tilts.</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {optResult.map(r => {
                 const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
