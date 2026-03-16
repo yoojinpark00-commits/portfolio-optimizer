@@ -3234,14 +3234,56 @@ useEffect(() => {
               </div>}
 
               {totalVal > 0 && <div style={cardS}>
-                <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 10 }}>Growth Projection ({fmt$(totalVal)})</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
-                  {[1, 5, 10, 20].map(yr => { const g = totalVal * Math.pow(1 + metrics.nr / 100, yr); return (
-                    <div key={yr} style={{ textAlign: "center", padding: "8px 4px", background: "rgba(255,255,255,.015)", borderRadius: 6 }}>
-                      <div style={{ fontSize: 8, color: cs.muted }}>{yr}yr</div>
-                      <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: cs.green }}>{fmt$(g)}</div>
-                    </div>) })}
-                </div>
+                <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Growth Projection ({fmt$(totalVal)})</div>
+                {(() => {
+                  // The trailing return (metrics.nr) is backward-looking and often inflated.
+                  // A portfolio that returned 30% last year will NOT return 30% for 20 straight years.
+                  // Forward estimate: blend trailing with long-term equity premium (~10%), weighted by vol.
+                  // Higher-vol portfolios get pulled more toward the mean (more uncertainty).
+                  const trailing = metrics.nr;
+                  const longTermEquity = 10; // long-term S&P 500 nominal CAGR
+                  // Shrink toward long-term mean: the further trailing is from 10%, the more we shrink.
+                  // Shrink factor based on vol: low vol → trust trailing more; high vol → trust less.
+                  const volFactor = Math.min(1, (metrics.vol || 15) / 30); // 0-1, higher = more shrinkage
+                  const shrinkWeight = 0.4 + volFactor * 0.3; // 0.4 to 0.7 shrinkage toward mean
+                  const baseReturn = trailing * (1 - shrinkWeight) + longTermEquity * shrinkWeight;
+                  // Clamp to reasonable range: 3% to 18% forward
+                  const fwdReturn = Math.max(3, Math.min(18, baseReturn));
+                  const bullReturn = Math.min(22, fwdReturn * 1.4);
+                  const bearReturn = Math.max(1, fwdReturn * 0.5);
+
+                  return <>
+                    <div style={{ fontSize: 8, color: cs.dim, marginBottom: 8 }}>
+                      Trailing net return: <span style={{ fontFamily: mono2, color: cs.text }}>{trailing.toFixed(1)}%</span> · Forward estimate (shrunk): <span style={{ fontFamily: mono2, color: cs.green }}>{fwdReturn.toFixed(1)}%</span>
+                      <span style={{ color: cs.muted }}> · Blends trailing return with long-term equity premium ({longTermEquity}%), shrinkage {(shrinkWeight*100).toFixed(0)}% toward mean based on {metrics.vol.toFixed(0)}% vol</span>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                        <thead><tr>
+                          <th style={{ padding: "5px 6px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Scenario</th>
+                          <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Rate</th>
+                          {[1, 5, 10, 20].map(yr => <th key={yr} style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>{yr}yr</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {[
+                            { label: "🐻 Bear", rate: bearReturn, color: cs.red },
+                            { label: "📊 Base", rate: fwdReturn, color: cs.green },
+                            { label: "🐂 Bull", rate: bullReturn, color: cs.blue },
+                          ].map(sc => (
+                            <tr key={sc.label} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                              <td style={{ padding: "5px 6px", color: sc.color, fontWeight: 600 }}>{sc.label}</td>
+                              <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, color: sc.color }}>{sc.rate.toFixed(1)}%</td>
+                              {[1, 5, 10, 20].map(yr => {
+                                const g = totalVal * Math.pow(1 + sc.rate / 100, yr);
+                                return <td key={yr} style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, fontWeight: sc.label.includes("Base") ? 700 : 400, color: sc.label.includes("Base") ? cs.green : cs.text }}>{fmt$(g)}</td>;
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>;
+                })()}
               </div>}
               {allPos.length >= 2 && <div style={cardS}>
                 <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Correlation Matrix</div>
