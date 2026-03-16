@@ -168,11 +168,11 @@ const RF=4.5;
 // A stock that returned 200% last year almost never repeats — mean reversion dominates.
 // This blends extreme returns toward a cap, preventing any single stock from dominating
 // the Sharpe pre-filter purely on trailing momentum.
-// For stocks: cap at 50% annualized, keep 15% of excess above cap
-// For ETFs: cap at 80% annualized (ETFs are diversified, less mean-reversion)
+// For stocks: cap at 80% annualized, keep 20% of excess above cap
+// For ETFs: cap at 120% annualized (ETFs are diversified, more sustainable momentum)
 function shrinkReturn(r, isStock) {
-  const cap = isStock ? 50 : 80;
-  const decayFactor = isStock ? 0.15 : 0.25;
+  const cap = isStock ? 80 : 120;
+  const decayFactor = isStock ? 0.20 : 0.30;
   if (r > cap) return cap + (r - cap) * decayFactor;
   if (r < -cap) return -cap + (r + cap) * decayFactor; // symmetric for losses
   return r;
@@ -515,6 +515,11 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
   // Pre-compute adjusted returns, vols as typed arrays
   const adjRet = new Float64Array(n), volArr = new Float64Array(n), isLev = new Uint8Array(n);
+  // Pre-compute each candidate's correlation with SPY (US Large Cap category)
+  const spyCorr = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    spyCorr[i] = gc(candidates[i].c, "US Large Cap");
+  }
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
     adjRet[i] = (c.lev && Math.abs(c.lev) > 1) ? getAdjustedReturn(c.r, c.v, c.lev) : c.r;
@@ -694,19 +699,21 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     let sc;
     const divAdj = divScore + concPenalty;
     // ── Max drawdown estimate: VaR95 × √2 approximates annual max drawdown ──
-    // (Cornish-Fisher adjustment for non-normal returns in monthly rebalance context)
-    const estMaxDD = var95 * 1.41; // √2 ≈ 1.41
-    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty;
-    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty;
+    const estMaxDD = var95 * 1.41;
+    // ── SPY overlap penalty: if portfolio is >85% correlated with SPY, you should just buy SPY ──
+    let wtdSpyCorr = 0;
+    for (let i = 0; i < n; i++) wtdSpyCorr += (alloc[i] / (deployAmt || 1)) * spyCorr[i];
+    // Also add existing positions' SPY correlation
+    for (let i = 0; i < nEx; i++) wtdSpyCorr += exW[i] * gc(itemCats[i], "US Large Cap");
+    const spyPenalty = wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0; // penalize high overlap, reward differentiation
+
+    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty;
+    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty;
     else if (target === "max_return") {
-      // AGGRESSIVE: maximize return with only light risk guardrails
-      // Hard constraints (min 3 positions, 25% stock cap) already prevent worst-case concentration
-      // VaR mode adds a light drawdown brake; standard mode is nearly pure return maximization
       const ddPenalty = srMode === "var" ? -0.08 * estMaxDD : srMode === "vol2" ? -0.04 * vol : -0.01 * vol;
-      // Boost return weight: every 1% of extra return matters more than risk reduction
-      sc = ret * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty;
+      sc = ret * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty;
     }
-    else sc = sh * .5 + ret * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty; // balanced
+    else sc = sh * .5 + ret * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty;
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
@@ -1164,8 +1171,8 @@ export default function App() {
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
         }
       }
-      if (!(isFirstAllocation || regimeChanged || (mMonth === 0 || mMonth === 6))) { continue; } // Semi-annual (Jan, Jul) + regime changes
-      if (!isFirstAllocation && monthsSinceRebal < 4) { continue; } // Minimum 4 months between rebalances
+      if (!(isFirstAllocation || regimeChanged || mMonth % 3 === 0)) { continue; } // Quarterly (Jan/Apr/Jul/Oct) + regime changes
+      if (!isFirstAllocation && monthsSinceRebal < 3) { continue; } // Minimum 3 months between rebalances
       // Yield to UI every evaluation to prevent freeze
       setBtProgress(`Evaluating ${monthKey}...`);
       await new Promise(r => setTimeout(r, 0));
@@ -1175,19 +1182,13 @@ export default function App() {
       // (e.g., Jan 2021 still seeing the March-Dec 2020 rocket with equal weight)
       const trailingStats = {};
       const trailStart = Math.max(0, mIdx - 12);
-      const trailMonths = mIdx - trailStart;
-      // Collect all returns for cross-sectional z-score
-      const allReturns = [];
-      const symStats = {};
       for (const sym of available) {
         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
         for (let ti = trailStart; ti < mIdx; ti++) {
           const entry = returnsByDateSym[sortedDates[ti]]?.[sym];
           if (entry) {
-            // Exponential decay: recent months get higher weight
-            // Month 0 (oldest) = weight ~0.5, Month 11 (newest) = weight ~1.0
-            const age = mIdx - 1 - ti; // 0 = newest, 11 = oldest
-            const w = Math.exp(-0.05 * age); // half-life ~14 months, gentle decay
+            const age = mIdx - 1 - ti;
+            const w = Math.exp(-0.05 * age);
             sumWRet += w * entry.ret;
             sumW += w;
             sumRet += entry.ret;
@@ -1196,33 +1197,13 @@ export default function App() {
           }
         }
         if (count < 6) continue;
-        const wAvgMo = sumWRet / sumW; // recency-weighted average monthly return
+        const wAvgMo = sumWRet / sumW;
         const rawR = wAvgMo * 12 * 100;
         const db = etfDbMap[sym];
         const isStk = db?.type === "stock";
         const shrunkR = shrinkReturn(rawR, isStk);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
-        symStats[sym] = { shrunkR, vol, rawR, db, isStk };
-        allReturns.push(shrunkR);
-      }
-
-      // Cross-sectional mean-reversion adjustment:
-      // Assets with returns >1.5 std devs above the mean get penalized
-      // This prevents the entire top-15 from being last year's winners
-      const meanR = allReturns.length > 0 ? allReturns.reduce((s, v) => s + v, 0) / allReturns.length : 0;
-      const stdR = allReturns.length > 1 ? Math.sqrt(allReturns.reduce((s, v) => s + (v - meanR) ** 2, 0) / allReturns.length) : 1;
-
-      for (const [sym, stats] of Object.entries(symStats)) {
-        const { shrunkR, vol, db, isStk } = stats;
-        const zScore = stdR > 0 ? (shrunkR - meanR) / stdR : 0;
-        // Penalize extreme winners: if z > 1.5, shave off 30% of the excess
-        // This is ON TOP of return shrinkage — double protection against momentum whipsaw
-        let adjR = shrunkR;
-        if (zScore > 1.5) {
-          const excessR = (zScore - 1.5) * stdR;
-          adjR = shrunkR - excessR * (isStk ? 0.30 : 0.15); // stronger for stocks
-        }
-        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: adjR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
+        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
       }
       const allCandidates = Object.values(trailingStats).filter(s => {
         if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
@@ -1234,8 +1215,17 @@ export default function App() {
         }
         return true;
       });
-      // Pre-filter to top 25 by trailing Sharpe — keeps optimizer O(n²) fast
-      const candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 15);
+      // Pre-filter: top 25 by trailing Sharpe + recovery plays during risk-off
+      let candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 25);
+      // During risk-off: also include beaten-down assets with high vol (recovery plays)
+      // These have negative trailing Sharpe but may offer the best rebound potential
+      if (btState5 && (btState5.includes("risk_off") || btState5 === "neutral")) {
+        const recoveryPlays = allCandidates
+          .filter(s => s.r < 0 && s.v > 20 && !candidates.find(c => c.t === s.t))
+          .sort((a, b) => a.r - b.r) // most beaten-down first
+          .slice(0, 5);
+        candidates = [...candidates, ...recoveryPlays];
+      }
       if (candidates.length < 3) continue;
 
       // Step 4: Optimizer (1000 iterations for speed)
@@ -1325,11 +1315,10 @@ export default function App() {
       const estTC = netTax;
       const tcPct = optValue > 0 ? (estTC / optValue) * 100 : 0;
 
-      // Step 7: Decision — requires meaningful improvement to justify rebalance
+      // Step 7: Decision — rebalance if improvement justifies costs
       const retImp = propExpRet - currExpRet; const curAlpha = currExpRet - spyExpRet;
 
-      // Turnover cost: penalize allocations that change a lot of the portfolio
-      // Each % of portfolio traded incurs implicit transaction costs beyond taxes
+      // Turnover cost: light penalty for portfolio churn
       let turnoverPct = 0;
       for (const [ticker, newWt] of Object.entries(newAlloc)) {
         turnoverPct += Math.abs(newWt - (prevAlloc[ticker] || 0));
@@ -1337,21 +1326,16 @@ export default function App() {
       for (const ticker of prevTickers) {
         if (!newAlloc[ticker]) turnoverPct += prevAlloc[ticker] || 0;
       }
-      turnoverPct *= 50; // convert to percentage points (0-100 scale)
+      turnoverPct *= 50;
 
-      // Holding period bonus: the longer we've held, the higher the bar
-      // This rewards patience and prevents churning
-      const holdingBonus = Math.min(monthsSinceRebal * 0.3, 3.0); // +0.3% per month held, cap at 3%
-
-      // Minimum hurdle floor: always require at least 3% expected return improvement
-      // (even if tax cost is zero due to loss carryover)
+      // Hurdle: tax cost × multiplier, with 1.5% minimum floor + light turnover cost
       const taxHurdle = isFirstAllocation ? -999 :
-        btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8 ? tcPct * 1.0 :
-        curAlpha > 3 ? tcPct * 2.5 :
-        curAlpha < -2 ? tcPct * 1.2 :
-        tcPct * 1.5;
-      const minFloor = isFirstAllocation ? -999 : 3.0; // minimum 3% improvement always required
-      const hurdle = Math.max(taxHurdle, minFloor) + holdingBonus + turnoverPct * 0.02;
+        btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8 ? tcPct * 0.5 :
+        curAlpha > 3 ? tcPct * 2.0 :
+        curAlpha < -2 ? tcPct * 0.8 :
+        tcPct * 1.2;
+      const minFloor = isFirstAllocation ? -999 : 1.5;
+      const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01;
 
       if (isFirstAllocation || retImp > hurdle) {
         // ── Update cost basis, shares, and cost-per-share maps ──
@@ -1638,18 +1622,16 @@ export default function App() {
           optValue *= (1 + mRet);
         }
 
-        // Semi-annual evaluation (Jan, Jul) — matches main backtest
-        if (!(mMonth === 0 || mMonth === 6)) continue;
+        // Quarterly evaluation (Jan/Apr/Jul/Oct) — matches main backtest
+        if (mMonth % 3 !== 0) continue;
         const prevTickers = Object.keys(optAlloc);
         const isFirst = prevTickers.length === 0;
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
-        if (!isFirst && mSinceRebal < 4) continue;
+        if (!isFirst && mSinceRebal < 3) continue;
 
-        // Trailing stats with recency weighting + mean reversion (matches main backtest)
+        // Trailing stats with recency weighting + shrinkage (matches main backtest)
         const trailingStats = {};
         const trailStart = Math.max(0, mIdx - 12);
-        const allRets = [];
-        const symTmp = {};
         for (const sym of available) {
           let sWR = 0, sW = 0, sR = 0, sR2 = 0, cnt = 0;
           for (let ti = trailStart; ti < mIdx; ti++) {
@@ -1664,19 +1646,9 @@ export default function App() {
           if (cnt < 6) continue;
           const db = etfDbMap[sym];
           const rawR = (sWR / sW) * 12 * 100;
-          const isStk = db?.type === "stock";
-          const shrunkR = shrinkReturn(rawR, isStk);
+          const shrunkR = shrinkReturn(rawR, db?.type === "stock");
           const vol = Math.max(Math.sqrt(Math.max(0, sR2 / cnt - (sR/cnt) ** 2)) * Math.sqrt(12) * 100, 1);
-          symTmp[sym] = { shrunkR, vol, db, isStk };
-          allRets.push(shrunkR);
-        }
-        const mR = allRets.length > 0 ? allRets.reduce((s, v) => s + v, 0) / allRets.length : 0;
-        const stdRets = allRets.length > 1 ? Math.sqrt(allRets.reduce((s, v) => s + (v - mR) ** 2, 0) / allRets.length) : 1;
-        for (const [sym, st] of Object.entries(symTmp)) {
-          const z = stdRets > 0 ? (st.shrunkR - mR) / stdRets : 0;
-          let adjR = st.shrunkR;
-          if (z > 1.5) adjR -= (z - 1.5) * stdRets * (st.isStk ? 0.30 : 0.15);
-          trailingStats[sym] = { t: sym, n: st.db?.n || sym, c: st.db?.c || "US Large Cap", r: adjR, v: st.vol, er: st.db?.er || 0.1, d: 0, lev: st.db?.lev || null };
+          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null };
         }
 
         const cands = Object.values(trailingStats).filter(s => {
@@ -1729,16 +1701,15 @@ export default function App() {
         const estTax = netGains * (taxRate / 100);
         const tcPct = optValue > 0 ? (estTax / optValue) * 100 : 0;
 
-        // Hurdle: matches main backtest — minimum floor + turnover + holding bonus
+        // Hurdle: matches main backtest — 1.5% floor + light turnover cost
         const retImp = propExp - currExp;
         const curAlpha = currExp - spyExp;
         let simTurnover = 0;
         for (const [ticker, newWt] of Object.entries(newAlloc)) simTurnover += Math.abs(newWt - (optAlloc[ticker] || 0));
         for (const ticker of prevTickers) if (!newAlloc[ticker]) simTurnover += optAlloc[ticker] || 0;
         simTurnover *= 50;
-        const simHoldBonus = Math.min(mSinceRebal * 0.3, 3.0);
-        const simTaxHurdle = isFirst ? -999 : curAlpha > 3 ? tcPct * 2.5 : curAlpha < -2 ? tcPct * 1.2 : tcPct * 1.5;
-        const hurdle = isFirst ? -999 : Math.max(simTaxHurdle, 3.0) + simHoldBonus + simTurnover * 0.02;
+        const simTaxHurdle = isFirst ? -999 : curAlpha > 3 ? tcPct * 2.0 : curAlpha < -2 ? tcPct * 0.8 : tcPct * 1.2;
+        const hurdle = isFirst ? -999 : Math.max(simTaxHurdle, 1.5) + simTurnover * 0.01;
 
         if (isFirst || retImp > hurdle) {
           // Update cost basis map
@@ -2347,7 +2318,7 @@ useEffect(() => {
           <div style={{ ...cardS, background: "rgba(96,165,250,.03)", borderColor: "rgba(96,165,250,.12)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer runs 6,000 Monte Carlo simulations to find the best risk-adjusted {includeStocks ? "ETF + stock" : "ETF"} allocation. Minimum 3 positions enforced, individual stocks capped at 25%. Return shrinkage dampens extreme trailing momentum. {includeStocks ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
+                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer runs 6,000 Monte Carlo simulations to find the best risk-adjusted {includeStocks ? "ETF + stock" : "ETF"} allocation. Min 3 positions, 25% stock cap, return shrinkage (stocks 80%, ETFs 120%). SPY-overlap penalty rewards differentiated portfolios — if you'd mirror SPY, just buy SPY. {includeStocks ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
               {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Holdings" tab first</div>}
             </div>
 
@@ -2952,7 +2923,7 @@ useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
               <span style={{ fontSize: 16 }}>📈</span><div style={{ fontSize: 13, fontWeight: 700 }}>Backtest: 2016–2025</div>
             </div>
-            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2016-2025). Semi-annual evaluation (Jan/Jul) + regime-triggered reviews. Rebalance requires minimum 3% expected improvement + turnover cost + holding period bonus. Return shrinkage, diversification constraints, and actual cost basis tracking applied.</div>
+            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2016-2025). Quarterly evaluation + regime-triggered reviews. SPY-overlap penalty rewards differentiated portfolios. Recovery plays included during risk-off. Return shrinkage (stocks 80%, ETFs 120%), diversification constraints, and actual cost basis tracking.</div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -2989,7 +2960,7 @@ useEffect(() => {
 
             return <>
               {includeStocks && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (~130-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year, matching the live optimizer's breadth. Growth leaders enter when they become sector-relevant — NVDA in Tech 2017 (GPU dominance), AMD in 2019 (Zen comeback), TSLA in Consumer 2021. GE included in 2016 (Industrial #1) but exits by 2018. ~140 stocks per year, rotating naturally with return shrinkage (50% cap) to prevent momentum bias.</div>
+                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (~130-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year, matching the live optimizer's breadth. Growth leaders enter when they become sector-relevant — NVDA in Tech 2017 (GPU dominance), AMD in 2019 (Zen comeback), TSLA in Consumer 2021. GE included in 2016 (Industrial #1) but exits by 2018. ~140 stocks per year, rotating naturally with return shrinkage (80% cap) and SPY-overlap penalty to reward differentiated positioning.</div>
               </div>}
               {/* Equity Curve */}
               <div style={cardS}>
@@ -3181,7 +3152,7 @@ useEffect(() => {
                                         ))}
                                       </div>
                                     ))}
-                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation" : "Portfolio held — improvement did not exceed hurdle (3% min + turnover cost + holding bonus)"}</div>}
+                                  </div> : <div style={{ fontSize: 9, color: cs.muted, padding: "8px 0" }}>{a.year === 2016 ? "Initial allocation" : "Portfolio held — improvement did not exceed 1.5% hurdle + turnover cost"}</div>}
                                 </div>
                               </div>
                               {/* Regime Context for this year */}
@@ -3223,7 +3194,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Semi-annual + regime-triggered rebalancing · Min 3% improvement hurdle + turnover cost · Actual cost basis · Return shrinkage (stocks 50%, ETFs 80%) · Min 3 positions, 25% stock cap · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
+                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Quarterly + regime-triggered rebalancing · 1.5% min hurdle + turnover cost · SPY-overlap penalty · Actual cost basis · Return shrinkage (stocks 80%, ETFs 120%) · Min 3 positions, 25% stock cap · {ot.replace("_"," ")} · {srLabel}{volTarget > 0 ? ` · Vol target ${volTarget}%` : ""}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
               </div>
             </>;
           })()}
@@ -3242,7 +3213,7 @@ useEffect(() => {
               </button>
             </div>
             {!btResult && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Run a backtest first — simulation reuses the same parameters and time period.</div>}
-            {includeStocks && <div style={{ fontSize: 9, color: cs.blue, marginTop: 4 }}>📊 <strong>Sector-based universe:</strong> ~130-140 stocks per year (top ~15 per GICS sector). Growth names enter when they become sector leaders. Return shrinkage caps stocks at 50% trailing return to prevent momentum-driven concentration.</div>}
+            {includeStocks && <div style={{ fontSize: 9, color: cs.blue, marginTop: 4 }}>📊 <strong>Sector-based universe:</strong> ~130-140 stocks per year (top ~15 per GICS sector). Growth names enter when they become sector leaders. Return shrinkage caps stocks at 80% trailing return. SPY-overlap penalty rewards differentiated portfolios.</div>}
           </div>
 
           {simResult && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
