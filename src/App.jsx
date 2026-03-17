@@ -2600,13 +2600,33 @@ useEffect(() => {
 
   // ─── Computed ───
   const etfV = useMemo(() => etfs.map(e => {
-    const lp = live[e.ticker]?.price; const mv = lp ? lp * (e.shares || 0) : (e.mktValue || 0);
-    return { ...e, mktValue: mv, livePrice: lp };
+    const lp = live[e.ticker]?.price;
+    let mv, shares = e.shares || 0;
+    if (lp && shares > 0) {
+      mv = lp * shares;
+    } else if (lp && shares === 0 && e.mktValue > 0) {
+      // Position was added by dollar amount (no shares computed at add time)
+      // Retroactively compute shares from live price
+      shares = Math.floor(e.mktValue / lp);
+      mv = lp * shares;
+    } else {
+      mv = e.mktValue || 0;
+    }
+    return { ...e, mktValue: mv, livePrice: lp, shares };
   }), [etfs, live]);
 
   const stockV = useMemo(() => stocks.map(s => {
-    const lp = live[s.ticker]?.price; const mv = lp ? lp * (s.shares || 0) : (s.mktValue || 0);
-    return { ...s, mktValue: mv, livePrice: lp };
+    const lp = live[s.ticker]?.price;
+    let mv, shares = s.shares || 0;
+    if (lp && shares > 0) {
+      mv = lp * shares;
+    } else if (lp && shares === 0 && s.mktValue > 0) {
+      shares = Math.floor(s.mktValue / lp);
+      mv = lp * shares;
+    } else {
+      mv = s.mktValue || 0;
+    }
+    return { ...s, mktValue: mv, livePrice: lp, shares };
   }), [stocks, live]);
 
   const holdingsVal = useMemo(() => etfV.reduce((s, e) => s + (e.mktValue || 0), 0) + stockV.reduce((s, s2) => s + (s2.mktValue || 0), 0), [etfV, stockV]);
@@ -2676,7 +2696,7 @@ useEffect(() => {
           });
           const data = await resp.json();
           if (data.text) {
-            try { const parsed = JSON.parse(data.text.replace(/```json|```/g, "").trim()); if (Array.isArray(parsed)) { const seen = new Set(local.map(l => l.t)); const merged = [...local]; parsed.forEach(p => { if (p.t && !seen.has(p.t)) { seen.add(p.t); merged.push(p) } }); setStockResults(merged.slice(0, 10)); } } catch (e) { }
+            try { const parsed = JSON.parse(data.text.replace(/```json|```/g, "").trim()); if (Array.isArray(parsed)) { const seen = new Set(local.map(l => l.t.toUpperCase())); const merged = [...local]; parsed.forEach(p => { if (p.t) { p.t = p.t.toUpperCase(); if (!seen.has(p.t)) { seen.add(p.t); merged.push(p) } } }); setStockResults(merged.slice(0, 10)); } } catch (e) { }
           }
         } catch (e) { }
         setStockSearching(false);
@@ -2687,12 +2707,14 @@ useEffect(() => {
 
   // ─── Select from dropdown → fetch live price via Twelve Data ───
   const selectTicker = useCallback(async (stk) => {
-    setSf(f => ({ ...f, t: stk.t, n: stk.n, sec: stk.s })); setStockDD(false); setStockResults([]); setAdding(true);
+    const normalizedTicker = stk.t.toUpperCase();
+    setSf(f => ({ ...f, t: normalizedTicker, n: stk.n, sec: stk.s })); setStockDD(false); setStockResults([]); setAdding(true);
     try {
-      const resp = await fetch(`/api/prices?tickers=${stk.t}`);
+      const resp = await fetch(`/api/prices?tickers=${normalizedTicker}`);
       if (resp.ok) {
         const json = await resp.json();
-        const info = json.data?.[stk.t];
+        // Try both original and uppercase keys (server normalizes to uppercase)
+        const info = json.data?.[normalizedTicker] || json.data?.[stk.t] || Object.values(json.data || {})[0];
         if (info?.price) {
           setSf(f => ({ ...f, livePrice: info.price }));
         }
