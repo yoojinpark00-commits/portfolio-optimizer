@@ -585,14 +585,19 @@ function getAdjustedReturn(r, v, leverage) {
 // Computes average forward 6-month SPY returns for each (state5, duration_bucket) combination
 // This tells the optimizer: "Given we're in strong_risk_off for 6 months, what historically happens next?"
 // Duration buckets: [1-3, 4-6, 7-12, 13-24, 24+] months
-function buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym) {
+// Build regime-duration model using ONLY data available before cutoffIdx (no forward-looking bias)
+// cutoffIdx = null means use all data (for live optimizer / analytics display)
+function buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym, cutoffIdx) {
   if (!historicalRegimes || !sortedDates || !returnsByDateSym) return null;
   const buckets = [[1,3],[4,6],[7,12],[13,24],[25,999]];
   const bucketLabels = ["1-3m","4-6m","7-12m","13-24m","24m+"];
   const model = {}; // state5 → [{fwdReturn, count, label}]
 
+  // Use data up to cutoffIdx (exclusive), or all data if cutoffIdx is null
+  const maxIdx = cutoffIdx != null ? Math.min(cutoffIdx, sortedDates.length) : sortedDates.length;
+
   // For each month in history, compute: what regime state + duration are we in, and what does SPY do over the next 6 months?
-  for (let i = 12; i < sortedDates.length - 6; i++) { // need 12m lookback and 6m forward
+  for (let i = 12; i < maxIdx - 6; i++) { // need 12m lookback and 6m forward
     const dateKey = sortedDates[i];
     const regData = historicalRegimes[dateKey];
     if (!regData || !regData.state5) continue;
@@ -610,7 +615,7 @@ function buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateS
 
     // Compute forward 6-month SPY return from this point
     let fwd6m = 0, fwdCount = 0;
-    for (let f = 1; f <= 6 && i + f < sortedDates.length; f++) {
+    for (let f = 1; f <= 6 && i + f < maxIdx; f++) {
       const fwdData = returnsByDateSym[sortedDates[i + f]];
       if (fwdData?.SPY) { fwd6m += fwdData.SPY.ret; fwdCount++; }
     }
@@ -828,7 +833,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod;
-  const aggBonus = baseAggBonus * durationScale * accelMod * durationFwdMod + (state5.includes("risk_on") ? entryBonus : 0);
+  // Entry bonus reaches aggressive categories in ANY state (including neutral after bear→neutral recovery)
+  const aggBonus = baseAggBonus * durationScale * accelMod * durationFwdMod + entryBonus;
   const kellyMult = baseKellyMult;
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
@@ -1088,17 +1094,27 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     });
   }
   // Final max cap enforcement: no single position > 30% of total deployment
+  // Redistribute excess proportional to REMAINING HEADROOM (cap - current), not equally
+  // This guarantees convergence: no position can be pushed over the cap by redistribution
   const finalTotal = filtered.reduce((s, r) => s + r.dollars, 0) || 1;
   const maxPosDollars = finalTotal * 0.30;
-  for (let pass = 0; pass < 3; pass++) {
-    let excess = 0, nUnder = 0;
+  for (let pass = 0; pass < 5; pass++) {
+    let excess = 0;
     filtered.forEach(r => {
       if (r.dollars > maxPosDollars) { excess += r.dollars - maxPosDollars; r.dollars = maxPosDollars; }
-      else nUnder++;
     });
     if (excess <= 0) break;
-    const perPos = nUnder > 0 ? Math.round(excess / nUnder) : 0;
-    if (perPos > 0) filtered.forEach(r => { if (r.dollars < maxPosDollars) r.dollars += perPos; });
+    // Compute total headroom across all under-cap positions
+    let totalHeadroom = 0;
+    filtered.forEach(r => { if (r.dollars < maxPosDollars) totalHeadroom += maxPosDollars - r.dollars; });
+    if (totalHeadroom <= 0) break; // all positions at cap, nowhere to redistribute
+    // Distribute proportional to headroom — position at 10% gets more than position at 28%
+    filtered.forEach(r => {
+      if (r.dollars < maxPosDollars) {
+        const headroom = maxPosDollars - r.dollars;
+        r.dollars += excess * (headroom / totalHeadroom);
+      }
+    });
   }
   filtered.forEach(r => { r.pct = +((r.dollars / cash) * 100).toFixed(1); });
   return filtered;
@@ -1481,6 +1497,8 @@ export default function App() {
     let totalTaxPaid = 0, totalRebalances = 0;
     let totalTaxSaved = 0; // tax saved via loss offsets
     let lossCarryover = 0; // unused losses carried forward to future periods
+    let annualOrdinaryOffsetUsed = 0; // track $3k/year ordinary income offset
+    let lastOffsetYear = 0; // reset tracker each calendar year
     let lastRebalanceMonth = null;
     let lastBestWeights = null; // for warm-starting optimizer
     const btTaxRates = getTaxRates(taxState);
@@ -1491,12 +1509,11 @@ export default function App() {
     const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
 
     // ── Build regime-duration-return model from historical data ──
-    // This tells the optimizer: "Given state X at duration Y, forward returns are historically Z"
+    // IMPORTANT: To avoid forward-looking bias, we build this INCREMENTALLY during the backtest.
+    // Each evaluation only uses data up to 12 months before the current month.
+    // The model is rebuilt periodically (every 12 months) for efficiency.
     let regimeDurModel = null;
-    if (historicalRegimes) {
-      setBtProgress("Building regime-duration-return model...");
-      regimeDurModel = buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym);
-    }
+    let lastModelBuildDate = null;
 
     for (let mi = 0; mi < simDates.length; mi++) {
       const monthKey = simDates[mi];
@@ -1531,13 +1548,13 @@ export default function App() {
       if (useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
         if (regData) {
-          btState5 = regData.state5 || null; btRegimeScore = regData.score; btAcceleration = regData.acceleration || null;
+          btState5 = regData.state5 || null; btRegimeScore = regData.score; btAcceleration = regData.acceleration ?? null;
           const regime3 = regData.regime; btDuration = 1;
           for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
             const prev = historicalRegimes[sortedDates[mIdx - lb]];
             if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
           }
-          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition, durationModel: regimeDurModel,
+          btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
             threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) };
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
         }
@@ -1548,7 +1565,7 @@ export default function App() {
       setBtProgress(`Evaluating ${monthKey}...`);
       await new Promise(r => setTimeout(r, 0));
 
-      // Step 3: Trailing stats with RECENCY WEIGHTING + MEAN REVERSION
+      // Step 3: Trailing stats with RECENCY WEIGHTING + RETURN SHRINKAGE
       // Recent months matter more than old months to avoid momentum whipsaw
       // (e.g., Jan 2021 still seeing the March-Dec 2020 rocket with equal weight)
       const trailingStats = {};
@@ -1576,8 +1593,12 @@ export default function App() {
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
         trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
       }
+      const isBullish = btState5 && (btState5.includes("risk_on"));
+      // In bull markets: exclude assets below -50% (likely broken).
+      // In bear/neutral: relax to -80% so crash recovery candidates remain accessible.
+      const returnFloor = isBullish ? -50 : -80;
       const allCandidates = Object.values(trailingStats).filter(s => {
-        if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
+        if (s.t === "SPY" || s.v <= 0 || s.r <= returnFloor) return false;
         // For stocks: only include if it was a sector leader for this year
         const db = etfDbMap[s.t];
         if (db?.type === "stock") {
@@ -1586,20 +1607,36 @@ export default function App() {
         }
         return true;
       });
-      // Pre-filter: top 25 by trailing Sharpe + recovery plays during risk-off
-      let candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 25);
-      // During risk-off: also include beaten-down assets with high vol (recovery plays)
-      // These have negative trailing Sharpe but may offer the best rebound potential
-      if (btState5 && (btState5.includes("risk_off") || btState5 === "neutral")) {
-        const recoveryPlays = allCandidates
-          .filter(s => s.r < 0 && s.v > 20 && !candidates.find(c => c.t === s.t))
-          .sort((a, b) => a.r - b.r) // most beaten-down first
-          .slice(0, 5);
-        candidates = [...candidates, ...recoveryPlays];
+      // ── Tiered candidate selection ──
+      // Bull markets: top 50 by trailing Sharpe — momentum matters, concentrate on winners
+      // Bear/neutral: ALL candidates — diversification matters most, bonds/gold/intl may lead
+      let candidates;
+      if (isBullish) {
+        candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 50);
+      } else {
+        // Full universe in bear/neutral — recovery candidates included via relaxed return floor
+        const sorted = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v));
+        candidates = [...sorted]; // all candidates
       }
       if (candidates.length < 3) continue;
 
-      // Step 4: Optimizer (1000 iterations for speed)
+      // Scale iterations to candidate pool: more candidates → more iterations needed for coverage
+      const btIterations = candidates.length > 80 ? 600 : candidates.length > 40 ? 400 : 300;
+      setBtProgress(`${monthKey}: ${isBullish ? "bull" : "bear/neutral"} → ${candidates.length} candidates, ${btIterations} iterations`);
+
+      // Rebuild regime-duration model periodically (every 12 months) using only PAST data
+      // This prevents forward-looking bias: the model at 2008-10 only knows data up to 2007-10
+      if (historicalRegimes && (!lastModelBuildDate || mIdx - dateToIdx[lastModelBuildDate] >= 12)) {
+        const cutoffIdx = Math.max(0, mIdx - 6); // 6-month gap to prevent leakage
+        if (cutoffIdx > 24) {
+          regimeDurModel = buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym, cutoffIdx);
+          lastModelBuildDate = monthKey;
+        }
+      }
+      // Update btRegime with current model
+      if (btRegime) btRegime.durationModel = regimeDurModel;
+
+      // Step 4: Optimizer (btIterations scaled to candidate pool size)
       // Build warm-start weights: map previous best allocation to current candidate indices
       let warmWeights = null;
       if (lastBestWeights) {
@@ -1608,7 +1645,7 @@ export default function App() {
           warmWeights[i] = lastBestWeights[candidates[i].t] || 0;
         }
       }
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, 300, warmWeights);
+      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights);
       if (!result || result.length === 0) continue;
       // Save best weights for warm-starting next evaluation
       lastBestWeights = {};
@@ -1656,10 +1693,9 @@ export default function App() {
 
       // Compute realized gains AND losses using ACTUAL cost basis
       let grossGains = 0, grossLosses = 0;
-      const prevAlloc2 = { ...optAlloc }; // snapshot before changes
       for (const sell of trades.filter(t => t.action === "SELL")) {
         const ticker = sell.ticker;
-        const oldWt = prevAlloc2[ticker] || 0;
+        const oldWt = prevAlloc[ticker] || 0;
         if (oldWt <= 0) continue;
         const sellWt = Math.abs(sell.change / 100); // weight being sold
         const proportionSold = Math.min(1, sellWt / oldWt); // fraction of position being liquidated
@@ -1675,7 +1711,11 @@ export default function App() {
       const availableLosses = grossLosses + lossCarryover;
       const netGains = Math.max(0, grossGains - availableLosses);
       const excessLosses = Math.max(0, availableLosses - grossGains);
-      const ordinaryIncomeOffset = Math.min(excessLosses, 3000);
+      // $3,000/year ordinary income offset — track annual usage (IRS annual limit, not per-rebalance)
+      if (mYear !== lastOffsetYear) { annualOrdinaryOffsetUsed = 0; lastOffsetYear = mYear; }
+      const remainingAnnualOffset = Math.max(0, 3000 - annualOrdinaryOffsetUsed);
+      const ordinaryIncomeOffset = Math.min(excessLosses, remainingAnnualOffset);
+      annualOrdinaryOffsetUsed += ordinaryIncomeOffset;
       const ordinaryTaxSaved = ordinaryIncomeOffset * (btTaxRates.st / 100);
       const newCarryover = excessLosses - ordinaryIncomeOffset;
 
@@ -1701,7 +1741,7 @@ export default function App() {
 
       // Hurdle: tax cost × multiplier, with 1.5% minimum floor + light turnover cost
       const taxHurdle = isFirstAllocation ? -999 :
-        btTransition && btTransition.includes("bear") && btTransition.includes("→") && btDuration >= 2 && btDuration <= 8 ? tcPct * 0.5 :
+        btTransition && btTransition.startsWith("bear→") && btDuration >= 2 && btDuration <= 8 ? tcPct * 0.5 :
         curAlpha > 3 ? tcPct * 2.0 :
         curAlpha < -2 ? tcPct * 0.8 :
         tcPct * 1.2;
@@ -1715,7 +1755,7 @@ export default function App() {
         for (const [ticker, newWt] of Object.entries(newAlloc)) {
           if (newWt <= 0.005) continue;
           const closePrice = monthPrices2[ticker]?.close || 0;
-          const oldWt = prevAlloc2[ticker] || 0;
+          const oldWt = prevAlloc[ticker] || 0;
           if (oldWt <= 0.005) {
             // New position: buying at current close price
             const dollars = newWt * optValue;
@@ -1750,7 +1790,8 @@ export default function App() {
           lossOffset: Math.round(Math.min(grossGains, availableLosses)), lossCarryover: Math.round(newCarryover),
           returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition,
           fwdSignal: regimeDurModel ? getRegimeDurationFwd(regimeDurModel, btState5 || "neutral", btDuration) : null,
-          threeStage: btRegime?.threeStage ? { pattern: btRegime.threeStage.pattern, type: btRegime.threeStage.patternType, signal: btRegime.threeStage.patternSignal, bridgeDur: btRegime.threeStage.bridgeDuration, effDur: btRegime.threeStage.effectiveDuration } : null });
+          threeStage: btRegime?.threeStage ? { pattern: btRegime.threeStage.pattern, type: btRegime.threeStage.patternType, signal: btRegime.threeStage.patternSignal, bridgeDur: btRegime.threeStage.bridgeDuration, effDur: btRegime.threeStage.effectiveDuration } : null,
+          candidateCount: candidates.length, iterations: btIterations });
       }
 
       } catch (e) { console.error(`Backtest error at ${monthKey}:`, e); }
@@ -1801,7 +1842,7 @@ export default function App() {
           if (rd) {
             yearEndState5 = rd.state5 || rd.regime || null;
             yearEndRegimeScore = rd.score || null;
-            yearEndAcceleration = rd.acceleration || null;
+            yearEndAcceleration = rd.acceleration ?? null;
             // Compute duration at year-end
             const rdIdx = dateToIdx[mk];
             if (rdIdx != null) {
@@ -1964,6 +2005,19 @@ export default function App() {
     }
     const spyCAGR = (Math.pow(spyFinal / startCash, 1 / Math.max(1, simDates.length / 12)) - 1) * 100;
 
+    // Fetch regime data for simulation (matches main backtest)
+    let simHistRegimes = null;
+    if (useRegime) {
+      try {
+        const regResp = await fetch("/api/regime?history=true");
+        const regJson = await regResp.json();
+        if (regJson.monthlyRegimes) {
+          simHistRegimes = {};
+          regJson.monthlyRegimes.forEach(r => { simHistRegimes[r.date] = r; });
+        }
+      } catch (e) { /* proceed without regime */ }
+    }
+
     // ── Run N simulations ──
     const results = [];
     for (let sim = 0; sim < NUM_SIMS; sim++) {
@@ -1978,6 +2032,8 @@ export default function App() {
       let simTaxPaid = 0;
       let simLossCarry = 0;
       let simCostBasis = {}; // ticker → actual dollar cost basis
+      let simAnnualOrdOffsetUsed = 0; // Fix #3: track $3k/year limit
+      let simLastOffsetYear = 0;
       const simTaxRates = getTaxRates(taxState);
 
       for (let mi = 0; mi < simDates.length; mi++) {
@@ -2033,13 +2089,26 @@ export default function App() {
             if (!yearStocks.includes(s.t)) return false;
           }
           return true;
-        }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 20);
-        // Randomly sample 12 from top 20 — ensures each sim sees different candidates
-        while (cands.length > 12) cands.splice(Math.floor(Math.random() * cands.length), 1);
+        }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 30);
+        // Randomly sample 20 from top 30 — ensures each sim sees different candidates
+        while (cands.length > 20) cands.splice(Math.floor(Math.random() * cands.length), 1);
         if (cands.length < 3) continue;
 
-        // Lightweight optimizer (100 iterations — speed over precision)
-        const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, null, 100);
+        // Lightweight optimizer with regime context (matches main backtest strategy)
+        let simRegime = null;
+        if (simHistRegimes) {
+          const rd = simHistRegimes[monthKey];
+          if (rd) {
+            let sDur = 1;
+            const sRegime3 = rd.regime;
+            for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
+              const prev = simHistRegimes[sortedDates[mIdx - lb]];
+              if (prev && prev.regime === sRegime3) sDur++; else break;
+            }
+            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null };
+          }
+        }
+        const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, simRegime, 100);
         if (!result || result.length === 0) continue;
 
         const newAlloc = {};
@@ -2069,7 +2138,11 @@ export default function App() {
         const availLoss = grossLosses + simLossCarry;
         const netGains = Math.max(0, grossGains - availLoss);
         const excessLoss = Math.max(0, availLoss - grossGains);
-        const ordOffset = Math.min(excessLoss, 3000);
+        // Fix #3: $3k ordinary income offset is per-year, not per-rebalance
+        if (mYear !== simLastOffsetYear) { simAnnualOrdOffsetUsed = 0; simLastOffsetYear = mYear; }
+        const remainingOrdOffset = Math.max(0, 3000 - simAnnualOrdOffsetUsed);
+        const ordOffset = Math.min(excessLoss, remainingOrdOffset);
+        simAnnualOrdOffsetUsed += ordOffset;
 
         const taxRate = mSinceRebal >= 12 ? simTaxRates.lt : simTaxRates.st;
         const estTax = netGains * (taxRate / 100);
@@ -3872,7 +3945,7 @@ useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
               <span style={{ fontSize: 16 }}>📈</span><div style={{ fontSize: 13, fontWeight: 700 }}>Backtest: 2006–2025</div>
             </div>
-            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2006-2025). Includes 2008 financial crisis, 2020 COVID crash, and 2022 rate hike cycle. Quarterly evaluation + regime-triggered reviews. SPY-overlap penalty, recovery plays during risk-off, return shrinkage (stocks 80%, ETFs 120%), diversification constraints, and actual cost basis tracking.</div>
+            <div style={{ fontSize: 10, color: cs.dim, marginBottom: 14 }}>Simulates your optimizer settings against historical data (2006-2025). Includes 2008 financial crisis, 2020 COVID crash, and 2022 rate hike cycle. Tiered candidates: top 50 in bull markets, full universe (~130) in bear/neutral. Iterations scale with pool size (300-600). SPY-overlap penalty, return shrinkage (stocks 80%, ETFs 120%), and actual cost basis tracking.</div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -4082,6 +4155,7 @@ useEffect(() => {
                                           {evt.duration > 0 && <span style={{ color: cs.dim, fontWeight: 400 }}> · {evt.duration}m</span>}
                                           {evt.fwdSignal?.confidence > 0.3 && <span style={{ color: evt.fwdSignal.fwd > 10 ? cs.green : evt.fwdSignal.fwd < 0 ? cs.red : cs.dim, fontWeight: 400 }}> · Fwd 6m: {evt.fwdSignal.fwd > 0 ? "+" : ""}{evt.fwdSignal.fwd.toFixed(1)}%</span>}
                                           {evt.threeStage && <span style={{ color: evt.threeStage.signal > 0 ? cs.green : evt.threeStage.signal < 0 ? cs.red : cs.dim, fontWeight: 400 }}> · {evt.threeStage.pattern} ({evt.threeStage.type?.replace(/_/g," ")})</span>}
+                                          {evt.candidateCount && <span style={{ color: cs.dim, fontWeight: 400 }}> · {evt.candidateCount} candidates/{evt.iterations} iter</span>}
                                         </div>
                                         <div style={{ fontSize: 8, fontFamily: mono2, color: cs.dim, marginBottom: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
                                           <span>Gains: <span style={{ color: cs.green }}>{fmt$(evt.grossGains || 0)}</span></span>
