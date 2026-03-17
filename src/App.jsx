@@ -157,6 +157,113 @@ const ETF_DB = [
   {t:"SOXL",n:"Direxion 3x Semiconductor",c:"Sector Tech",h:30,er:.76,r:40.0,v:70.0,d:0,lev:3},
   {t:"QLD",n:"ProShares 2x QQQ",c:"US Growth",h:101,er:.95,r:25.0,v:40.0,d:0,lev:2},
   {t:"SSO",n:"ProShares 2x S&P 500",c:"US Large Cap",h:503,er:.89,r:18.0,v:30.0,d:0,lev:2},
+  // ── Extended: US Broad / Large Cap ──
+  {t:"SPYD",n:"SPDR Portfolio S&P 500 High Div",c:"US Dividend",h:80,er:.07,r:8.5,v:16.0,d:4.5},
+  {t:"COWZ",n:"Pacer US Cash Cows 100",c:"US Value",h:100,er:.49,r:11.0,v:17.0,d:1.8},
+  {t:"DIVO",n:"Amplify CWP Enhanced Dividend",c:"US Dividend",h:25,er:.55,r:9.5,v:13.0,d:4.5},
+  {t:"NOBL",n:"ProShares S&P 500 Div Aristoc",c:"US Dividend",h:66,er:.35,r:9.0,v:14.5,d:2.1},
+  {t:"FDN",n:"First Trust Dow Jones Internet",c:"US Growth",h:40,er:.51,r:13.0,v:22.0,d:0},
+  {t:"ONEQ",n:"Fidelity Nasdaq Composite",c:"US Growth",h:1000,er:.21,r:13.5,v:19.0,d:.5},
+  {t:"SPGP",n:"Invesco S&P 500 GARP",c:"US Growth",h:200,er:.34,r:11.0,v:16.5,d:1.0},
+  {t:"RPV",n:"Invesco S&P 500 Pure Value",c:"US Value",h:120,er:.35,r:9.0,v:18.0,d:2.0},
+  {t:"VONV",n:"Vanguard Russell 1000 Value",c:"US Value",h:850,er:.08,r:9.5,v:15.5,d:2.0},
+  {t:"IWN",n:"iShares Russell 2000 Value",c:"US Small Cap",h:1400,er:.24,r:7.5,v:19.5,d:1.8},
+  {t:"IWO",n:"iShares Russell 2000 Growth",c:"US Small Cap",h:1200,er:.24,r:8.5,v:22.0,d:.5},
+  {t:"VBR",n:"Vanguard Small Cap Value",c:"US Small Cap",h:900,er:.07,r:8.0,v:19.0,d:1.9},
+  {t:"VBK",n:"Vanguard Small Cap Growth",c:"US Small Cap",h:700,er:.07,r:8.5,v:21.5,d:.4},
+  {t:"AVUV",n:"Avantis US Small Cap Value",c:"US Small Cap",h:500,er:.25,r:9.5,v:20.0,d:1.5},
+  {t:"SCHA",n:"Schwab US Small Cap",c:"US Small Cap",h:1800,er:.04,r:8.0,v:19.5,d:1.2},
+  {t:"VO",n:"Vanguard Mid-Cap",c:"US Mid Cap",h:350,er:.04,r:9.5,v:16.5,d:1.3},
+  {t:"IWR",n:"iShares Russell Midcap",c:"US Mid Cap",h:800,er:.19,r:9.5,v:16.0,d:1.2},
+  {t:"IVOO",n:"Vanguard S&P Mid-Cap 400",c:"US Mid Cap",h:400,er:.10,r:9.0,v:17.0,d:1.3},
+  // ── Extended: Income / Covered Call ──
+  {t:"XYLD",n:"Global X S&P 500 Covered Call",c:"US Dividend",h:503,er:.60,r:7.0,v:11.0,d:9.5},
+  {t:"QYLD",n:"Global X Nasdaq 100 Covered Call",c:"US Dividend",h:101,er:.60,r:7.5,v:13.0,d:11.0},
+  {t:"NUSI",n:"Nationwide Nasdaq 100 Risk-Managed",c:"US Dividend",h:101,er:.68,r:7.0,v:12.0,d:7.0},
+  {t:"SVOL",n:"Simplify Volatility Premium",c:"US Dividend",h:1,er:.50,r:8.0,v:10.0,d:15.0},
+  // ── Extended: Factor / Smart Beta ──
+  {t:"DGRW",n:"WisdomTree US Qual Div Growth",c:"US Dividend",h:300,er:.28,r:10.5,v:14.5,d:1.8},
+  {t:"MOAT",n:"VanEck Morningstar Wide Moat",c:"Factor Quality",h:50,er:.46,r:11.0,v:16.0,d:1.2},
+  {t:"JMOM",n:"JPMorgan US Momentum Factor",c:"Factor Momentum",h:300,er:.12,r:11.5,v:16.5,d:1.0},
+  {t:"FNDX",n:"Schwab Fundamental US Large",c:"US Value",h:1000,er:.25,r:9.5,v:15.5,d:1.8},
+  {t:"VTV",n:"Vanguard Value",c:"US Value",h:340,er:.04,r:9.5,v:15.0,d:2.5},
+  {t:"IUSV",n:"iShares Core S&P US Value",c:"US Value",h:700,er:.04,r:9.2,v:15.2,d:2.2},
+  // ── Extended: Sector SPDRs ──
+  {t:"XLP",n:"Consumer Staples Select SPDR",c:"Sector Consumer",h:33,er:.09,r:7.5,v:12.0,d:2.8},
+  {t:"XLY",n:"Consumer Discretionary SPDR",c:"Sector Consumer",h:52,er:.09,r:10.5,v:19.0,d:.8},
+  {t:"XLK",n:"Technology Select SPDR",c:"Sector Tech",h:70,er:.09,r:14.0,v:19.5,d:.7},
+  {t:"XLV",n:"Health Care Select SPDR",c:"Sector Health",h:60,er:.09,r:9.0,v:14.0,d:1.5},
+  {t:"XBI",n:"SPDR S&P Biotech",c:"Sector Health",h:140,er:.35,r:5.0,v:28.0,d:0},
+  {t:"ARKG",n:"ARK Genomic Revolution",c:"Sector Health",h:45,er:.75,r:4.0,v:32.0,d:0},
+  // ── Extended: International ──
+  {t:"FXI",n:"iShares China Large-Cap",c:"Emerging Mkts",h:50,er:.74,r:2.0,v:28.0,d:2.5},
+  {t:"VNQI",n:"Vanguard Global ex-US Real Estate",c:"Sector RE",h:700,er:.12,r:4.0,v:16.0,d:4.0},
+  {t:"VXUS",n:"Vanguard Total International",c:"International",h:7500,er:.07,r:5.0,v:15.5,d:3.0},
+  {t:"IXUS",n:"iShares Core MSCI Total Intl",c:"International",h:4000,er:.07,r:5.0,v:15.5,d:2.8},
+  {t:"SPDW",n:"SPDR Developed World ex-US",c:"Intl Developed",h:2400,er:.04,r:5.5,v:15.0,d:2.8},
+  {t:"IEFA",n:"iShares Core MSCI EAFE",c:"Intl Developed",h:2500,er:.07,r:5.5,v:15.0,d:2.8},
+  {t:"SCZ",n:"iShares MSCI EAFE Small Cap",c:"Intl Developed",h:1500,er:.39,r:6.0,v:17.0,d:2.2},
+  {t:"SPEM",n:"SPDR Portfolio Emerging Mkts",c:"Emerging Mkts",h:2800,er:.07,r:4.0,v:18.0,d:2.5},
+  {t:"EEMV",n:"iShares MSCI Emerging Min Vol",c:"Emerging Mkts",h:300,er:.25,r:3.5,v:14.0,d:2.8},
+  {t:"FLCH",n:"Franklin FTSE China",c:"Emerging Mkts",h:900,er:.19,r:1.5,v:28.0,d:2.5},
+  {t:"EWT",n:"iShares MSCI Taiwan",c:"Emerging Mkts",h:90,er:.59,r:8.0,v:22.0,d:2.0},
+  {t:"EWJ",n:"iShares MSCI Japan",c:"Intl Developed",h:230,er:.50,r:5.5,v:16.0,d:1.8},
+  {t:"EWG",n:"iShares MSCI Germany",c:"Intl Developed",h:60,er:.50,r:4.0,v:18.0,d:2.5},
+  {t:"EWU",n:"iShares MSCI United Kingdom",c:"Intl Developed",h:90,er:.50,r:5.0,v:15.5,d:3.5},
+  {t:"EWA",n:"iShares MSCI Australia",c:"Intl Developed",h:70,er:.50,r:5.5,v:17.0,d:4.0},
+  {t:"EWC",n:"iShares MSCI Canada",c:"Intl Developed",h:90,er:.50,r:6.0,v:16.5,d:2.5},
+  {t:"EPOL",n:"iShares MSCI Poland",c:"Emerging Mkts",h:30,er:.59,r:3.0,v:25.0,d:2.0},
+  // ── Extended: Fixed Income ──
+  {t:"GOVT",n:"iShares US Treasury Bond",c:"US Treasury",h:100,er:.05,r:2.8,v:6.0,d:3.0},
+  {t:"MUB",n:"iShares National Muni Bond",c:"US Bond",h:5000,er:.07,r:3.0,v:4.5,d:2.5},
+  {t:"HYG",n:"iShares High Yield Corp Bond",c:"US High Yield",h:1200,er:.49,r:4.5,v:7.5,d:5.5},
+  {t:"BKLN",n:"Invesco Senior Loan",c:"US High Yield",h:1000,er:.65,r:4.0,v:3.5,d:6.5},
+  {t:"FLOT",n:"iShares Floating Rate Bond",c:"US Bond",h:300,er:.15,r:3.5,v:1.5,d:5.0},
+  {t:"VTEB",n:"Vanguard Tax-Exempt Bond",c:"US Bond",h:7000,er:.05,r:2.8,v:4.0,d:2.5},
+  {t:"SGOV",n:"iShares 0-3M Treasury Bond",c:"US Treasury",h:1,er:.05,r:4.5,v:.5,d:5.0},
+  {t:"BIL",n:"SPDR 1-3M T-Bill",c:"US Treasury",h:1,er:.14,r:4.5,v:.3,d:5.0},
+  {t:"SCHO",n:"Schwab Short-Term US Treasury",c:"US Treasury",h:50,er:.03,r:3.0,v:2.0,d:3.5},
+  {t:"SCHR",n:"Schwab Interm US Treasury",c:"US Treasury",h:30,er:.03,r:3.2,v:6.0,d:3.2},
+  {t:"SCHZ",n:"Schwab US Aggregate Bond",c:"US Bond",h:8000,er:.03,r:3.0,v:5.5,d:3.2},
+  {t:"FBND",n:"Fidelity Total Bond",c:"US Bond",h:5000,er:.36,r:3.5,v:5.0,d:3.5},
+  {t:"VGSH",n:"Vanguard Short-Term Treasury",c:"US Treasury",h:40,er:.04,r:2.8,v:2.0,d:3.2},
+  {t:"VGIT",n:"Vanguard Interm Treasury",c:"US Treasury",h:20,er:.04,r:3.0,v:6.5,d:3.3},
+  {t:"VGLT",n:"Vanguard Long-Term Treasury",c:"US Treasury",h:10,er:.04,r:2.5,v:14.0,d:3.0},
+  {t:"EDV",n:"Vanguard Extended Duration Treasury",c:"US Treasury",h:5,er:.06,r:1.5,v:20.0,d:2.8},
+  {t:"TMF",n:"Direxion 3x 20Y Treasury",c:"US Treasury",h:1,er:.93,r:-5.0,v:50.0,d:0,lev:3},
+  {t:"TBT",n:"ProShares UltraShort 20Y Treasury",c:"US Treasury",h:1,er:.90,r:5.0,v:35.0,d:0,lev:-2},
+  // ── Extended: Real Estate ──
+  {t:"IYR",n:"iShares US Real Estate",c:"Sector RE",h:80,er:.39,r:6.5,v:18.0,d:3.2},
+  {t:"SCHH",n:"Schwab US REIT",c:"Sector RE",h:150,er:.07,r:6.5,v:18.0,d:3.5},
+  {t:"RWR",n:"SPDR Dow Jones REIT",c:"Sector RE",h:100,er:.25,r:6.5,v:18.5,d:3.8},
+  // ── Extended: Thematic / Niche ──
+  {t:"HACK",n:"ETFMG Prime Cyber Security",c:"Sector Tech",h:60,er:.60,r:10.0,v:22.0,d:0},
+  {t:"BOTZ",n:"Global X Robotics & AI",c:"Sector Tech",h:40,er:.68,r:8.0,v:24.0,d:.5},
+  {t:"LIT",n:"Global X Lithium & Battery",c:"Sector Materials",h:40,er:.75,r:5.0,v:30.0,d:1.0},
+  {t:"TAN",n:"Invesco Solar",c:"Sector Energy",h:30,er:.67,r:3.0,v:35.0,d:.5},
+  {t:"ICLN",n:"iShares Global Clean Energy",c:"Sector Energy",h:100,er:.40,r:3.0,v:28.0,d:1.0},
+  {t:"PBW",n:"Invesco WilderHill Clean Energy",c:"Sector Energy",h:50,er:.62,r:2.0,v:32.0,d:.3},
+  {t:"BLOK",n:"Amplify Transformational Data",c:"Sector Tech",h:50,er:.71,r:8.0,v:30.0,d:0},
+  {t:"BITQ",n:"Bitwise Crypto Industry Innovators",c:"Sector Tech",h:30,er:.85,r:10.0,v:55.0,d:0},
+  {t:"IBIT",n:"iShares Bitcoin Trust",c:"Commodity",h:1,er:.12,r:50.0,v:60.0,d:0},
+  {t:"MSTR",n:"MicroStrategy (Bitcoin proxy)",c:"Sector Tech",h:1,er:0,r:60.0,v:80.0,d:0},
+  {t:"GBTC",n:"Grayscale Bitcoin Trust",c:"Commodity",h:1,er:1.50,r:45.0,v:60.0,d:0},
+  {t:"ETHE",n:"Grayscale Ethereum Trust",c:"Commodity",h:1,er:2.50,r:30.0,v:70.0,d:0},
+  {t:"BITO",n:"ProShares Bitcoin Strategy",c:"Commodity",h:1,er:.95,r:40.0,v:58.0,d:0},
+  {t:"JETS",n:"US Global Jets",c:"Sector Indust",h:30,er:.60,r:6.0,v:28.0,d:.3},
+  {t:"BUZZ",n:"VanEck Social Sentiment",c:"US Growth",h:75,er:.75,r:8.0,v:22.0,d:0},
+  {t:"ARKX",n:"ARK Space Exploration",c:"Sector Tech",h:35,er:.70,r:4.0,v:28.0,d:0},
+  // ── Extended: Utilities / Defensive ──
+  {t:"IDU",n:"iShares US Utilities",c:"Sector Utilities",h:60,er:.39,r:7.5,v:15.0,d:3.0},
+  {t:"VPU",n:"Vanguard Utilities",c:"Sector Utilities",h:70,er:.10,r:7.5,v:15.0,d:3.2},
+  // ── Extended: Materials / Industrials ──
+  {t:"XME",n:"SPDR S&P Metals & Mining",c:"Sector Materials",h:30,er:.35,r:5.0,v:28.0,d:1.5},
+  {t:"PICK",n:"iShares MSCI Global Metals & Mining",c:"Sector Materials",h:200,er:.39,r:4.5,v:25.0,d:3.0},
+  {t:"ITB",n:"iShares US Home Construction",c:"Sector Consumer",h:35,er:.39,r:12.0,v:24.0,d:.5},
+  {t:"ITA",n:"iShares US Aerospace & Defense",c:"Sector Indust",h:35,er:.39,r:10.0,v:18.0,d:.8},
+  {t:"XAR",n:"SPDR S&P Aerospace & Defense",c:"Sector Indust",h:70,er:.35,r:10.5,v:20.0,d:.5},
+  // ── Extended: Buffer / Defined Outcome ──
+  {t:"BUFR",n:"FT Cboe Vest Fund of Buffer ETFs",c:"US Large Cap",h:503,er:.95,r:7.0,v:8.0,d:0},
 ];
 
 const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Sector Health":.62,"Sector Finance":.72,"Sector Energy":.32,"Sector Indust":.75,"Sector Consumer":.78,"Sector RE":.42,"Sector Utilities":.30,"Sector Materials":.48,"Sector Comms":.82,"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Sector Finance":.58,"Sector Energy":.35,"Sector Indust":.60,"Sector Consumer":.62,"Sector RE":.45,"Sector Utilities":.48,"Sector Materials":.42,"Sector Comms":.55,"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Sector Energy":.55,"Sector Indust":.72,"Sector Consumer":.68,"Sector RE":.58,"Sector Utilities":.42,"Sector Materials":.55,"Sector Comms":.62,"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Sector Indust":.55,"Sector Consumer":.42,"Sector RE":.30,"Sector Utilities":.35,"Sector Materials":.62,"Sector Comms":.35,"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Sector Consumer":.72,"Sector RE":.48,"Sector Utilities":.42,"Sector Materials":.68,"Sector Comms":.62,"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Sector RE":.45,"Sector Utilities":.38,"Sector Materials":.48,"Sector Comms":.70,"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Sector Utilities":.62,"Sector Materials":.35,"Sector Comms":.38,"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Sector Materials":.38,"Sector Comms":.32,"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Sector Comms":.42,"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
@@ -2720,11 +2827,36 @@ useEffect(() => {
     const db = addType === "etf" ? ETF_DB.map(e => ({ t: e.t, n: e.n, s: e.c })) : STOCK_DB;
     const local = db.filter(s => s.t.startsWith(q) || s.t.includes(q) || s.n.toLowerCase().includes(query.toLowerCase())).slice(0, 8);
     setStockResults(local);
-    // Live API fallback for both stocks AND ETFs when local results are thin
-    if (local.length < 3 && query.length >= 2) {
+    // Yahoo Finance search fallback — free, instant, covers ALL tickers
+    if (local.length < 5 && query.length >= 2) {
       if (stockTimer) clearTimeout(stockTimer);
       const timer = setTimeout(async () => {
         setStockSearching(true);
+        try {
+          const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+          if (resp.ok) {
+            const json = await resp.json();
+            if (json.results?.length > 0) {
+              const seen = new Set(local.map(l => l.t.toUpperCase()));
+              const merged = [...local];
+              // Map Yahoo categories to our system
+              const etfCatMap = { "ETF": "US Large Cap" }; // default for ETFs not in our DB
+              json.results.forEach(r => {
+                if (!r.t || seen.has(r.t.toUpperCase())) return;
+                seen.add(r.t.toUpperCase());
+                r.t = r.t.toUpperCase();
+                // For ETFs, check if we have category data in our DB
+                const dbEntry = addType === "etf" ? ETF_DB.find(e => e.t === r.t) : null;
+                if (dbEntry) r.s = dbEntry.c;
+                merged.push(r);
+              });
+              setStockResults(merged.slice(0, 12));
+              setStockSearching(false);
+              return;
+            }
+          }
+        } catch (e) { console.warn("Yahoo search failed:", e); }
+        // AI fallback if Yahoo search fails
         try {
           const kind = addType === "etf" ? "ETF" : "stock";
           const resp = await fetch("/api/ai", {
@@ -2734,11 +2866,11 @@ useEffect(() => {
           });
           const data = await resp.json();
           if (data.text) {
-            try { const parsed = JSON.parse(data.text.replace(/```json|```/g, "").trim()); if (Array.isArray(parsed)) { const seen = new Set(local.map(l => l.t.toUpperCase())); const merged = [...local]; parsed.forEach(p => { if (p.t) { p.t = p.t.toUpperCase(); if (!seen.has(p.t)) { seen.add(p.t); merged.push(p) } } }); setStockResults(merged.slice(0, 10)); } } catch (e) { }
+            try { const parsed = JSON.parse(data.text.replace(/```json|```/g, "").trim()); if (Array.isArray(parsed)) { const seen = new Set(local.map(l => l.t.toUpperCase())); const merged = [...local]; parsed.forEach(p => { if (p.t) { p.t = p.t.toUpperCase(); if (!seen.has(p.t)) { seen.add(p.t); merged.push(p) } } }); setStockResults(merged.slice(0, 12)); } } catch (e) { }
           }
         } catch (e) { }
         setStockSearching(false);
-      }, 400);
+      }, 300);
       setStockTimer(timer);
     }
   }, [stockTimer, addType]);
