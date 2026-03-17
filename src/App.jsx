@@ -2609,6 +2609,23 @@ useEffect(() => {
   }), [stocks, live]);
 
   const holdingsVal = useMemo(() => etfV.reduce((s, e) => s + (e.mktValue || 0), 0) + stockV.reduce((s, s2) => s + (s2.mktValue || 0), 0), [etfV, stockV]);
+  const totalCostBasis = useMemo(() => {
+    let basis = 0;
+    etfV.forEach(e => { if (e.shares > 0 && e.costBasis > 0) basis += e.shares * e.costBasis; });
+    stockV.forEach(s => { if (s.shares > 0 && s.costBasis > 0) basis += s.shares * s.costBasis; });
+    return basis;
+  }, [etfV, stockV]);
+  const totalPnL = totalCostBasis > 0 ? holdingsVal - totalCostBasis : null;
+  const totalPnLPct = totalCostBasis > 0 ? ((holdingsVal / totalCostBasis) - 1) * 100 : null;
+  const totalDayChange = useMemo(() => {
+    if (!lastF || Object.keys(live).length === 0) return null;
+    let dayDollar = 0, hasAny = false;
+    etfV.forEach(e => { const lp = live[e.ticker]; if (lp?.change != null && e.mktValue > 0) { dayDollar += e.mktValue * (lp.change / 100) / (1 + lp.change / 100); hasAny = true; }});
+    stockV.forEach(s => { const lp = live[s.ticker]; if (lp?.change != null && s.mktValue > 0) { dayDollar += s.mktValue * (lp.change / 100) / (1 + lp.change / 100); hasAny = true; }});
+    if (!hasAny) return null;
+    const dayPct = holdingsVal > 0 ? (dayDollar / (holdingsVal - dayDollar)) * 100 : 0;
+    return { dollar: dayDollar, pct: dayPct };
+  }, [etfV, stockV, live, lastF, holdingsVal]);
   const totalVal = holdingsVal + cashBalance;
 
   const allPos = useMemo(() => [
@@ -2776,6 +2793,28 @@ useEffect(() => {
     } catch (e) { console.warn("Price fetch failed:", e); }
     setLiveL(false);
   }, [etfs, stocks]);
+
+  // ── Auto-fetch live prices on mount and when holdings change ──
+  const holdingTickers = useMemo(() => [...etfs.map(e => e.ticker), ...stocks.map(s => s.ticker)].filter(Boolean).join(","), [etfs, stocks]);
+  useEffect(() => {
+    if (!holdingTickers) return;
+    // Small delay to avoid fetching during rapid state changes (adding multiple holdings)
+    const timer = setTimeout(() => fetchLive(), 500);
+    return () => clearTimeout(timer);
+  }, [holdingTickers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Periodic refresh every 60 seconds (only during US market hours: 9:30-16:00 ET, Mon-Fri) ──
+  useEffect(() => {
+    if (!holdingTickers) return;
+    const interval = setInterval(() => {
+      const now = new Date();
+      const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const day = et.getDay(), hr = et.getHours(), mn = et.getMinutes();
+      const isMarketOpen = day >= 1 && day <= 5 && (hr > 9 || (hr === 9 && mn >= 30)) && hr < 16;
+      if (isMarketOpen) fetchLive();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [holdingTickers, fetchLive]);
 
   // ─── Optimizer ───
   const runOptimizer = useCallback(async () => {
@@ -3029,10 +3068,17 @@ useEffect(() => {
             <div style={{ fontSize: 8, color: cs.muted, letterSpacing: ".07em", textTransform: "uppercase", fontFamily: mono2 }}>Holdings → Cash → Recommendations</div></div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {totalVal > 0 && <span style={{ fontSize: 11, fontFamily: mono2, color: cs.green, fontWeight: 700 }}>{fmt$(totalVal)}</span>}
+          {totalVal > 0 && <span style={{ fontSize: 11, fontFamily: mono2, color: cs.text, fontWeight: 700 }}>{fmt$(totalVal)}
+            {totalPnL != null && <span style={{ color: totalPnL >= 0 ? cs.green : cs.red, fontSize: 9, fontWeight: 600, marginLeft: 5 }}>
+              {totalPnL >= 0 ? "+" : ""}{fmt$(totalPnL)} ({totalPnLPct >= 0 ? "+" : ""}{totalPnLPct.toFixed(1)}%)
+            </span>}
+            {totalDayChange && <span style={{ color: totalDayChange.dollar >= 0 ? cs.green : cs.red, fontSize: 8, fontWeight: 400, marginLeft: 4 }}>
+              Day {totalDayChange.dollar >= 0 ? "+" : ""}{fmt$(totalDayChange.dollar)}
+            </span>}
+          </span>}
           <button onClick={() => setSrMode(m => m === "std" ? "var" : m === "var" ? "vol2" : "std")} style={{ padding: "4px 8px", borderRadius: 0, border: `1px solid ${srMode !== "std" ? "rgba(190,149,255,.3)" : "#393939"}`, background: srMode !== "std" ? "rgba(190,149,255,.1)" : "transparent", color: srMode !== "std" ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{srMode === "var" ? "VaR" : srMode === "vol2" ? "σ²" : "Std"} SR</button>
           {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()}</span>}
-          <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 0, border: "1px solid rgba(110,231,183,.2)", background: liveL ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.12)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "..." : "⟳ Live"}</button>
+          <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 0, border: `1px solid ${lastF ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.12)"}`, background: liveL ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.12)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "Refreshing..." : lastF ? "⟳ Refresh" : "⟳ Get Prices"}</button>
         </div>
       </div>
 
@@ -3145,80 +3191,82 @@ useEffect(() => {
           {/* Holdings list */}
           {(etfV.length > 0 || stockV.length > 0) && <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             {stockV.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.yellow, marginBottom: 2, marginTop: 4 }}>🔒 Locked Stocks ({stockV.length})</div>}
-            {stockV.map(s => (
-              <div key={s.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: "rgba(251,191,36,.02)", border: "1px solid rgba(251,191,36,.08)" }}>
+            {stockV.map(s => {
+              const gl = s.shares > 0 && s.costBasis > 0 ? s.mktValue - (s.shares * s.costBasis) : null;
+              const glPct = gl != null && s.costBasis > 0 ? ((s.mktValue / (s.shares * s.costBasis)) - 1) * 100 : null;
+              const hp = holdingPeriod(s.purchaseDate);
+              const lp = live[s.ticker];
+              const dayChg = lp?.change || 0;
+              return (
+              <div key={s.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: "rgba(255,171,145,.02)", border: "1px solid rgba(255,171,145,.08)" }}>
                 <span style={{ fontSize: 10 }}>🔒</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap", marginBottom: 2 }}>
                     <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: cs.yellow }}>{s.ticker}</span>
                     <span style={{ fontSize: 9, color: cs.dim }}>{s.name}</span>
                     <Badge color={cs.dim}>{s.sector}</Badge>
+                    {hp && <Badge color={hp.isLT ? cs.green : cs.yellow}>{hp.isLT ? "LT" : `${hp.daysToLT}d→LT`}</Badge>}
                   </div>
-                  <div style={{ fontSize: 8, color: cs.muted, marginTop: 1, fontFamily: mono2 }}>
-                    {s.shares > 0 ? `${s.shares} shares` : "—"} · {s.costBasis > 0 ? `Cost $${(+s.costBasis).toFixed(2)}/sh` : "No cost basis"}
+                  <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>
+                    {s.shares > 0 ? `${s.shares} sh` : "—"}
+                    {lp && <span> · <span style={{ color: cs.text }}>${lp.price?.toFixed(2)}</span></span>}
+                    {!lp && s.costBasis > 0 && <span> · Cost ${(+s.costBasis).toFixed(2)}</span>}
                     {s.shares > 0 && s.costBasis > 0 && <span> · Basis {fmt$(s.shares * s.costBasis)}</span>}
-                    {s.livePrice && <span style={{ color: cs.green }}> · Live ${s.livePrice.toFixed(2)}</span>}
-                    {s.shares > 0 && s.costBasis > 0 && s.mktValue > 0 && (() => {
-                      const gl = s.mktValue - (s.shares * s.costBasis);
-                      const glPct = ((s.mktValue / (s.shares * s.costBasis)) - 1) * 100;
-                      const hp = holdingPeriod(s.purchaseDate);
-                      const rate = hp?.isLT ? taxRates.lt : taxRates.st;
-                      const estTax = gl > 0 ? gl * rate / 100 : 0;
-                      return <span>
-                        <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
-                        {gl > 0 && <span style={{ color: cs.purple, fontSize: 7 }}> tax ~{fmt$(estTax)} ({rate.toFixed(0)}% {hp?.isLT ? "LT" : "ST"})</span>}
-                      </span>;
-                    })()}
-                    {live[s.ticker] && <span style={{ color: live[s.ticker].change >= 0 ? cs.green : cs.red }}> · Day {live[s.ticker].change > 0 ? "+" : ""}{live[s.ticker].change}%</span>}
-                    {totalVal > 0 && <span style={{ color: cs.dim }}> · Wt {((s.mktValue / totalVal) * 100).toFixed(1)}%</span>}
-                    {(() => { const hp = holdingPeriod(s.purchaseDate); return hp ? <span style={{ color: hp.isLT ? cs.green : cs.yellow }}> · {hp.label} {hp.isLT ? "LT" : `(${hp.daysToLT}d→LT)`}</span> : null; })()}
+                    {totalVal > 0 && <span> · Wt {((s.mktValue / totalVal) * 100).toFixed(1)}%</span>}
+                    {gl != null && gl > 0 && <span style={{ color: cs.purple, fontSize: 7 }}> · tax ~{fmt$(gl * (hp?.isLT ? taxRates.lt : taxRates.st) / 100)} ({(hp?.isLT ? taxRates.lt : taxRates.st).toFixed(0)}%)</span>}
                   </div>
                 </div>
-                <div style={{ textAlign: "right", minWidth: 60 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.yellow }}>{fmt$(s.mktValue)}</div>
-                  {s.shares > 0 && <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>{s.shares} sh</div>}
+                <div style={{ textAlign: "right", minWidth: 85 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: cs.text }}>{fmt$(s.mktValue)}</div>
+                  {gl != null && <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2, color: gl >= 0 ? cs.green : cs.red }}>
+                    {gl >= 0 ? "+" : ""}{fmt$(gl)} <span style={{ fontSize: 8, fontWeight: 400 }}>({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
+                  </div>}
+                  {lp && <div style={{ fontSize: 8, fontFamily: mono2, color: dayChg >= 0 ? cs.green : cs.red }}>
+                    Day {dayChg > 0 ? "+" : ""}{dayChg.toFixed(2)}%
+                  </div>}
                 </div>
                 <button onClick={() => removeHolding(s.ticker, "stock")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e => e.currentTarget.style.color = cs.red} onMouseLeave={e => e.currentTarget.style.color = cs.muted}>×</button>
-              </div>
-            ))}
+              </div>);
+            })}
 
             {etfV.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.green, marginBottom: 2, marginTop: 8 }}>📊 ETF Holdings ({etfV.length})</div>}
-            {etfV.map((e, idx) => (
+            {etfV.map((e, idx) => {
+              const gl = e.shares > 0 && e.costBasis > 0 ? e.mktValue - (e.shares * e.costBasis) : null;
+              const glPct = gl != null && e.costBasis > 0 ? ((e.mktValue / (e.shares * e.costBasis)) - 1) * 100 : null;
+              const hp = holdingPeriod(e.purchaseDate);
+              const lp = live[e.ticker];
+              const dayChg = lp?.change || 0;
+              return (
               <div key={e.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: "#1c1c1c", border: "1px solid #262626" }}>
-                <div style={{ width: 4, height: 28, borderRadius: 2, background: PAL[idx % PAL.length] }} />
+                <div style={{ width: 4, height: 40, background: PAL[idx % PAL.length] }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginBottom: 2 }}>
                     <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: cs.green }}>{e.ticker}</span>
                     <span style={{ fontSize: 9, color: cs.dim }}>{e.data?.n}</span>
                     <Badge color={cs.dim}>{e.data?.c}</Badge>
+                    {hp && <Badge color={hp.isLT ? cs.green : cs.yellow}>{hp.isLT ? "LT" : `${hp.daysToLT}d→LT`}</Badge>}
                   </div>
-                  <div style={{ fontSize: 8, color: cs.muted, marginTop: 1, fontFamily: mono2 }}>
-                    {e.shares > 0 ? `${e.shares} shares` : "—"} · {e.costBasis > 0 ? `Cost $${(+e.costBasis).toFixed(2)}/sh` : "No cost basis"}
+                  <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>
+                    {e.shares > 0 ? `${e.shares} sh` : "—"}
+                    {lp && <span> · <span style={{ color: cs.text }}>${lp.price?.toFixed(2)}</span></span>}
+                    {!lp && e.costBasis > 0 && <span> · Cost ${(+e.costBasis).toFixed(2)}</span>}
                     {e.shares > 0 && e.costBasis > 0 && <span> · Basis {fmt$(e.shares * e.costBasis)}</span>}
-                    <span style={{ color: cs.text }}> · Mkt {fmt$(e.mktValue)}</span>
-                    {e.shares > 0 && e.costBasis > 0 && e.mktValue > 0 && (() => {
-                      const gl = e.mktValue - (e.shares * e.costBasis);
-                      const glPct = ((e.mktValue / (e.shares * e.costBasis)) - 1) * 100;
-                      const hp = holdingPeriod(e.purchaseDate);
-                      const rate = hp?.isLT ? taxRates.lt : taxRates.st;
-                      const estTax = gl > 0 ? gl * rate / 100 : 0;
-                      return <span>
-                        <span style={{ color: gl >= 0 ? cs.green : cs.red, fontWeight: 600 }}> · {gl >= 0 ? "+" : ""}{fmt$(gl)} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
-                        {gl > 0 && <span style={{ color: cs.purple, fontSize: 7 }}> tax ~{fmt$(estTax)} ({rate.toFixed(0)}% {hp?.isLT ? "LT" : "ST"})</span>}
-                      </span>;
-                    })()}
-                    {live[e.ticker] && <span style={{ color: live[e.ticker].change >= 0 ? cs.green : cs.red }}> · Live ${live[e.ticker].price} (Day {live[e.ticker].change > 0 ? "+" : ""}{live[e.ticker].change}%)</span>}
-                    {totalVal > 0 && <span style={{ color: cs.dim }}> · Wt {((e.mktValue / totalVal) * 100).toFixed(1)}%</span>}
-                    {(() => { const hp = holdingPeriod(e.purchaseDate); return hp ? <span style={{ color: hp.isLT ? cs.green : cs.yellow }}> · {hp.label} {hp.isLT ? "LT" : `(${hp.daysToLT}d→LT)`}</span> : null; })()}
+                    {totalVal > 0 && <span> · Wt {((e.mktValue / totalVal) * 100).toFixed(1)}%</span>}
+                    {gl != null && gl > 0 && <span style={{ color: cs.purple, fontSize: 7 }}> · tax ~{fmt$(gl * (hp?.isLT ? taxRates.lt : taxRates.st) / 100)} ({(hp?.isLT ? taxRates.lt : taxRates.st).toFixed(0)}%)</span>}
                   </div>
                 </div>
-                <div style={{ textAlign: "right", minWidth: 60 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.green }}>{fmt$(e.mktValue)}</div>
-                  {e.shares > 0 && <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>{e.shares} sh</div>}
+                <div style={{ textAlign: "right", minWidth: 85 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: cs.text }}>{fmt$(e.mktValue)}</div>
+                  {gl != null && <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2, color: gl >= 0 ? cs.green : cs.red }}>
+                    {gl >= 0 ? "+" : ""}{fmt$(gl)} <span style={{ fontSize: 8, fontWeight: 400 }}>({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
+                  </div>}
+                  {lp && <div style={{ fontSize: 8, fontFamily: mono2, color: dayChg >= 0 ? cs.green : cs.red }}>
+                    Day {dayChg > 0 ? "+" : ""}{dayChg.toFixed(2)}%
+                  </div>}
                 </div>
                 <button onClick={() => removeHolding(e.ticker, "etf")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e2 => e2.currentTarget.style.color = cs.red} onMouseLeave={e2 => e2.currentTarget.style.color = cs.muted}>×</button>
-              </div>
-            ))}
+              </div>);
+            })}
           </div>}
 
           {!etfV.length && !stockV.length && <div style={{ textAlign: "center", padding: "40px 18px", border: "1px dashed rgba(255,255,255,.07)", borderRadius: 0 }}>
