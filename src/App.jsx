@@ -2762,24 +2762,48 @@ useEffect(() => {
   }, []);
 
   // ─── Add holding ───
-  const addHolding = useCallback(() => {
+  const addHolding = useCallback(async () => {
     if (!sf.t) return;
+    setAdding(true);
     const ticker = sf.t.toUpperCase(); const shares = +sf.sh || 0; const costBasis = +sf.cb || 0;
-    const price = sf.livePrice || costBasis; const mktValue = price * shares;
-    const purchaseDate = sf.pd || new Date().toISOString().slice(0, 10); // use user-provided or today
+    const purchaseDate = sf.pd || new Date().toISOString().slice(0, 10);
+
+    // Always fetch live price — don't rely on selectTicker having been called
+    let livePrice = sf.livePrice || 0;
+    if (livePrice <= 0) {
+      try {
+        const yahooTicker = ticker.replace(".", "-");
+        const resp = await fetch(`/api/prices?tickers=${yahooTicker}`);
+        if (resp.ok) {
+          const json = await resp.json();
+          livePrice = json.data?.[ticker]?.price || json.data?.[yahooTicker]?.price || Object.values(json.data || {})[0]?.price || 0;
+        }
+      } catch (e) { console.warn(`Price fetch for ${ticker} failed:`, e); }
+    }
+
+    // Use live price for market value, cost basis for G/L tracking
+    const priceForMV = livePrice || costBasis; // best available price for market value
+    const mktValue = shares > 0 ? priceForMV * shares : 0;
+    // costBasis stays as user-entered (what they actually paid) — NOT the live price
+    // If user didn't enter cost basis, use live price as fallback (just bought at market)
+    const finalCostBasis = costBasis > 0 ? costBasis : livePrice;
+
     if (addType === "etf") {
-      if (etfs.find(e => e.ticker === ticker)) return;
+      if (etfs.find(e => e.ticker === ticker)) { setAdding(false); return; }
       let etfData = ETF_DB.find(e => e.t === ticker);
       if (!etfData) {
         const cat = sf.sec || "US Large Cap";
         etfData = { t: ticker, n: sf.n || ticker, c: cat, h: 50, er: .20, r: 8.0, v: 18.0, d: 1.0 };
       }
-      setEtfs(p => [...p, { ticker, data: etfData, shares, costBasis, mktValue, type: "etf", purchaseDate }]);
+      setEtfs(p => [...p, { ticker, data: etfData, shares, costBasis: finalCostBasis, mktValue, type: "etf", purchaseDate }]);
     } else {
-      if (stocks.find(s => s.ticker === ticker)) return;
-      setStocks(p => [...p, { ticker, name: sf.n || ticker, shares, costBasis, mktValue, sector: sf.sec || "Technology", type: "stock", locked: true, purchaseDate }]);
+      if (stocks.find(s => s.ticker === ticker)) { setAdding(false); return; }
+      setStocks(p => [...p, { ticker, name: sf.n || ticker, shares, costBasis: finalCostBasis, mktValue, sector: sf.sec || "Technology", type: "stock", locked: true, purchaseDate }]);
     }
+    // Update live state immediately for this ticker
+    if (livePrice > 0) setLive(prev => ({ ...prev, [ticker]: { price: livePrice, change: 0, ...(prev[ticker] || {}) } }));
     setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology", pd: "" });
+    setAdding(false);
   }, [sf, addType, etfs, stocks]);
 
   const removeHolding = useCallback((ticker, type) => {
@@ -3291,7 +3315,7 @@ useEffect(() => {
                 <input type="number" value={sf.cb} onChange={e => setSf(f => ({ ...f, cb: e.target.value }))} placeholder="150" style={inpS} /></div>
               <div style={{ flex: "1 1 90px", minWidth: 80 }}><label style={{ fontSize: 8, color: cs.dim, display: "block", marginBottom: 2, fontFamily: mono2 }}>DATE BOUGHT</label>
                 <input type="date" value={sf.pd} onChange={e => setSf(f => ({ ...f, pd: e.target.value }))} max={new Date().toISOString().slice(0, 10)} style={{ ...inpS, fontSize: 10 }} /></div>
-              <div style={{ display: "flex", alignItems: "end" }}><button onClick={addHolding} disabled={adding} style={{ padding: "7px 14px", borderRadius: 0, border: "none", background: adding ? "rgba(66,190,101,.3)" : cs.blue, color: cs.bg, fontSize: 10, fontWeight: 700, cursor: adding ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{adding ? "Looking up..." : "+ Add"}</button></div>
+              <div style={{ display: "flex", alignItems: "end" }}><button onClick={addHolding} disabled={adding} style={{ padding: "7px 14px", borderRadius: 0, border: "none", background: adding ? "#393939" : cs.blue, color: adding ? cs.dim : cs.bg, fontSize: 10, fontWeight: 700, cursor: adding ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{adding ? "Fetching price..." : "+ Add"}</button></div>
             </div>
             {(adding || priceInfo) && <div style={{ marginTop: 6, padding: "5px 9px", borderRadius: 0, background: "rgba(66,190,101,.06)", fontSize: 9, color: cs.green }}>
               {adding ? <><span style={{ animation: "pulse 1.5s ease-in-out infinite" }}>✦</span> Fetching live price...</> : `✓ ${priceInfo}`}
