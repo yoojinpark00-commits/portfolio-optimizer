@@ -1325,6 +1325,178 @@ function Scatter({ data, cp, w: W = 520, h: H = 320 }) {
 
 const fmt$ = v => v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(1)}k` : `$${(+v || 0).toFixed(0)}`;
 
+// ─── Interactive Equity Curve Component ───
+function EquityCurve({ curves, sc2 }) {
+  const [zoomRange, setZoomRange] = React.useState(null);
+  const [hoverIdx, setHoverIdx] = React.useState(null);
+  const [showDD, setShowDD] = React.useState(false);
+  const [dragStart, setDragStart] = React.useState(null);
+  const [dragging, setDragging] = React.useState(null);
+  const svgRef = React.useRef(null);
+
+  const fullLen = curves.opt.length;
+  const rangeStart = zoomRange ? zoomRange[0] : 0;
+  const rangeEnd = zoomRange ? zoomRange[1] : fullLen - 1;
+  const sliceLen = rangeEnd - rangeStart + 1;
+
+  const optSlice = curves.opt.slice(rangeStart, rangeEnd + 1);
+  const spySlice = curves.spy.slice(rangeStart, rangeEnd + 1);
+  const balSlice = curves.bal60.slice(rangeStart, rangeEnd + 1);
+
+  const allPtsZ = [...optSlice, ...spySlice, ...balSlice];
+  const maxVZ = Math.max(...allPtsZ.map(p => p.value));
+  const minVZ = Math.min(...allPtsZ.map(p => p.value));
+  const WZ = 560, HZ = 310, pdZ = { t: 25, r: 15, b: 52, l: 62 };
+  const wZ = WZ - pdZ.l - pdZ.r, hZ = HZ - pdZ.t - pdZ.b;
+  const sxZ = (i) => pdZ.l + (i / Math.max(1, sliceLen - 1)) * wZ;
+  const syZ = (v) => pdZ.t + hZ - ((v - minVZ) / (maxVZ - minVZ || 1)) * hZ;
+  const drawLineZ = (data) => data.map((p, i) => `${sxZ(i)},${syZ(p.value)}`).join(" ");
+
+  const computeDD = (data) => {
+    let peak = data[0]?.value || 0;
+    return data.map(p => { if (p.value > peak) peak = p.value; return { dd: ((p.value - peak) / peak) * 100, date: p.date }; });
+  };
+  const optDD = showDD ? computeDD(optSlice) : null;
+  const maxDDInRange = optDD ? Math.min(...optDD.map(d => d.dd)) : 0;
+
+  const hoverPt = hoverIdx != null ? {
+    opt: optSlice[hoverIdx], spy: spySlice[hoverIdx], bal: balSlice[hoverIdx],
+    dd: optDD ? optDD[hoverIdx] : null, x: sxZ(hoverIdx),
+  } : null;
+
+  const getIdxFromMouse = (e) => {
+    if (!svgRef.current) return null;
+    const rect = svgRef.current.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / rect.width * WZ;
+    const idx = Math.round(((mx - pdZ.l) / wZ) * (sliceLen - 1));
+    return Math.max(0, Math.min(sliceLen - 1, idx));
+  };
+
+  const setPeriod = (months) => {
+    if (!months) { setZoomRange(null); return; }
+    const end = fullLen - 1;
+    const start = Math.max(0, end - months);
+    setZoomRange([start, end]);
+  };
+
+  const yearMarkers = [];
+  for (let i = 0; i < sliceLen; i++) {
+    const d = optSlice[i]?.date;
+    if (d && (i === 0 || d.slice(0, 4) !== optSlice[i - 1]?.date?.slice(0, 4))) {
+      yearMarkers.push({ i, year: d.slice(0, 4) });
+    }
+  }
+  const showEvery = sliceLen < 48 ? 1 : sliceLen < 96 ? 2 : sliceLen < 144 ? 3 : 4;
+  const filteredMarkers = yearMarkers.filter((_, idx) => idx % showEvery === 0);
+
+  return <div style={cardS}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+      <div style={{ fontSize: 11, fontWeight: 700 }}>Equity Curve — ${(sc2/1000).toFixed(0)}k Starting Capital</div>
+      <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+        {[
+          { label: "1Y", m: 12 }, { label: "3Y", m: 36 }, { label: "5Y", m: 60 },
+          { label: "10Y", m: 120 }, { label: "All", m: null },
+        ].map(p => {
+          const isActive = p.m === null ? !zoomRange : zoomRange && (rangeEnd - rangeStart + 1) === Math.min(p.m, fullLen);
+          return <button key={p.label} onClick={() => setPeriod(p.m)}
+            style={{ padding: "3px 8px", borderRadius: 0, border: `1px solid ${isActive ? cs.blue : cs.border}`,
+              background: isActive ? `${cs.blue}20` : "transparent", color: isActive ? cs.blue : cs.dim,
+              fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: mono2 }}>{p.label}</button>;
+        })}
+        <button onClick={() => setShowDD(d => !d)}
+          style={{ padding: "3px 8px", borderRadius: 0, border: `1px solid ${showDD ? cs.red : cs.border}`,
+            background: showDD ? `${cs.red}20` : "transparent", color: showDD ? cs.red : cs.dim,
+            fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: mono2, marginLeft: 4 }}>DD</button>
+      </div>
+    </div>
+
+    <div style={{ display: "flex", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, background: cs.green, display: "inline-block" }} />Optimized ({fmt$(optSlice[optSlice.length - 1]?.value)})</span>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, background: cs.blue, display: "inline-block" }} />SPY ({fmt$(spySlice[spySlice.length - 1]?.value)})</span>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, background: cs.purple, display: "inline-block" }} />60/40 ({fmt$(balSlice[balSlice.length - 1]?.value)})</span>
+      {showDD && <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4, color: cs.red }}><span style={{ width: 14, height: 3, background: cs.red, opacity: .3, display: "inline-block" }} />Drawdown</span>}
+    </div>
+
+    <svg ref={svgRef} width={WZ} height={HZ} style={{ overflow: "visible", maxWidth: "100%", cursor: "crosshair" }}
+      viewBox={`0 0 ${WZ} ${HZ}`}
+      onMouseMove={(e) => { const idx = getIdxFromMouse(e); setHoverIdx(idx); if (dragStart != null) setDragging(idx); }}
+      onMouseLeave={() => { setHoverIdx(null); setDragStart(null); setDragging(null); }}
+      onMouseDown={(e) => { e.preventDefault(); setDragStart(getIdxFromMouse(e)); setDragging(null); }}
+      onMouseUp={() => {
+        if (dragStart != null && dragging != null && Math.abs(dragging - dragStart) > 3) {
+          const s = Math.min(dragStart, dragging) + rangeStart;
+          const e2 = Math.max(dragStart, dragging) + rangeStart;
+          setZoomRange([s, Math.min(e2, fullLen - 1)]);
+        }
+        setDragStart(null); setDragging(null);
+      }}>
+
+      {[0, .25, .5, .75, 1].map(f => {
+        const yy = pdZ.t + hZ * (1 - f), val = minVZ + f * (maxVZ - minVZ);
+        return <g key={f}><line x1={pdZ.l} x2={WZ - pdZ.r} y1={yy} y2={yy} stroke="#262626" />
+          <text x={pdZ.l - 5} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{fmt$(val)}</text></g>;
+      })}
+
+      {filteredMarkers.map(({ i, year }) => (
+        <g key={year}><line x1={sxZ(i)} x2={sxZ(i)} y1={pdZ.t} y2={pdZ.t + hZ} stroke="#1e1e1e" strokeDasharray="2,3" />
+          <text x={sxZ(i)} y={HZ - 18} fill={cs.muted} fontSize={8} textAnchor="middle" fontFamily={mono2}>{year}</text></g>
+      ))}
+
+      {showDD && optDD && <path d={`M${sxZ(0)},${syZ(optSlice[0].value)} ` +
+        optDD.map((d, i) => `L${sxZ(i)},${pdZ.t + hZ + (d.dd / (maxDDInRange || -1)) * 40}`).join(" ") +
+        ` L${sxZ(optDD.length - 1)},${syZ(optSlice[optSlice.length - 1].value)} Z`}
+        fill={cs.red} opacity={.08} />}
+      {showDD && optDD && <polyline points={optDD.map((d, i) => `${sxZ(i)},${pdZ.t + hZ + (d.dd / (maxDDInRange || -1)) * 40}`).join(" ")}
+        fill="none" stroke={cs.red} strokeWidth={1} opacity={.4} />}
+
+      <polyline points={drawLineZ(balSlice)} fill="none" stroke={cs.purple} strokeWidth={1.5} opacity={.5} />
+      <polyline points={drawLineZ(spySlice)} fill="none" stroke={cs.blue} strokeWidth={1.5} opacity={.6} />
+      <polyline points={drawLineZ(optSlice)} fill="none" stroke={cs.green} strokeWidth={2} />
+
+      {dragStart != null && dragging != null && Math.abs(dragging - dragStart) > 1 && (
+        <rect x={sxZ(Math.min(dragStart, dragging))} y={pdZ.t}
+          width={Math.abs(sxZ(dragging) - sxZ(dragStart))} height={hZ}
+          fill={cs.blue} opacity={.12} stroke={cs.blue} strokeWidth={0.5} />
+      )}
+
+      {hoverPt && <>
+        <line x1={hoverPt.x} x2={hoverPt.x} y1={pdZ.t} y2={pdZ.t + hZ} stroke={cs.dim} strokeWidth={0.5} strokeDasharray="3,2" />
+        <circle cx={hoverPt.x} cy={syZ(hoverPt.opt?.value)} r={3.5} fill={cs.green} stroke={cs.bg} strokeWidth={1.5} />
+        <circle cx={hoverPt.x} cy={syZ(hoverPt.spy?.value)} r={3} fill={cs.blue} stroke={cs.bg} strokeWidth={1.5} />
+        <circle cx={hoverPt.x} cy={syZ(hoverPt.bal?.value)} r={3} fill={cs.purple} stroke={cs.bg} strokeWidth={1.5} />
+      </>}
+    </svg>
+
+    <div style={{ height: 20, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 16, fontSize: 9, fontFamily: mono2, color: cs.dim }}>
+      {hoverPt ? <>
+        <span style={{ color: cs.text }}>{hoverPt.opt?.date}</span>
+        <span style={{ color: cs.green }}>Opt: {fmt$(hoverPt.opt?.value)}</span>
+        <span style={{ color: cs.blue }}>SPY: {fmt$(hoverPt.spy?.value)}</span>
+        <span style={{ color: cs.purple }}>60/40: {fmt$(hoverPt.bal?.value)}</span>
+        {hoverPt.dd && <span style={{ color: cs.red }}>DD: {hoverPt.dd.dd.toFixed(1)}%</span>}
+      </> : <span>Hover to inspect · Drag to zoom · Click period buttons above</span>}
+    </div>
+
+    {zoomRange && <div style={{ position: "relative", height: 28, marginTop: 4, background: "#1e1e1e", border: `1px solid ${cs.border}` }}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${fullLen} 28`} preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0 }}>
+        <polyline points={curves.opt.map((p, i) => {
+          const allFull = [...curves.opt, ...curves.spy, ...curves.bal60];
+          const fMax = Math.max(...allFull.map(q => q.value));
+          const fMin = Math.min(...allFull.map(q => q.value));
+          return `${i},${28 - ((p.value - fMin) / (fMax - fMin || 1)) * 26}`;
+        }).join(" ")} fill="none" stroke={cs.green} strokeWidth={1} opacity={.4} />
+      </svg>
+      <div style={{ position: "absolute", top: 0, bottom: 0,
+        left: `${(rangeStart / fullLen) * 100}%`, width: `${((rangeEnd - rangeStart + 1) / fullLen) * 100}%`,
+        background: `${cs.blue}18`, borderLeft: `2px solid ${cs.blue}`, borderRight: `2px solid ${cs.blue}` }} />
+      <button onClick={() => setZoomRange(null)}
+        style={{ position: "absolute", right: 4, top: 4, padding: "2px 6px", borderRadius: 0,
+          border: `1px solid ${cs.border}`, background: cs.card, color: cs.dim,
+          fontSize: 8, fontWeight: 600, cursor: "pointer", fontFamily: mono2 }}>Reset Zoom</button>
+    </div>}
+  </div>;
+}
+
 // ─── Lightweight Markdown renderer for AI Advisor ───
 function AiMarkdown({ text }) {
   if (!text) return null;
@@ -4259,45 +4431,12 @@ useEffect(() => {
 
           {btResult && (() => {
             const { curves, summary, annual, startCash: sc2 } = btResult;
-            const allPts = [...curves.opt, ...curves.spy, ...curves.bal60];
-            const maxV = Math.max(...allPts.map(p => p.value));
-            const minV = Math.min(...allPts.map(p => p.value));
-            const W = 560, H = 280, pd = { t: 25, r: 15, b: 30, l: 60 };
-            const w = W - pd.l - pd.r, h = H - pd.t - pd.b;
-            const sx = (i, len) => pd.l + (i / Math.max(1, len - 1)) * w;
-            const sy = v => pd.t + h - ((v - minV) / (maxV - minV || 1)) * h;
-
-            const drawLine = (data, color) => data.map((p, i) => `${sx(i, data.length)},${sy(p.value)}`).join(" ");
-
             return <>
               {includeStocks && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
                 <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (2006–2025, ~100-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year. Covers 2008 crisis (AIG in Financials pre-crash, removed after), 2010 recovery (V/MA enter), 2017 tech shift (NVDA enters), 2020 COVID (TSLA in Consumer), and 2023 AI boom (SMCI). GE Industrial #1 in 2006, exits by 2018. Return shrinkage (80% cap) + SPY-overlap penalty.</div>
               </div>}
-              {/* Equity Curve */}
-              <div style={cardS}>
-                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Equity Curve — ${(sc2/1000).toFixed(0)}k Starting Capital</div>
-                <div style={{ display: "flex", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, borderRadius: 2, background: cs.green, display: "inline-block" }} />Optimized ({fmt$(summary.opt.final)})</span>
-                  <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, borderRadius: 2, background: cs.blue, display: "inline-block" }} />SPY ({fmt$(summary.spy.final)})</span>
-                  <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, borderRadius: 2, background: cs.purple, display: "inline-block" }} />60/40 ({fmt$(summary.bal60.final)})</span>
-                </div>
-                <svg width={W} height={H} style={{ overflow: "visible", maxWidth: "100%" }} viewBox={`0 0 ${W} ${H}`}>
-                  {/* Grid lines */}
-                  {[0, .25, .5, .75, 1].map(f => {
-                    const yy = pd.t + h * (1 - f), val = minV + f * (maxV - minV);
-                    return <g key={f}><line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke="#262626" /><text x={pd.l - 5} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{fmt$(val)}</text></g>;
-                  })}
-                  {/* Year labels */}
-                  {curves.opt.filter((_, i) => i % 12 === 0).map((p, i) => {
-                    const x = sx(i * 12, curves.opt.length);
-                    return <text key={i} x={x} y={H - 5} fill={cs.muted} fontSize={8} textAnchor="middle" fontFamily={mono2}>{p.date?.slice(0, 4)}</text>;
-                  })}
-                  {/* Lines */}
-                  <polyline points={drawLine(curves.bal60, cs.purple)} fill="none" stroke={cs.purple} strokeWidth={1.5} opacity={.6} />
-                  <polyline points={drawLine(curves.spy, cs.blue)} fill="none" stroke={cs.blue} strokeWidth={1.5} opacity={.7} />
-                  <polyline points={drawLine(curves.opt, cs.green)} fill="none" stroke={cs.green} strokeWidth={2} />
-                </svg>
-              </div>
+              {/* Interactive Equity Curve */}
+              <EquityCurve curves={curves} sc2={sc2} />
 
               {/* Summary Metrics */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 14 }}>
