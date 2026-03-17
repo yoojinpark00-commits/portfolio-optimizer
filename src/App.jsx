@@ -1622,11 +1622,12 @@ function PortfolioPerf({ etfV, stockV, holdingsVal, totalCostBasis, live, lastF 
   const [spyHist, setSpyHist] = React.useState(null);
   const [snapshots, setSnapshots] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
 
   // Find inception: earliest purchaseDate across all holdings
   const inception = React.useMemo(() => {
     let earliest = null;
-    [...etfV, ...stockV].forEach(h => {
+    [...(etfV || []), ...(stockV || [])].forEach(h => {
       if (h.purchaseDate && (!earliest || h.purchaseDate < earliest)) earliest = h.purchaseDate;
     });
     return earliest;
@@ -1642,23 +1643,24 @@ function PortfolioPerf({ etfV, stockV, holdingsVal, totalCostBasis, live, lastF 
 
   // Save snapshot on each live price update (max 1 per day)
   React.useEffect(() => {
-    if (!lastF || holdingsVal <= 0 || !inception) return;
-    const today = new Date().toISOString().slice(0, 10);
-    const spyPrice = live["SPY"]?.price;
-    setSnapshots(prev => {
-      const existing = prev.find(s => s.date === today);
-      let next;
-      if (existing) {
-        next = prev.map(s => s.date === today ? { ...s, value: holdingsVal, spy: spyPrice || s.spy, costBasis: totalCostBasis } : s);
-      } else {
-        next = [...prev, { date: today, value: holdingsVal, spy: spyPrice || 0, costBasis: totalCostBasis }];
-      }
-      // Keep last 3 years of daily snapshots max
-      const cutoff = new Date(Date.now() - 3 * 365 * 86400000).toISOString().slice(0, 10);
-      next = next.filter(s => s.date >= cutoff);
-      try { localStorage.setItem(SNAP_KEY, JSON.stringify(next)); } catch (e) { }
-      return next;
-    });
+    if (!lastF || !holdingsVal || holdingsVal <= 0 || !inception || !totalCostBasis || totalCostBasis <= 0) return;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const spyPrice = live?.["SPY"]?.price;
+      setSnapshots(prev => {
+        const existing = prev.find(s => s.date === today);
+        let next;
+        if (existing) {
+          next = prev.map(s => s.date === today ? { ...s, value: holdingsVal, spy: spyPrice || s.spy, costBasis: totalCostBasis } : s);
+        } else {
+          next = [...prev, { date: today, value: holdingsVal, spy: spyPrice || 0, costBasis: totalCostBasis }];
+        }
+        const cutoff = new Date(Date.now() - 3 * 365 * 86400000).toISOString().slice(0, 10);
+        next = next.filter(s => s.date >= cutoff);
+        try { localStorage.setItem(SNAP_KEY, JSON.stringify(next)); } catch (e) { }
+        return next;
+      });
+    } catch (e) { console.warn("Snapshot save error:", e); }
   }, [lastF, holdingsVal, totalCostBasis, inception, live]);
 
   // Fetch SPY history from inception
@@ -1678,21 +1680,26 @@ function PortfolioPerf({ etfV, stockV, holdingsVal, totalCostBasis, live, lastF 
     })();
   }, [inception]);
 
-  if (!inception || holdingsVal <= 0 || totalCostBasis <= 0) return null;
+  if (!inception || !holdingsVal || holdingsVal <= 0 || !totalCostBasis || totalCostBasis <= 0) return null;
 
-  // Compute returns
+  // Wrap all computations in try-catch to prevent crashing the entire app
+  try {
+
   const portReturn = ((holdingsVal / totalCostBasis) - 1) * 100;
+  if (!isFinite(portReturn)) return null;
   const inceptionDate = new Date(inception);
+  if (isNaN(inceptionDate.getTime())) return null;
   const daysSince = Math.floor((Date.now() - inceptionDate.getTime()) / 86400000);
   const yearsSince = daysSince / 365.25;
 
-  // SPY return over same period
   let spyReturn = null, spyCAGR = null;
   if (spyHist && spyHist.length >= 2) {
     const spyStart = spyHist[0].close;
     const spyEnd = spyHist[spyHist.length - 1].close;
-    spyReturn = ((spyEnd / spyStart) - 1) * 100;
-    if (yearsSince > 0.25) spyCAGR = (Math.pow(spyEnd / spyStart, 1 / yearsSince) - 1) * 100;
+    if (spyStart > 0) {
+      spyReturn = ((spyEnd / spyStart) - 1) * 100;
+      if (yearsSince > 0.25) spyCAGR = (Math.pow(spyEnd / spyStart, 1 / yearsSince) - 1) * 100;
+    }
   }
   const portCAGR = yearsSince > 0.25 ? (Math.pow(holdingsVal / totalCostBasis, 1 / yearsSince) - 1) * 100 : null;
   const alpha = portReturn != null && spyReturn != null ? portReturn - spyReturn : null;
@@ -1706,20 +1713,19 @@ function PortfolioPerf({ etfV, stockV, holdingsVal, totalCostBasis, live, lastF 
   let spyNorm = [], portNorm = [];
   if (spyHist && spyHist.length >= 2) {
     const spyBase = spyHist[0].close;
-    spyNorm = spyHist.map(p => ({ date: p.date, value: (p.close / spyBase) * 100 }));
+    if (spyBase > 0) spyNorm = spyHist.map(p => ({ date: p.date, value: (p.close / spyBase) * 100 }));
   }
   // Portfolio: use cost basis as starting 100, then snapshots, then current
   if (snapshots.length > 0 && totalCostBasis > 0) {
-    // Find earliest snapshot that has a cost basis
     const firstSnap = snapshots[0];
     const base = firstSnap.costBasis || totalCostBasis;
-    portNorm = snapshots.map(s => ({ date: s.date, value: (s.value / base) * 100 }));
+    if (base > 0) portNorm = snapshots.map(s => ({ date: s.date, value: (s.value / base) * 100 }));
   }
   // Ensure current point is included
   const today = new Date().toISOString().slice(0, 10);
   if (portNorm.length > 0 && portNorm[portNorm.length - 1].date !== today) {
     const base = snapshots[0]?.costBasis || totalCostBasis;
-    portNorm.push({ date: today, value: (holdingsVal / base) * 100 });
+    if (base > 0) portNorm.push({ date: today, value: (holdingsVal / base) * 100 });
   } else if (portNorm.length === 0 && totalCostBasis > 0) {
     portNorm = [
       { date: inception, value: 100 },
@@ -1731,7 +1737,8 @@ function PortfolioPerf({ etfV, stockV, holdingsVal, totalCostBasis, live, lastF 
   const allDates = [...new Set([...spyNorm.map(p => p.date), ...portNorm.map(p => p.date)])].sort();
   if (allDates.length < 2) return null;
   const dateRange = [allDates[0], allDates[allDates.length - 1]];
-  const allVals = [...spyNorm.map(p => p.value), ...portNorm.map(p => p.value)];
+  const allVals = [...spyNorm.map(p => p.value), ...portNorm.map(p => p.value)].filter(v => isFinite(v));
+  if (allVals.length === 0) return null;
   const minVal = Math.min(80, ...allVals);
   const maxVal = Math.max(120, ...allVals);
 
@@ -1814,6 +1821,11 @@ function PortfolioPerf({ etfV, stockV, holdingsVal, totalCostBasis, live, lastF 
       </div>
     </>}
   </div>;
+
+  } catch (e) {
+    console.warn("PortfolioPerf render error:", e);
+    return null;
+  }
 }
 
 // ─── Lightweight Markdown renderer for AI Advisor ───
