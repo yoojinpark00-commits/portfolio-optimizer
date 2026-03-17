@@ -159,8 +159,33 @@ const ETF_DB = [
   {t:"SSO",n:"ProShares 2x S&P 500",c:"US Large Cap",h:503,er:.89,r:18.0,v:30.0,d:0,lev:2},
 ];
 
-const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
-function gc(a,b){if(a===b)return 1;return CORR[a]?.[b]??CORR[b]?.[a]??.5}
+const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Sector Health":.62,"Sector Finance":.72,"Sector Energy":.32,"Sector Indust":.75,"Sector Consumer":.78,"Sector RE":.42,"Sector Utilities":.30,"Sector Materials":.48,"Sector Comms":.82,"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Sector Finance":.58,"Sector Energy":.35,"Sector Indust":.60,"Sector Consumer":.62,"Sector RE":.45,"Sector Utilities":.48,"Sector Materials":.42,"Sector Comms":.55,"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Sector Energy":.55,"Sector Indust":.72,"Sector Consumer":.68,"Sector RE":.58,"Sector Utilities":.42,"Sector Materials":.55,"Sector Comms":.62,"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Sector Indust":.55,"Sector Consumer":.42,"Sector RE":.30,"Sector Utilities":.35,"Sector Materials":.62,"Sector Comms":.35,"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Sector Consumer":.72,"Sector RE":.48,"Sector Utilities":.42,"Sector Materials":.68,"Sector Comms":.62,"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Sector RE":.45,"Sector Utilities":.38,"Sector Materials":.48,"Sector Comms":.70,"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Sector Utilities":.62,"Sector Materials":.35,"Sector Comms":.38,"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Sector Materials":.38,"Sector Comms":.32,"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Sector Comms":.42,"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
+// Parent category mapping: sub-category → parent ETF category (for cross-group fallback)
+const SUB_PARENT = {
+  "Tech-Semi":"Sector Tech","Tech-Software":"Sector Tech","Tech-Internet":"Sector Tech",
+  "Tech-Hardware":"Sector Tech","Tech-Cyber":"Sector Tech",
+  "Consumer-Staple":"Sector Consumer","Consumer-Disc":"Sector Consumer","Consumer-Auto":"Sector Consumer",
+  "Fin-Bank":"Sector Finance","Fin-Payments":"Sector Finance","Fin-Diversified":"Sector Finance",
+  "Health-Pharma":"Sector Health","Health-Biotech":"Sector Health","Health-MedTech":"Sector Health","Health-Services":"Sector Health",
+  "Energy-Major":"Sector Energy","Energy-Svc":"Sector Energy",
+  "Indust-Defense":"Sector Indust","Indust-General":"Sector Indust",
+};
+
+function gc(a,b){
+  if(a===b)return 1;
+  // 1. Direct sub-category correlation
+  const sub = SUB_CORR[a]?.[b] ?? SUB_CORR[b]?.[a];
+  if(sub != null) return sub;
+  // 2. Base CORR matrix
+  const base = CORR[a]?.[b] ?? CORR[b]?.[a];
+  if(base != null) return base;
+  // 3. Parent fallback: if either side is a sub-category, try parent's correlation
+  const pa = SUB_PARENT[a], pb = SUB_PARENT[b];
+  if(pa && pb) return CORR[pa]?.[pb] ?? CORR[pb]?.[pa] ?? .5;
+  if(pa) return CORR[pa]?.[b] ?? CORR[b]?.[pa] ?? SUB_CORR[b]?.[pa] ?? .5;
+  if(pb) return CORR[a]?.[pb] ?? CORR[pb]?.[a] ?? SUB_CORR[a]?.[pb] ?? .5;
+  return .5;
+}
 
 const RF=4.5;
 
@@ -177,7 +202,7 @@ function shrinkReturn(r, isStock) {
   if (r < -cap) return -cap + (r + cap) * decayFactor; // symmetric for losses
   return r;
 }
-const PAL=["#6ee7b7","#60a5fa","#f472b6","#fbbf24","#a78bfa","#fb923c","#34d399","#f87171","#38bdf8","#e879f9"];
+const PAL=["#42be65","#78a9ff","#ff7eb6","#ffab91","#be95ff","#82cfff","#08bdba","#ff8389","#33b1ff","#d4bbff"];
 
 const STOCK_DB=[
   // ipo = year stock became publicly available (approximate)
@@ -232,7 +257,131 @@ const STOCK_DB=[
 
 // Map STOCK_DB sector names to optimizer category system
 const SECTOR_TO_CAT = {"Technology":"Sector Tech","Consumer":"Sector Consumer","Financial":"Sector Finance","Healthcare":"Sector Health","Energy":"Sector Energy","Industrial":"Sector Indust","Communications":"Sector Comms","Real Estate":"Sector RE","Utilities":"Sector Utilities","Materials":"Sector Materials"};
-const STOCK_OPT = STOCK_DB.map(s => ({ t: s.t, n: s.n, c: SECTOR_TO_CAT[s.s] || "Stock", r: 12, v: 25, er: 0, d: 0, h: 1, type: "stock", ipo: s.ipo || 2000 }));
+
+// ── Granular sub-categories for stocks ──
+// Stocks in the same sector have very different correlation profiles.
+// NVDA-AMD (semi) ≈ 0.82, but NVDA-MSFT (semi vs software) ≈ 0.62.
+// Without sub-categories, both pairs get corr = 1.0 (same "Sector Tech").
+const STOCK_SUB = {
+  // Tech → 5 sub-categories
+  // Semiconductors: driven by chip demand cycles, capex, AI inference buildout
+  NVDA:"Tech-Semi",AMD:"Tech-Semi",AVGO:"Tech-Semi",INTC:"Tech-Semi",QCOM:"Tech-Semi",MU:"Tech-Semi",
+  NXPI:"Tech-Semi",ADI:"Tech-Semi",TSM:"Tech-Semi",ASML:"Tech-Semi",ARM:"Tech-Semi",TXN:"Tech-Semi",
+  SNPS:"Tech-Semi",CDNS:"Tech-Semi",
+  // Enterprise Software/Cloud: driven by IT spending, subscription revenue, AI SaaS
+  MSFT:"Tech-Software",CRM:"Tech-Software",ADBE:"Tech-Software",ORCL:"Tech-Software",INTU:"Tech-Software",
+  NOW:"Tech-Software",WDAY:"Tech-Software",SNOW:"Tech-Software",TEAM:"Tech-Software",HUBS:"Tech-Software",
+  DDOG:"Tech-Software",PLTR:"Tech-Software",
+  // Internet/Platforms: driven by ad revenue, user growth, e-commerce
+  GOOGL:"Tech-Internet",META:"Tech-Internet",NFLX:"Tech-Internet",UBER:"Tech-Internet",SHOP:"Tech-Internet",
+  SQ:"Tech-Internet",SE:"Tech-Internet",APP:"Tech-Internet",DASH:"Tech-Internet",BABA:"Tech-Internet",
+  SPOT:"Tech-Internet",AFRM:"Tech-Internet",
+  // Hardware/Infrastructure: driven by product cycles, enterprise refresh
+  AAPL:"Tech-Hardware",CSCO:"Tech-Hardware",IBM:"Tech-Hardware",DELL:"Tech-Hardware",SMCI:"Tech-Hardware",
+  HPQ:"Tech-Hardware",IONQ:"Tech-Hardware",SOUN:"Tech-Hardware",
+  // Cybersecurity: driven by breach cycles, compliance spend
+  PANW:"Tech-Cyber",CRWD:"Tech-Cyber",FTNT:"Tech-Cyber",NET:"Tech-Cyber",
+
+  // Consumer → 3 sub-categories
+  // Staples: defensive, low beta, dividend-heavy
+  PG:"Consumer-Staple",KO:"Consumer-Staple",PEP:"Consumer-Staple",WMT:"Consumer-Staple",
+  COST:"Consumer-Staple",TGT:"Consumer-Staple",NKE:"Consumer-Staple",
+  // Discretionary: cyclical, driven by consumer confidence
+  AMZN:"Consumer-Disc",HD:"Consumer-Disc",LOW:"Consumer-Disc",SBUX:"Consumer-Disc",MCD:"Consumer-Disc",
+  CMG:"Consumer-Disc",LULU:"Consumer-Disc",ABNB:"Consumer-Disc",JD:"Consumer-Disc",PDD:"Consumer-Disc",
+  MELI:"Consumer-Disc",CPNG:"Consumer-Disc",
+  // Autos: highly cyclical, capex-heavy, EV transition
+  TSLA:"Consumer-Auto",F:"Consumer-Auto",GM:"Consumer-Auto",RIVN:"Consumer-Auto",NIO:"Consumer-Auto",
+
+  // Financial → 3 sub-categories
+  // Banks: rate-sensitive, credit cycle driven
+  JPM:"Fin-Bank",BAC:"Fin-Bank",GS:"Fin-Bank",MS:"Fin-Bank",C:"Fin-Bank",WFC:"Fin-Bank",
+  AIG:"Fin-Bank",MET:"Fin-Bank",
+  // Payments/Fintech: volume-driven, secular growth
+  V:"Fin-Payments",MA:"Fin-Payments",PYPL:"Fin-Payments",COIN:"Fin-Payments",
+  SOFI:"Fin-Payments",HOOD:"Fin-Payments",NU:"Fin-Payments",
+  // Diversified: conglomerates, exchanges, asset managers
+  "BRK.B":"Fin-Diversified",SCHW:"Fin-Diversified",CME:"Fin-Diversified",ICE:"Fin-Diversified",BLK:"Fin-Diversified",
+
+  // Healthcare → 3 sub-categories
+  // Pharma: pipeline-driven, patent cliffs, stable revenue
+  LLY:"Health-Pharma",JNJ:"Health-Pharma",PFE:"Health-Pharma",MRK:"Health-Pharma",ABBV:"Health-Pharma",BMY:"Health-Pharma",
+  // Biotech: binary outcomes, high vol, M&A targets
+  MRNA:"Health-Biotech",REGN:"Health-Biotech",VRTX:"Health-Biotech",GILD:"Health-Biotech",BIIB:"Health-Biotech",
+  AMGN:"Health-Biotech",EXAS:"Health-Biotech",
+  // MedTech + Services: procedure volumes, insurance cycles
+  UNH:"Health-Services",CVS:"Health-Services",CI:"Health-Services",
+  ISRG:"Health-MedTech",DHR:"Health-MedTech",MDT:"Health-MedTech",ABT:"Health-MedTech",
+
+  // Energy → 2 sub-categories
+  // Integrated majors: diversified, dividend, lower vol
+  XOM:"Energy-Major",CVX:"Energy-Major",COP:"Energy-Major",OXY:"Energy-Major",
+  // Services & downstream: higher vol, levered to oil price
+  EOG:"Energy-Svc",SLB:"Energy-Svc",PSX:"Energy-Svc",MPC:"Energy-Svc",VLO:"Energy-Svc",HAL:"Energy-Svc",FSLR:"Energy-Svc",
+
+  // Industrial → 2 sub-categories
+  // Defense/Aerospace: government contracts, long cycles
+  BA:"Indust-Defense",LMT:"Indust-Defense",RTX:"Indust-Defense",GD:"Indust-Defense",RKLB:"Indust-Defense",
+  // General industrial: capex cycle, economic sensitivity
+  GE:"Indust-General",CAT:"Indust-General",HON:"Indust-General",ETN:"Indust-General",DE:"Indust-General",
+  UPS:"Indust-General",FDX:"Indust-General",DAL:"Indust-General",MMM:"Indust-General",UNP:"Indust-General",
+};
+
+// ── Sub-category correlations ──
+// These define how sub-categories correlate with each other AND with existing ETF categories.
+// Within a sub-category: gc() returns 1.0 (same-category rule). Between sub-categories:
+const SUB_CORR = {
+  // Tech sub-categories: within-tech cross-correlations
+  "Tech-Semi":    {"Tech-Software":.68,"Tech-Internet":.62,"Tech-Hardware":.72,"Tech-Cyber":.60,
+                   "US Growth":.85,"US Large Cap":.78,"Sector Tech":.92,"Sector Comms":.58,"US Bond":-.25,"US Treasury":-.40,"Commodity":.08,"Cash":0},
+  "Tech-Software":{"Tech-Internet":.78,"Tech-Hardware":.65,"Tech-Cyber":.82,
+                   "US Growth":.88,"US Large Cap":.82,"Sector Tech":.90,"US Bond":-.20,"US Treasury":-.38,"Commodity":.05,"Cash":0},
+  "Tech-Internet":{"Tech-Hardware":.60,"Tech-Cyber":.70,
+                   "US Growth":.90,"US Large Cap":.80,"Sector Tech":.85,"Sector Comms":.75,"Sector Consumer":.65,"US Bond":-.18,"US Treasury":-.35,"Commodity":.08,"Cash":0},
+  "Tech-Hardware":{"Tech-Cyber":.58,
+                   "US Growth":.75,"US Large Cap":.80,"Sector Tech":.88,"US Bond":-.12,"US Treasury":-.30,"Commodity":.12,"Cash":0},
+  "Tech-Cyber":   {"US Growth":.80,"US Large Cap":.72,"Sector Tech":.82,"US Bond":-.18,"US Treasury":-.32,"Commodity":.05,"Cash":0},
+
+  // Consumer sub-categories
+  "Consumer-Staple":{"Consumer-Disc":.52,"Consumer-Auto":.30,
+                     "US Value":.78,"US Dividend":.82,"US Large Cap":.72,"Sector Consumer":.85,"US Bond":.12,"US Treasury":-.05,"Factor LowVol":.75,"Commodity":.22,"Cash":0},
+  "Consumer-Disc":  {"Consumer-Auto":.55,
+                     "US Growth":.75,"US Large Cap":.85,"Sector Consumer":.90,"US Bond":-.12,"US Treasury":-.28,"Commodity":.18,"Cash":0},
+  "Consumer-Auto":  {"US Growth":.60,"US Large Cap":.55,"Sector Consumer":.65,"Sector Indust":.62,"Emerging Mkts":.45,"US Bond":-.15,"US Treasury":-.30,"Commodity":.25,"Cash":0},
+
+  // Financial sub-categories
+  "Fin-Bank":      {"Fin-Payments":.62,"Fin-Diversified":.78,
+                    "US Value":.80,"US Large Cap":.82,"Sector Finance":.95,"US Bond":.05,"US Treasury":-.20,"Commodity":.22,"Cash":0},
+  "Fin-Payments":  {"Fin-Diversified":.65,
+                    "US Growth":.72,"US Large Cap":.78,"Sector Finance":.80,"Tech-Internet":.62,"US Bond":-.10,"US Treasury":-.25,"Commodity":.12,"Cash":0},
+  "Fin-Diversified":{"US Large Cap":.85,"US Value":.75,"Sector Finance":.88,"US Bond":.02,"US Treasury":-.15,"Commodity":.20,"Cash":0},
+
+  // Healthcare sub-categories
+  "Health-Pharma": {"Health-Biotech":.55,"Health-MedTech":.68,"Health-Services":.62,
+                    "US Large Cap":.72,"US Value":.70,"Sector Health":.92,"US Bond":.02,"US Treasury":-.10,"Commodity":.12,"Cash":0},
+  "Health-Biotech": {"Health-MedTech":.50,"Health-Services":.42,
+                     "US Large Cap":.58,"Sector Health":.82,"US Growth":.55,"US Bond":-.08,"US Treasury":-.18,"Commodity":.08,"Cash":0},
+  "Health-MedTech": {"Health-Services":.60,
+                     "US Large Cap":.72,"Sector Health":.85,"US Bond":-.02,"US Treasury":-.12,"Commodity":.10,"Cash":0},
+  "Health-Services":{"US Large Cap":.68,"US Value":.65,"Sector Health":.80,"US Bond":.05,"US Treasury":-.08,"Commodity":.10,"Cash":0},
+
+  // Energy sub-categories
+  "Energy-Major":  {"Energy-Svc":.80,
+                    "US Value":.65,"US Large Cap":.60,"Sector Energy":.95,"Commodity":.62,"US Bond":.02,"US Treasury":-.08,"Cash":0},
+  "Energy-Svc":    {"US Value":.55,"US Large Cap":.50,"Sector Energy":.90,"Commodity":.70,"US Bond":-.02,"US Treasury":-.12,"Cash":0},
+
+  // Industrial sub-categories
+  "Indust-Defense":{"Indust-General":.65,
+                    "US Large Cap":.62,"Sector Indust":.78,"US Value":.60,"US Bond":.08,"US Treasury":-.05,"Commodity":.20,"Cash":0},
+  "Indust-General":{"US Large Cap":.82,"Sector Indust":.95,"US Value":.75,"Commodity":.38,"US Bond":-.05,"US Treasury":-.18,"Cash":0},
+};
+
+// Build STOCK_OPT with sub-categories
+const STOCK_OPT = STOCK_DB.map(s => {
+  const sub = STOCK_SUB[s.t];
+  const cat = sub || SECTOR_TO_CAT[s.s] || "Stock";
+  return { t: s.t, n: s.n, c: cat, r: 12, v: 25, er: 0, d: 0, h: 1, type: "stock", ipo: s.ipo || 2000 };
+});
 // Helper: check if a stock was publicly traded by a given year
 function stockAvailableAt(stock, year) { return (stock.ipo || 0) <= year; }
 
@@ -523,8 +672,10 @@ function calcMetrics(positions, cashDollars, totalVal) {
 }
 
 // ── Category risk classification for regime-adaptive optimization ──
-const DEFENSIVE_CATS = new Set(["US Bond","US Treasury","US Corp Bond","Intl Bond","Commodity","Factor LowVol","Sector Utilities","US Dividend","US Value"]);
-const AGGRESSIVE_CATS = new Set(["US Growth","US Small Cap","US Mid Cap","Emerging Mkts","Sector Tech","Sector Consumer","Sector Comms","Sector Finance","Factor Momentum"]);
+const DEFENSIVE_CATS = new Set(["US Bond","US Treasury","US Corp Bond","Intl Bond","Commodity","Factor LowVol","Sector Utilities","US Dividend","US Value",
+  "Consumer-Staple","Health-Pharma","Health-Services","Indust-Defense","Energy-Major"]);
+const AGGRESSIVE_CATS = new Set(["US Growth","US Small Cap","US Mid Cap","Emerging Mkts","Sector Tech","Sector Consumer","Sector Comms","Sector Finance","Factor Momentum",
+  "Tech-Semi","Tech-Software","Tech-Internet","Tech-Hardware","Tech-Cyber","Consumer-Disc","Consumer-Auto","Fin-Bank","Fin-Payments","Health-Biotech"]);
 
 // ── US State Capital Gains Tax Rates (2024/2025) ──
 // Most states tax capital gains as ordinary income; these are the top marginal rates
@@ -1145,14 +1296,14 @@ function genFrontier(existing, cash, totalVal, candidates) {
 }
 
 // ═══ UI COMPONENTS ═══
-const mono2 = "'Overpass Mono',monospace"; const sans2 = "'Libre Franklin',sans-serif";
-const cs = { bg: "#0a0b0e", card: "rgba(255,255,255,0.02)", border: "rgba(255,255,255,0.06)", muted: "#555b66", dim: "#717784", text: "#e8eaed", green: "#6ee7b7", blue: "#60a5fa", pink: "#f472b6", yellow: "#fbbf24", purple: "#a78bfa", red: "#f87171" };
-const inpS = { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, color: cs.text, padding: "7px 9px", fontSize: 11, fontFamily: mono2, outline: "none", width: "100%", boxSizing: "border-box" };
-const cardS = { background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 11, padding: 16, marginBottom: 14 };
+const mono2 = "'IBM Plex Mono','SF Mono',monospace"; const sans2 = "'IBM Plex Sans','Inter',sans-serif";
+const cs = { bg: "#161616", card: "#262626", border: "#393939", muted: "#6f6f6f", dim: "#8d8d8d", text: "#f4f4f4", green: "#42be65", blue: "#78a9ff", pink: "#ff7eb6", yellow: "#ffab91", purple: "#be95ff", red: "#ff8389" };
+const inpS = { background: "#262626", border: "1px solid #393939", borderRadius: 0, color: cs.text, padding: "7px 9px", fontSize: 11, fontFamily: mono2, outline: "none", width: "100%", boxSizing: "border-box" };
+const cardS = { background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 0, padding: 16, marginBottom: 14 };
 
-function MC({ label, value, sub, accent, sm }) { return (<div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 10, padding: sm ? "10px 12px" : "14px 16px", flex: 1, minWidth: sm ? 100 : 130 }}><div style={{ fontSize: 9, color: cs.dim, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 4, fontFamily: mono2 }}>{label}</div><div style={{ fontSize: sm ? 16 : 21, fontWeight: 700, color: accent || cs.text, fontFamily: mono2, lineHeight: 1 }}>{value}</div>{sub && <div style={{ fontSize: 9, color: cs.muted, marginTop: 3 }}>{sub}</div>}</div>) }
-function Badge({ children, color = cs.green }) { return <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, fontSize: 8, fontWeight: 700, background: `${color}18`, color, letterSpacing: ".03em", fontFamily: mono2 }}>{children}</span> }
-function GR({ value, max, label, color, sz = 78 }) { const pct = Math.min(Math.max(value, 0) / max, 1), r2 = (sz - 8) / 2, ci = 2 * Math.PI * r2; return (<div style={{ textAlign: "center" }}><svg width={sz} height={sz}><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={4} /><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke={color} strokeWidth={4} strokeDasharray={`${pct * ci} ${ci}`} strokeLinecap="round" transform={`rotate(-90 ${sz / 2} ${sz / 2})`} style={{ transition: "stroke-dasharray .8s" }} /><text x={sz / 2} y={sz / 2 + 1} textAnchor="middle" dominantBaseline="middle" fill={cs.text} fontSize={12} fontWeight="700" fontFamily={mono2}>{typeof value === 'number' ? value.toFixed(2) : value}</text></svg><div style={{ fontSize: 9, color: cs.dim, marginTop: 2, fontFamily: mono2 }}>{label}</div></div>) }
+function MC({ label, value, sub, accent, sm }) { return (<div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 0, padding: sm ? "10px 12px" : "14px 16px", flex: 1, minWidth: sm ? 100 : 130 }}><div style={{ fontSize: 9, color: cs.dim, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 4, fontFamily: mono2 }}>{label}</div><div style={{ fontSize: sm ? 16 : 21, fontWeight: 700, color: accent || cs.text, fontFamily: mono2, lineHeight: 1 }}>{value}</div>{sub && <div style={{ fontSize: 9, color: cs.muted, marginTop: 3 }}>{sub}</div>}</div>) }
+function Badge({ children, color = cs.green }) { return <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 0, fontSize: 8, fontWeight: 700, background: `${color}20`, color, letterSpacing: ".03em", fontFamily: mono2 }}>{children}</span> }
+function GR({ value, max, label, color, sz = 78 }) { const pct = Math.min(Math.max(value, 0) / max, 1), r2 = (sz - 8) / 2, ci = 2 * Math.PI * r2; return (<div style={{ textAlign: "center" }}><svg width={sz} height={sz}><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke="#393939" strokeWidth={5} /><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke={color} strokeWidth={5} strokeDasharray={`${pct * ci} ${ci}`} strokeLinecap="butt" transform={`rotate(-90 ${sz / 2} ${sz / 2})`} style={{ transition: "stroke-dasharray .8s" }} /><text x={sz / 2} y={sz / 2 + 1} textAnchor="middle" dominantBaseline="middle" fill={cs.text} fontSize={12} fontWeight="700" fontFamily={mono2}>{typeof value === 'number' ? value.toFixed(2) : value}</text></svg><div style={{ fontSize: 9, color: cs.dim, marginTop: 2, fontFamily: mono2 }}>{label}</div></div>) }
 
 function Scatter({ data, cp, w: W = 520, h: H = 320 }) {
   if (!data?.all) return null;
@@ -1162,7 +1313,7 @@ function Scatter({ data, cp, w: W = 520, h: H = 320 }) {
   const sx = v => pd.l + ((v - x0) / (x1 - x0)) * w, sy = v => pd.t + h2 - ((v - y0) / (y1 - y0)) * h2;
   const ms = data.fr.reduce((b, p) => p.sh > b.sh ? p : b, data.fr[0]);
   return (<svg width={W} height={H} style={{ overflow: "visible" }}>
-    {[0, .25, .5, .75, 1].map(f => { const yy = pd.t + h2 * (1 - f), val = y0 + f * (y1 - y0); return <g key={f}><line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke="rgba(255,255,255,0.04)" /><text x={pd.l - 6} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{val.toFixed(1)}%</text></g> })}
+    {[0, .25, .5, .75, 1].map(f => { const yy = pd.t + h2 * (1 - f), val = y0 + f * (y1 - y0); return <g key={f}><line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke="#262626" /><text x={pd.l - 6} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{val.toFixed(1)}%</text></g> })}
     {[0, .25, .5, .75, 1].map(f => { const x = pd.l + w * f, val = x0 + f * (x1 - x0); return <text key={f} x={x} y={H - 6} fill={cs.muted} fontSize={8} textAnchor="middle" fontFamily={mono2}>{val.toFixed(1)}%</text> })}
     {pts.map((p, i) => <circle key={i} cx={sx(p.vol)} cy={sy(p.ret)} r={1.2} fill="rgba(96,165,250,0.12)" />)}
     <polyline points={data.fr.map(p => `${sx(p.vol)},${sy(p.ret)}`).join(" ")} fill="none" stroke={cs.green} strokeWidth={2} />
@@ -1190,7 +1341,7 @@ function AiMarkdown({ text }) {
       if (m.index > last) parts.push(str.slice(last, m.index));
       if (m[2]) parts.push(<strong key={m.index} style={{ color: cs.text, fontWeight: 700 }}>{m[2]}</strong>);
       else if (m[3]) parts.push(<em key={m.index} style={{ color: cs.dim }}>{m[3]}</em>);
-      else if (m[4]) parts.push(<code key={m.index} style={{ background: "rgba(110,231,183,.08)", color: cs.green, padding: "1px 5px", borderRadius: 3, fontSize: 10, fontFamily: mono2 }}>{m[4]}</code>);
+      else if (m[4]) parts.push(<code key={m.index} style={{ background: "rgba(66,190,101,.1)", color: cs.green, padding: "1px 5px", borderRadius: 0, fontSize: 10, fontFamily: mono2 }}>{m[4]}</code>);
       else if (m[5]) parts.push(<span key={m.index} style={{ color: cs.blue, fontWeight: 600, fontFamily: mono2 }}>{m[5]}</span>);
       last = m.index + m[0].length;
     }
@@ -1217,7 +1368,7 @@ function AiMarkdown({ text }) {
 
     // Horizontal rule
     if (/^[-*_]{3,}$/.test(trimmed)) {
-      elements.push(<hr key={i} style={{ border: "none", borderTop: "1px solid rgba(255,255,255,.06)", margin: "12px 0" }} />);
+      elements.push(<hr key={i} style={{ border: "none", borderTop: "1px solid #393939", margin: "12px 0" }} />);
       i++; continue;
     }
 
@@ -1276,17 +1427,17 @@ function AiMarkdown({ text }) {
         const header = tableLines[0];
         const rows = tableLines.slice(1);
         elements.push(
-          <div key={`tbl-${i}`} style={{ margin: "8px 0", overflowX: "auto", borderRadius: 6, border: "1px solid rgba(255,255,255,.06)" }}>
+          <div key={`tbl-${i}`} style={{ margin: "8px 0", overflowX: "auto", borderRadius: 0, border: "1px solid #393939" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
               <thead>
-                <tr style={{ background: "rgba(110,231,183,.04)" }}>
-                  {header.map((h, ci) => <th key={ci} style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: cs.green, borderBottom: "1px solid rgba(255,255,255,.08)", fontFamily: mono2, fontSize: 9 }}>{h}</th>)}
+                <tr style={{ background: "rgba(66,190,101,.06)" }}>
+                  {header.map((h, ci) => <th key={ci} style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: cs.green, borderBottom: "1px solid #393939", fontFamily: mono2, fontSize: 9 }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, ri) => (
                   <tr key={ri} style={{ background: ri % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
-                    {row.map((cell, ci) => <td key={ci} style={{ padding: "5px 10px", borderBottom: "1px solid rgba(255,255,255,.03)", color: cs.text }}>{fmt(cell)}</td>)}
+                    {row.map((cell, ci) => <td key={ci} style={{ padding: "5px 10px", borderBottom: "1px solid #222222", color: cs.text }}>{fmt(cell)}</td>)}
                   </tr>
                 ))}
               </tbody>
@@ -1322,6 +1473,7 @@ export default function App() {
   const [taxState, setTaxState] = useState("None"); // State for tax calc
   const [includeStocks, setIncludeStocks] = useState(false); // ETF+Stocks toggle
   const [optResult, setOptResult] = useState(null);
+  const [optRunning, setOptRunning] = useState(false);
   const [lastRegimeCtx, setLastRegimeCtx] = useState(null); // regime context used by last optimizer run
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
@@ -2454,9 +2606,101 @@ useEffect(() => {
   }, [etfs, stocks]);
 
   // ─── Optimizer ───
-  const runOptimizer = useCallback(() => {
+  const runOptimizer = useCallback(async () => {
     if (cashBalance <= 0) return;
-    // Build full regime context for the optimizer
+    setOptRunning(true);
+
+    try {
+    // ── Step 1: Fetch trailing 12-month history for all candidates ──
+    const baseCandidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
+    const tickers = baseCandidates.map(c => c.t);
+    // Compute date range: 13 months back (need 12 months of returns = 13 price points)
+    const endDate = new Date().toISOString().slice(0, 10);
+    const startDate = new Date(Date.now() - 14 * 30 * 86400000).toISOString().slice(0, 10);
+
+    let histData = {};
+    try {
+      for (let i = 0; i < tickers.length; i += 15) {
+        const batch = tickers.slice(i, i + 15);
+        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=${startDate}&end=${endDate}`);
+        const json = await resp.json();
+        if (json.data) Object.assign(histData, json.data);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch live history, falling back to static data:", e.message);
+    }
+
+    // ── Step 2: Compute trailing stats with recency weighting + shrinkage ──
+    let candidates;
+    const fetchedTickers = Object.keys(histData).filter(k => histData[k]?.length >= 7);
+
+    if (fetchedTickers.length > 10) {
+      // Build monthly return series
+      const returnsByDate = {};
+      for (const sym of fetchedTickers) {
+        const prices = histData[sym].sort((a, b) => a.date.localeCompare(b.date));
+        for (let j = 1; j < prices.length; j++) {
+          const date = prices[j].date.slice(0, 7);
+          const ret = (prices[j].close - prices[j - 1].close) / prices[j - 1].close;
+          if (!returnsByDate[date]) returnsByDate[date] = {};
+          returnsByDate[date][sym] = { ret, close: prices[j].close };
+        }
+      }
+      const sortedDates = Object.keys(returnsByDate).sort();
+      const etfDbMap = {};
+      baseCandidates.forEach(c => { etfDbMap[c.t] = c; });
+
+      // Compute recency-weighted trailing stats (same logic as backtest)
+      const liveCandidates = [];
+      const mIdx = sortedDates.length;
+      const trailStart = Math.max(0, mIdx - 12);
+
+      for (const sym of fetchedTickers) {
+        let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
+        for (let ti = trailStart; ti < mIdx; ti++) {
+          const entry = returnsByDate[sortedDates[ti]]?.[sym];
+          if (entry) {
+            const age = mIdx - 1 - ti;
+            const w = Math.exp(-0.05 * age);
+            sumWRet += w * entry.ret;
+            sumW += w;
+            sumRet += entry.ret;
+            sumRetSq += entry.ret * entry.ret;
+            count++;
+          }
+        }
+        if (count < 6) continue;
+        const wAvgMo = sumWRet / sumW;
+        const rawR = wAvgMo * 12 * 100;
+        const db = etfDbMap[sym];
+        if (!db) continue;
+        const isStk = db.type === "stock";
+        const shrunkR = shrinkReturn(rawR, isStk);
+        const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
+
+        // Build candidate with live stats, keeping category/metadata from DB
+        liveCandidates.push({
+          t: sym, n: db.n, c: db.c, h: db.h || 1,
+          er: db.er || 0, d: db.d || 0, lev: db.lev || null,
+          r: shrunkR,  // LIVE: recency-weighted + shrunk trailing return
+          v: vol,      // LIVE: trailing 12-month volatility
+          type: db.type || "etf", ipo: db.ipo,
+        });
+      }
+
+      // Add candidates that had no history data (use static DB values as fallback)
+      const liveSet = new Set(liveCandidates.map(c => c.t));
+      for (const c of baseCandidates) {
+        if (!liveSet.has(c.t)) liveCandidates.push(c);
+      }
+
+      candidates = liveCandidates.filter(c => c.t !== "SPY" && c.v > 0 && c.r > -80);
+    } else {
+      // Fallback: no history available, use static DB values
+      candidates = baseCandidates;
+    }
+
+    // ── Step 3: Build regime context (same as before) ──
     let regimeCtx = null;
     if (useRegime && regimeData?.regime) {
       const r = regimeData.regime;
@@ -2466,18 +2710,14 @@ useEffect(() => {
         duration: 1,
         transition: null,
       };
-      // Pull duration + transition from analytics (auto-fetched on mount)
       if (regimeAnalytics?.current) {
         regimeCtx.duration = regimeAnalytics.current.runLength || 1;
         regimeCtx.transition = regimeAnalytics.current.transition || null;
       }
-      // Build duration model from analytics durationReturns data
       if (regimeAnalytics?.durationReturns) {
         const dr = regimeAnalytics.durationReturns;
-        const buckets = [[1,3],[4,6],[7,12],[13,24],[25,999]];
         const bucketLabels = ["1-3m","4-6m","7-12m","13-24m","24m+"];
         const model = {};
-        // Map 3-state (bull/neutral/bear) to 5-state
         const stateMap = { bull: ["strong_risk_on","mild_risk_on"], neutral: ["neutral"], bear: ["mild_risk_off","strong_risk_off"] };
         for (const [regime3, states5] of Object.entries(stateMap)) {
           if (!dr[regime3]) continue;
@@ -2485,7 +2725,6 @@ useEffect(() => {
             model[s5] = bucketLabels.map((label, i) => {
               const bData = dr[regime3][label];
               if (!bData) return { avgFwd: 0, stdFwd: 0, confidence: 0, count: 0, label };
-              // Use 6-month forward return as primary signal
               const fwd = bData.avg?.["6m"] || bData.avg?.["3m"] || 0;
               return { avgFwd: fwd, stdFwd: 0, confidence: Math.min(1, (bData.n || 0) / 12), count: bData.n || 0, label };
             });
@@ -2493,25 +2732,21 @@ useEffect(() => {
         }
         regimeCtx.durationModel = model;
       }
-      // Build three-stage context from analytics
       if (regimeAnalytics?.current) {
         const ac = regimeAnalytics.current;
         const curRegime = ac.regime || "neutral";
         const prevRegime = ac.prevRegime || null;
         const prevDuration = ac.prevDuration || 0;
         const runLength = ac.runLength || 1;
-        // Determine bridge: if transition exists, parse it
         let bridgeRegime = null, bridgeDuration = 0;
         if (ac.transition) {
           const [from] = ac.transition.includes("→") ? ac.transition.split("→") : [null];
           if (from && from !== curRegime) {
             bridgeRegime = from;
-            // Estimate bridge duration from analytics (not always available, default to short)
             bridgeDuration = prevRegime && prevRegime !== from ? Math.min(prevDuration, 6) : 1;
           }
         }
         if (prevRegime && bridgeRegime) {
-          // Classify pattern
           let patternType, patternSignal;
           if (prevRegime === curRegime) {
             patternType = bridgeDuration <= 2 ? "continuation_brief" : bridgeDuration <= 6 ? "continuation_extended" : "consolidation_reset";
@@ -2521,23 +2756,23 @@ useEffect(() => {
             else if (prevRegime === "bull" && curRegime === "bear") { patternType = "reversal_bull_to_bear"; patternSignal = bridgeDuration <= 3 ? -0.10 : -0.06; }
             else { patternType = "transition"; patternSignal = 0; }
           }
-          const effectiveDuration = patternType === "continuation_brief" ? runLength + bridgeDuration + prevDuration : runLength;
           regimeCtx.threeStage = {
             pattern: `${prevRegime}→${bridgeRegime}→${curRegime}`,
-            patternType, patternSignal,
-            prevRegime, prevDuration,
-            bridgeRegime, bridgeDuration,
+            patternType, patternSignal, prevRegime, prevDuration, bridgeRegime, bridgeDuration,
             currentRegime: curRegime, currentDuration: runLength,
-            effectiveDuration,
+            effectiveDuration: patternType === "continuation_brief" ? runLength + bridgeDuration + prevDuration : runLength,
           };
         }
       }
     }
-    setLastRegimeCtx(regimeCtx); // store for UI display
-    const candidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
+
+    // ── Step 4: Run optimizer with live candidates ──
+    setLastRegimeCtx(regimeCtx);
     const result = optimizeCash(allPos, cashBalance, holdingsVal, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
     setOptResult(result);
     setAccepted(new Set());
+    } catch (e) { console.error("Optimizer error:", e); }
+    setOptRunning(false);
   }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData, regimeAnalytics, includeStocks]);
 
   // ─── AI Advisor (via serverless proxy) ───
@@ -2611,28 +2846,28 @@ useEffect(() => {
   // ═══ RENDER ═══
   return (
     <div style={{ minHeight: "100vh", background: cs.bg, color: cs.text, fontFamily: sans2 }}>
-      <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700;800&family=Overpass+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}} input[type=number]::-webkit-inner-spin-button{opacity:1}`}</style>
 
       {/* HEADER */}
-      <div style={{ borderBottom: `1px solid ${cs.border}`, padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(10,11,14,0.95)", position: "sticky", top: 0, zIndex: 100 }}>
+      <div style={{ borderBottom: `1px solid ${cs.border}`, padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1a1a1a", position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: cs.bg }}>P</div>
+          <div style={{ width: 28, height: 28, borderRadius: 0, background: cs.blue, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: cs.bg }}>P</div>
           <div><div style={{ fontSize: 13, fontWeight: 700 }}>Portfolio Architect</div>
             <div style={{ fontSize: 8, color: cs.muted, letterSpacing: ".07em", textTransform: "uppercase", fontFamily: mono2 }}>Holdings → Cash → Recommendations</div></div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {totalVal > 0 && <span style={{ fontSize: 11, fontFamily: mono2, color: cs.green, fontWeight: 700 }}>{fmt$(totalVal)}</span>}
-          <button onClick={() => setSrMode(m => m === "std" ? "var" : m === "var" ? "vol2" : "std")} style={{ padding: "4px 8px", borderRadius: 5, border: `1px solid ${srMode !== "std" ? "rgba(244,114,182,.3)" : "rgba(255,255,255,.08)"}`, background: srMode !== "std" ? "rgba(244,114,182,.1)" : "transparent", color: srMode !== "std" ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{srMode === "var" ? "VaR" : srMode === "vol2" ? "σ²" : "Std"} SR</button>
+          <button onClick={() => setSrMode(m => m === "std" ? "var" : m === "var" ? "vol2" : "std")} style={{ padding: "4px 8px", borderRadius: 0, border: `1px solid ${srMode !== "std" ? "rgba(190,149,255,.3)" : "#393939"}`, background: srMode !== "std" ? "rgba(190,149,255,.1)" : "transparent", color: srMode !== "std" ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{srMode === "var" ? "VaR" : srMode === "vol2" ? "σ²" : "Std"} SR</button>
           {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()}</span>}
-          <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: liveL ? "rgba(110,231,183,.05)" : "rgba(110,231,183,.1)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "..." : "⟳ Live"}</button>
+          <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 0, border: "1px solid rgba(110,231,183,.2)", background: liveL ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.12)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "..." : "⟳ Live"}</button>
         </div>
       </div>
 
       {/* TABS */}
-      <div style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", padding: "0 16px", background: "rgba(10,11,14,0.9)", position: "sticky", top: 50, zIndex: 99, display: "flex", overflowX: "auto" }}>
+      <div style={{ borderBottom: `1px solid ${cs.border}`, padding: "0 16px", background: "#1a1a1a", position: "sticky", top: 50, zIndex: 99, display: "flex", overflowX: "auto" }}>
         {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: "9px 13px", border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, fontFamily: "inherit", background: "transparent", color: tab === t ? cs.green : cs.muted, borderBottom: tab === t ? `2px solid ${cs.green}` : "2px solid transparent", whiteSpace: "nowrap" }}>{t}{t === "AI Advisor" ? " ✦" : ""}</button>
+          <button key={t} onClick={() => setTab(t)} style={{ padding: "9px 13px", border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, fontFamily: "inherit", background: "transparent", color: tab === t ? cs.blue : cs.muted, borderBottom: tab === t ? `2px solid ${cs.blue}` : "2px solid transparent", whiteSpace: "nowrap" }}>{t}{t === "AI Advisor" ? " ✦" : ""}</button>
         ))}
       </div>
 
@@ -2651,41 +2886,41 @@ useEffect(() => {
           {/* Allocation bar */}
           {catBreak.length > 0 && <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 9, color: cs.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: ".06em", fontFamily: mono2 }}>Allocation by Market Value</div>
-            <div style={{ display: "flex", borderRadius: 4, overflow: "hidden", height: 7, background: "rgba(255,255,255,0.03)" }}>{catBreak.map((it, i) => (<div key={i} style={{ width: `${(it.v / Math.max(catBreak.reduce((s, x) => s + x.v, 0), .01)) * 100}%`, background: it.c }} title={`${it.l}: ${fmt$(it.v)}`} />))}</div>
+            <div style={{ display: "flex", borderRadius: 0, overflow: "hidden", height: 7, background: "#222222" }}>{catBreak.map((it, i) => (<div key={i} style={{ width: `${(it.v / Math.max(catBreak.reduce((s, x) => s + x.v, 0), .01)) * 100}%`, background: it.c }} title={`${it.l}: ${fmt$(it.v)}`} />))}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
               {catBreak.map((it, i) => <span key={i} style={{ fontSize: 8, color: cs.dim, display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 6, height: 6, borderRadius: 2, background: it.c, display: "inline-block" }} />{it.l} {fmt$(it.v)}</span>)}
             </div>
           </div>}
 
           {/* Cash contribution */}
-          <div style={{ ...cardS, background: "rgba(96,165,250,.02)", borderColor: "rgba(96,165,250,.1)" }}>
+          <div style={{ ...cardS, background: "rgba(120,169,255,.04)", borderColor: "rgba(96,165,250,.1)" }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: cs.blue, marginBottom: 6 }}>💰 Cash Balance</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <div style={{ fontSize: 22, fontWeight: 700, fontFamily: mono2, color: cs.blue }}>{fmt$(cashBalance)}</div>
               <div style={{ fontSize: 9, color: cs.dim }}>available to invest</div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", background: "rgba(96,165,250,.03)", borderRadius: 6, border: "1px solid rgba(96,165,250,.08)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", background: "rgba(120,169,255,.05)", borderRadius: 0, border: "1px solid rgba(96,165,250,.08)" }}>
               <span style={{ fontSize: 10, color: cs.dim, whiteSpace: "nowrap" }}>Contribute $</span>
               <input id="cashContribInput" type="number" placeholder="10,000" style={{ ...inpS, flex: 1, fontSize: 13, fontWeight: 600, color: cs.blue, borderColor: "rgba(96,165,250,.15)", textAlign: "right" }} onKeyDown={e => { if (e.key === "Enter") { const v = +e.target.value || 0; if (v > 0) { setCashBalance(prev => prev + v); e.target.value = ""; } } }} />
-              <button onClick={() => { const inp = document.getElementById("cashContribInput"); const v = +(inp?.value) || 0; if (v > 0) { setCashBalance(prev => prev + v); inp.value = ""; } }} style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(96,165,250,.2)", background: "rgba(96,165,250,.1)", color: cs.blue, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>+ Add</button>
+              <button onClick={() => { const inp = document.getElementById("cashContribInput"); const v = +(inp?.value) || 0; if (v > 0) { setCashBalance(prev => prev + v); inp.value = ""; } }} style={{ padding: "6px 14px", borderRadius: 0, border: "1px solid rgba(96,165,250,.2)", background: "rgba(96,165,250,.1)", color: cs.blue, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>+ Add</button>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", background: "rgba(248,113,113,.02)", borderRadius: 6, border: "1px solid rgba(248,113,113,.08)", marginTop: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", background: "rgba(248,113,113,.02)", borderRadius: 0, border: "1px solid rgba(248,113,113,.08)", marginTop: 6 }}>
               <span style={{ fontSize: 10, color: cs.red, whiteSpace: "nowrap" }}>Withdraw $</span>
-              <input id="cashWithdrawInput" type="number" placeholder="0" style={{ ...inpS, flex: 1, fontSize: 13, fontWeight: 600, color: cs.red, borderColor: "rgba(248,113,113,.15)", textAlign: "right" }} onKeyDown={e => { if (e.key === "Enter") { const v = +e.target.value || 0; if (v > 0) { setCashBalance(prev => Math.max(0, prev - v)); e.target.value = ""; } } }} />
-              <button onClick={() => { const inp = document.getElementById("cashWithdrawInput"); const v = +(inp?.value) || 0; if (v > 0) { setCashBalance(prev => Math.max(0, prev - v)); inp.value = ""; } }} style={{ padding: "6px 14px", borderRadius: 5, border: "1px solid rgba(248,113,113,.15)", background: "rgba(248,113,113,.06)", color: cs.red, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>− Withdraw</button>
+              <input id="cashWithdrawInput" type="number" placeholder="0" style={{ ...inpS, flex: 1, fontSize: 13, fontWeight: 600, color: cs.red, borderColor: "rgba(255,131,137,.18)", textAlign: "right" }} onKeyDown={e => { if (e.key === "Enter") { const v = +e.target.value || 0; if (v > 0) { setCashBalance(prev => Math.max(0, prev - v)); e.target.value = ""; } } }} />
+              <button onClick={() => { const inp = document.getElementById("cashWithdrawInput"); const v = +(inp?.value) || 0; if (v > 0) { setCashBalance(prev => Math.max(0, prev - v)); inp.value = ""; } }} style={{ padding: "6px 14px", borderRadius: 0, border: "1px solid rgba(248,113,113,.15)", background: "rgba(255,131,137,.08)", color: cs.red, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>− Withdraw</button>
             </div>
             <div style={{ fontSize: 8, color: cs.dim, marginTop: 4 }}>Contribute or withdraw cash. Balance cannot go below $0.</div>
           </div>
 
           {/* Tax residency state */}
-          <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.08)", padding: "10px 14px" }}>
+          <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(190,149,255,.1)", padding: "10px 14px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, color: cs.purple }}>🏛 Tax Residency</div>
                 <div style={{ fontSize: 8, color: cs.dim, marginTop: 1 }}>Used for rebalancing, tax-loss harvesting, and backtest tax drag</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <select value={taxState} onChange={e => setTaxState(e.target.value)} style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(167,139,250,.15)", borderRadius: 5, color: cs.text, padding: "4px 8px", fontSize: 10, fontFamily: "inherit", cursor: "pointer", outline: "none" }}>
+                <select value={taxState} onChange={e => setTaxState(e.target.value)} style={{ background: "#262626", border: "1px solid rgba(167,139,250,.15)", borderRadius: 0, color: cs.text, padding: "4px 8px", fontSize: 10, fontFamily: "inherit", cursor: "pointer", outline: "none" }}>
                   {Object.entries(STATE_NAMES).sort((a, b) => a[1].localeCompare(b[1])).map(([code, name]) => (
                     <option key={code} value={code} style={{ background: "#1a1b1e", color: "#e8eaed" }}>{name}{STATE_TAX_RATES[code] > 0 ? ` (${STATE_TAX_RATES[code]}%)` : ""}</option>
                   ))}
@@ -2703,18 +2938,18 @@ useEffect(() => {
               <div style={{ fontSize: 12, fontWeight: 700 }}>Add Existing Holdings</div>
               <div style={{ display: "flex", gap: 3 }}>
                 {["stock", "etf"].map(t => (
-                  <button key={t} onClick={() => { setAddType(t); setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology" }); setStockResults([]) }} style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid", borderColor: addType === t ? "rgba(110,231,183,.25)" : "rgba(255,255,255,.06)", background: addType === t ? "rgba(110,231,183,.08)" : "transparent", color: addType === t ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{t === "stock" ? "🔒 Stock" : "📊 ETF"}</button>
+                  <button key={t} onClick={() => { setAddType(t); setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology" }); setStockResults([]) }} style={{ padding: "4px 10px", borderRadius: 0, border: "1px solid", borderColor: addType === t ? "rgba(66,190,101,.25)" : "#393939", background: addType === t ? "rgba(66,190,101,.1)" : "transparent", color: addType === t ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{t === "stock" ? "🔒 Stock" : "📊 ETF"}</button>
                 ))}
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: 10, background: "rgba(255,255,255,.015)", borderRadius: 7, border: "1px solid rgba(255,255,255,.04)" }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: 10, background: "#1c1c1c", borderRadius: 0, border: "1px solid #262626" }}>
               <div style={{ flex: "1 1 80px", minWidth: 70, position: "relative" }}>
                 <label style={{ fontSize: 8, color: cs.dim, display: "block", marginBottom: 2, fontFamily: mono2 }}>TICKER</label>
                 <input value={sf.t} onChange={e => { setSf(f => ({ ...f, t: e.target.value, livePrice: null })); setStockDD(true); searchTicker(e.target.value) }} onFocus={() => { if (sf.t) { setStockDD(true); searchTicker(sf.t) } }} placeholder={addType === "etf" ? "VOO" : "AAPL"} style={inpS} autoComplete="off" />
-                {stockDD && (stockResults.length > 0 || stockSearching) && <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 60, background: "#14161c", border: "1px solid rgba(255,255,255,.08)", borderRadius: 7, maxHeight: 240, overflowY: "auto", boxShadow: "0 8px 28px rgba(0,0,0,.6)", marginTop: 2, minWidth: 220 }}>
+                {stockDD && (stockResults.length > 0 || stockSearching) && <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 60, background: "#14161c", border: "1px solid #393939", borderRadius: 0, maxHeight: 240, overflowY: "auto", boxShadow: "0 8px 28px rgba(0,0,0,.6)", marginTop: 2, minWidth: 220 }}>
                   {stockResults.map(stk => (
-                    <div key={stk.t} onClick={() => selectTicker(stk)} style={{ padding: "7px 10px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,.03)", display: "flex", alignItems: "center", gap: 8 }} onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.04)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <div key={stk.t} onClick={() => selectTicker(stk)} style={{ padding: "7px 10px", cursor: "pointer", borderBottom: "1px solid #222222", display: "flex", alignItems: "center", gap: 8 }} onMouseEnter={e => e.currentTarget.style.background = "#262626"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <span style={{ fontFamily: mono2, fontSize: 11, fontWeight: 600, color: addType === "etf" ? cs.green : cs.yellow, width: 50 }}>{stk.t}</span>
                       <div><div style={{ fontSize: 10 }}>{stk.n}</div><div style={{ fontSize: 8, color: cs.muted }}>{stk.s}</div></div>
                     </div>
@@ -2728,9 +2963,9 @@ useEffect(() => {
                 <input type="number" value={sf.sh} onChange={e => setSf(f => ({ ...f, sh: e.target.value }))} placeholder="100" style={inpS} /></div>
               <div style={{ flex: "1 1 70px", minWidth: 60 }}><label style={{ fontSize: 8, color: cs.dim, display: "block", marginBottom: 2, fontFamily: mono2 }}>COST/SH ($)</label>
                 <input type="number" value={sf.cb} onChange={e => setSf(f => ({ ...f, cb: e.target.value }))} placeholder="150" style={inpS} /></div>
-              <div style={{ display: "flex", alignItems: "end" }}><button onClick={addHolding} disabled={adding} style={{ padding: "7px 14px", borderRadius: 6, border: "none", background: adding ? "rgba(110,231,183,.3)" : "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 10, fontWeight: 700, cursor: adding ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{adding ? "Looking up..." : "+ Add"}</button></div>
+              <div style={{ display: "flex", alignItems: "end" }}><button onClick={addHolding} disabled={adding} style={{ padding: "7px 14px", borderRadius: 0, border: "none", background: adding ? "rgba(66,190,101,.3)" : cs.blue, color: cs.bg, fontSize: 10, fontWeight: 700, cursor: adding ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{adding ? "Looking up..." : "+ Add"}</button></div>
             </div>
-            {(adding || priceInfo) && <div style={{ marginTop: 6, padding: "5px 9px", borderRadius: 5, background: "rgba(110,231,183,.04)", fontSize: 9, color: cs.green }}>
+            {(adding || priceInfo) && <div style={{ marginTop: 6, padding: "5px 9px", borderRadius: 0, background: "rgba(66,190,101,.06)", fontSize: 9, color: cs.green }}>
               {adding ? <><span style={{ animation: "pulse 1.5s ease-in-out infinite" }}>✦</span> Fetching live price...</> : `✓ ${priceInfo}`}
             </div>}
           </div>
@@ -2739,7 +2974,7 @@ useEffect(() => {
           {(etfV.length > 0 || stockV.length > 0) && <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             {stockV.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.yellow, marginBottom: 2, marginTop: 4 }}>🔒 Locked Stocks ({stockV.length})</div>}
             {stockV.map(s => (
-              <div key={s.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 7, background: "rgba(251,191,36,.02)", border: "1px solid rgba(251,191,36,.08)" }}>
+              <div key={s.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: "rgba(251,191,36,.02)", border: "1px solid rgba(251,191,36,.08)" }}>
                 <span style={{ fontSize: 10 }}>🔒</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
@@ -2777,7 +3012,7 @@ useEffect(() => {
 
             {etfV.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.green, marginBottom: 2, marginTop: 8 }}>📊 ETF Holdings ({etfV.length})</div>}
             {etfV.map((e, idx) => (
-              <div key={e.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 7, background: "rgba(255,255,255,.015)", border: "1px solid rgba(255,255,255,.04)" }}>
+              <div key={e.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: "#1c1c1c", border: "1px solid #262626" }}>
                 <div style={{ width: 4, height: 28, borderRadius: 2, background: PAL[idx % PAL.length] }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
@@ -2814,7 +3049,7 @@ useEffect(() => {
             ))}
           </div>}
 
-          {!etfV.length && !stockV.length && <div style={{ textAlign: "center", padding: "40px 18px", border: "1px dashed rgba(255,255,255,.07)", borderRadius: 11 }}>
+          {!etfV.length && !stockV.length && <div style={{ textAlign: "center", padding: "40px 18px", border: "1px dashed rgba(255,255,255,.07)", borderRadius: 0 }}>
             <div style={{ fontSize: 26, marginBottom: 5 }}>📊</div>
             <div style={{ fontSize: 12, fontWeight: 600 }}>Add Your Existing Holdings</div>
             <div style={{ fontSize: 10, color: cs.muted, maxWidth: 340, margin: "5px auto 0" }}>Add your stocks (locked, won't be traded) and ETFs above. Portfolio value calculates automatically from shares × price.</div>
@@ -2823,17 +3058,17 @@ useEffect(() => {
 
         {/* ════ DEPLOY CASH ════ */}
         {tab === "Deploy Cash" && <div>
-          <div style={{ ...cardS, background: "rgba(96,165,250,.03)", borderColor: "rgba(96,165,250,.12)" }}>
+          <div style={{ ...cardS, background: "rgba(120,169,255,.05)", borderColor: "rgba(96,165,250,.12)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Optimizer runs 6,000 Monte Carlo simulations to find the best risk-adjusted {includeStocks ? "ETF + stock" : "ETF"} allocation. Min 3 positions, 25% stock cap, return shrinkage (stocks 80%, ETFs 120%). SPY-overlap penalty rewards differentiated portfolios — if you'd mirror SPY, just buy SPY. {includeStocks ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
-              {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Holdings" tab first</div>}
+                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Fetches trailing 12-month history for all candidates, computes recency-weighted returns and volatility with return shrinkage, then runs 6,000 Monte Carlo simulations. SPY-overlap penalty rewards differentiation. {includeStocks ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
+              {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 0, background: "rgba(255,171,145,.08)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Holdings" tab first</div>}
             </div>
 
             {cashBalance > 0 && <>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
                 {[{ k: "max_sharpe", l: "Max Sharpe", d: "Risk-adjusted" }, { k: "min_vol", l: "Min Volatility", d: "Lowest risk" }, { k: "max_return", l: "Max Return", d: srMode === "var" ? "Aggressive + DD brake" : "Full aggressive" }, { k: "balanced", l: "Balanced", d: "Multi-factor" }].map(o => (
-                  <button key={o.k} onClick={() => setOt(o.k)} style={{ flex: "1 1 100px", padding: "8px 12px", borderRadius: 6, border: "1px solid", borderColor: ot === o.k ? "rgba(110,231,183,.25)" : "rgba(255,255,255,.05)", background: ot === o.k ? "rgba(110,231,183,.06)" : "rgba(255,255,255,.015)", color: ot === o.k ? cs.green : cs.dim, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                  <button key={o.k} onClick={() => setOt(o.k)} style={{ flex: "1 1 100px", padding: "8px 12px", borderRadius: 0, border: "1px solid", borderColor: ot === o.k ? "rgba(66,190,101,.25)" : "#2a2a2a", background: ot === o.k ? "rgba(66,190,101,.08)" : "#1c1c1c", color: ot === o.k ? cs.green : cs.dim, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
                     <div style={{ fontSize: 10, fontWeight: 600 }}>{o.l}</div><div style={{ fontSize: 8, opacity: .7 }}>{o.d}</div>
                   </button>
                 ))}
@@ -2841,29 +3076,29 @@ useEffect(() => {
 
               {/* Advanced: Vol Target + Sharpe mode */}
               <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 5, flex: "1 1 200px", padding: "7px 10px", borderRadius: 6, border: "1px solid rgba(96,165,250,.12)", background: "rgba(96,165,250,.03)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flex: "1 1 200px", padding: "7px 10px", borderRadius: 0, border: "1px solid rgba(96,165,250,.12)", background: "rgba(120,169,255,.05)" }}>
                   <span style={{ fontSize: 9, color: cs.blue, fontWeight: 600, whiteSpace: "nowrap" }}>🎯 Vol Target</span>
                   <input type="number" value={volTarget || ""} onChange={e => setVolTarget(Math.max(0, +e.target.value || 0))} placeholder="off" step="1" min="0" max="50" style={{ ...inpS, width: 55, fontSize: 11, fontWeight: 600, textAlign: "center", color: cs.blue, borderColor: "rgba(96,165,250,.15)" }} />
                   <span style={{ fontSize: 8, color: cs.dim }}>%</span>
                   {[8, 12, 16, 20].map(v => (
-                    <button key={v} onClick={() => setVolTarget(volTarget === v ? 0 : v)} style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${volTarget === v ? "rgba(96,165,250,.3)" : "rgba(255,255,255,.06)"}`, background: volTarget === v ? "rgba(96,165,250,.12)" : "transparent", color: volTarget === v ? cs.blue : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{v}%</button>
+                    <button key={v} onClick={() => setVolTarget(volTarget === v ? 0 : v)} style={{ padding: "3px 6px", borderRadius: 0, border: `1px solid ${volTarget === v ? "rgba(96,165,250,.3)" : "#393939"}`, background: volTarget === v ? "rgba(96,165,250,.12)" : "transparent", color: volTarget === v ? cs.blue : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{v}%</button>
                   ))}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", borderRadius: 6, border: "1px solid rgba(244,114,182,.1)", background: "rgba(244,114,182,.02)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", borderRadius: 0, border: "1px solid rgba(244,114,182,.1)", background: "rgba(244,114,182,.02)" }}>
                   <span style={{ fontSize: 9, color: cs.pink, fontWeight: 600, whiteSpace: "nowrap" }}>SR Mode</span>
                   {[{k:"std",l:"(R-Rf)/σ"},{k:"var",l:"(R-Rf)/VaR"},{k:"vol2",l:"(R-Rf)/σ²"}].map(m => (
-                    <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "3px 7px", borderRadius: 4, border: `1px solid ${srMode === m.k ? (m.k === "std" ? "rgba(110,231,183,.3)" : "rgba(244,114,182,.3)") : "rgba(255,255,255,.06)"}`, background: srMode === m.k ? (m.k === "std" ? "rgba(110,231,183,.08)" : "rgba(244,114,182,.1)") : "transparent", color: srMode === m.k ? (m.k === "std" ? cs.green : cs.pink) : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
+                    <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "3px 7px", borderRadius: 0, border: `1px solid ${srMode === m.k ? (m.k === "std" ? "rgba(66,190,101,.3)" : "rgba(190,149,255,.3)") : "#393939"}`, background: srMode === m.k ? (m.k === "std" ? "rgba(66,190,101,.1)" : "rgba(190,149,255,.1)") : "transparent", color: srMode === m.k ? (m.k === "std" ? cs.green : cs.pink) : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
                   ))}
                 </div>
-                <button onClick={() => setUseKelly(v => !v)} style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${useKelly ? "rgba(167,139,250,.2)" : "rgba(255,255,255,.06)"}`, background: useKelly ? "rgba(167,139,250,.05)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                <button onClick={() => setUseKelly(v => !v)} style={{ padding: "7px 10px", borderRadius: 0, border: `1px solid ${useKelly ? "rgba(190,149,255,.2)" : "#393939"}`, background: useKelly ? "rgba(190,149,255,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: useKelly ? cs.purple : cs.dim, fontWeight: 600 }}>½K</span>
                   <span style={{ fontSize: 8, color: useKelly ? cs.purple : cs.dim }}>{useKelly ? "ON" : "OFF"}</span>
                 </button>
-                <button onClick={() => setUseRegime(v => !v)} style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${useRegime ? "rgba(251,191,36,.2)" : "rgba(255,255,255,.06)"}`, background: useRegime ? "rgba(251,191,36,.05)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                <button onClick={() => setUseRegime(v => !v)} style={{ padding: "7px 10px", borderRadius: 0, border: `1px solid ${useRegime ? "rgba(255,171,145,.2)" : "#393939"}`, background: useRegime ? "rgba(255,171,145,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
                   <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
                 </button>
-                <button onClick={() => setIncludeStocks(v => !v)} style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${includeStocks ? "rgba(96,165,250,.2)" : "rgba(255,255,255,.06)"}`, background: includeStocks ? "rgba(96,165,250,.05)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                <button onClick={() => setIncludeStocks(v => !v)} style={{ padding: "7px 10px", borderRadius: 0, border: `1px solid ${includeStocks ? "rgba(120,169,255,.2)" : "#393939"}`, background: includeStocks ? "rgba(120,169,255,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: includeStocks ? cs.blue : cs.dim, fontWeight: 600 }}>📈</span>
                   <span style={{ fontSize: 8, color: includeStocks ? cs.blue : cs.dim }}>{includeStocks ? "ETF+Stocks" : "ETF Only"}</span>
                 </button>
@@ -2872,8 +3107,8 @@ useEffect(() => {
               {ot === "max_return" && srMode === "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🚀 Max Return + VaR: aggressive growth with a light drawdown brake. Return is weighted 1.5x with a mild VaR penalty. Hard constraints (min 3 positions, 25% stock cap, return shrinkage) still apply.</div>}
               {ot === "max_return" && srMode !== "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🚀 Max Return: full aggressive. Return weighted 1.5x with minimal vol penalty. The optimizer will chase the highest-returning assets within the diversification constraints. Switch to VaR mode for a light drawdown brake.</div>}
 
-              <button onClick={runOptimizer} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: cs.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                Run Optimizer — Deploy ${cashBalance.toLocaleString()}{includeStocks ? " (ETF+Stocks)" : ""}{useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}
+              <button onClick={runOptimizer} disabled={optRunning} style={{ width: "100%", padding: "11px", borderRadius: 0, border: "none", background: optRunning ? "#2a2a2a" : cs.blue, color: optRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: optRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
+                {optRunning ? "Fetching trailing data & optimizing..." : `Run Optimizer — Deploy $${cashBalance.toLocaleString()}${includeStocks ? " (ETF+Stocks)" : ""}${useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}`}
               </button>
               {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime data loading — fetches automatically on app launch from 12 FRED macro indicators. If this persists, check FRED_API_KEY in Vercel env vars.</div>}
 
@@ -2890,7 +3125,7 @@ useEffect(() => {
               <div style={{ fontSize: 9, color: cs.dim }}>Click to toggle</div>
             </div>
             {/* Regime context used for this optimization */}
-            {lastRegimeCtx && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, padding: "6px 8px", borderRadius: 5, background: "rgba(251,191,36,.03)", border: "1px solid rgba(251,191,36,.06)" }}>
+            {lastRegimeCtx && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, padding: "6px 8px", borderRadius: 0, background: "rgba(255,171,145,.04)", border: "1px solid rgba(251,191,36,.06)" }}>
               <span style={{ fontSize: 8, fontWeight: 600, color: cs.yellow }}>🌊 Regime Context:</span>
               <span style={{ fontSize: 8, fontFamily: mono2, color: cs.text }}>{lastRegimeCtx.state5?.replace(/_/g, " ")}</span>
               <span style={{ fontSize: 8, fontFamily: mono2, color: cs.dim }}>Duration: <span style={{ color: cs.text }}>{lastRegimeCtx.threeStage?.effectiveDuration || lastRegimeCtx.duration}m{lastRegimeCtx.threeStage?.effectiveDuration && lastRegimeCtx.threeStage.effectiveDuration !== lastRegimeCtx.threeStage.currentDuration ? ` (eff.)` : ""}</span></span>
@@ -2923,12 +3158,12 @@ useEffect(() => {
                 const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
                 return (
                 <div key={r.ticker} onClick={() => toggleRec(r)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 7,
-                    background: isAccepted ? "rgba(110,231,183,.06)" : "rgba(110,231,183,.02)",
-                    border: `1px solid ${isAccepted ? "rgba(110,231,183,.25)" : "rgba(110,231,183,.08)"}`,
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 0,
+                    background: isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)",
+                    border: `1px solid ${isAccepted ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.1)"}`,
                     cursor: "pointer", transition: "all .2s" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = isAccepted ? "rgba(248,113,113,.06)" : "rgba(110,231,183,.08)" }}
-                  onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(110,231,183,.06)" : "rgba(110,231,183,.02)" }}>
+                  onMouseEnter={e => { e.currentTarget.style.background = isAccepted ? "rgba(255,131,137,.08)" : "rgba(66,190,101,.1)" }}
+                  onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)" }}>
                   <Badge color={isAccepted ? cs.green : cs.blue}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
@@ -2939,7 +3174,7 @@ useEffect(() => {
                       {r.lev && <Badge color={cs.red}>⚠ {r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
                     </div>
                     <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
-                      {r.lev ? `Stated R:${r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r}%`} · V:{r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
+                      {r.lev ? `Stated R:${r.r?.toFixed?.(1) || r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r?.toFixed?.(1) || r.r}%`} · V:{r.v?.toFixed?.(1) || r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
                       {r.lev && <span style={{ color: cs.red }}> · ⚠ Vol decay drag, path-dependent, not for buy-and-hold</span>}
                     </div>
                   </div>
@@ -2951,7 +3186,7 @@ useEffect(() => {
               )})}
             </div>
 
-            {accepted.size > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "rgba(110,231,183,.04)", fontSize: 9, color: cs.green, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            {accepted.size > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 0, background: "rgba(66,190,101,.06)", fontSize: 9, color: cs.green, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span>✓ {accepted.size} of {optResult.length} added · Cash remaining: {fmt$(cashBalance)}</span>
               <span style={{ color: cs.dim }}>Click again to remove</span>
             </div>}
@@ -2959,11 +3194,11 @@ useEffect(() => {
             {/* Accept all / Remove all buttons */}
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               {accepted.size < optResult.length && <button onClick={() => { optResult.forEach(r => { if (!accepted.has(r.ticker) && !etfs.find(e => e.ticker === r.ticker) && !stocks.find(s => s.ticker === r.ticker)) toggleRec(r) }) }}
-                style={{ flex: 1, padding: "9px", borderRadius: 7, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ flex: 1, padding: "9px", borderRadius: 0, border: "1px solid rgba(110,231,183,.2)", background: "rgba(66,190,101,.08)", color: cs.green, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Add All {optResult.length - accepted.size} to Holdings
               </button>}
               {accepted.size > 0 && <button onClick={() => { [...accepted].forEach(ticker => { const rec = optResult.find(r => r.ticker === ticker); if (rec) toggleRec(rec) }) }}
-                style={{ flex: accepted.size < optResult.length ? "0 0 auto" : 1, padding: "9px 16px", borderRadius: 7, border: "1px solid rgba(248,113,113,.15)", background: "rgba(248,113,113,.04)", color: cs.red, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                style={{ flex: accepted.size < optResult.length ? "0 0 auto" : 1, padding: "9px 16px", borderRadius: 0, border: "1px solid rgba(248,113,113,.15)", background: "rgba(255,131,137,.06)", color: cs.red, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Remove All
               </button>}
             </div>
@@ -2986,7 +3221,7 @@ useEffect(() => {
         {tab === "Analysis" && <div>
           {!metrics ? <div style={{ textAlign: "center", padding: 45, color: cs.muted }}><div style={{ fontSize: 24, marginBottom: 5 }}>📈</div><div style={{ fontSize: 11 }}>Add holdings first</div></div>
             : <>
-              <div style={{ display: "flex", justifyContent: "center", gap: 18, flexWrap: "wrap", padding: "14px 0 18px", borderBottom: "1px solid rgba(255,255,255,.04)", marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "center", gap: 18, flexWrap: "wrap", padding: "14px 0 18px", borderBottom: "1px solid #262626", marginBottom: 14 }}>
                 <GR value={getSR(metrics)} max={srMax} label={srLabel} color={getSR(metrics) > .5 ? cs.green : cs.yellow} />
                 <GR value={metrics.so} max={3} label="Sortino" color={cs.blue} />
                 <GR value={metrics.dr} max={2} label="Div Ratio" color={cs.purple} />
@@ -3001,7 +3236,7 @@ useEffect(() => {
                 <MC sm label="Max Drawdown" value={`-${metrics.md.toFixed(1)}%`} accent={cs.red} sub="≈2.1× vol" />
               </div>
               {/* Tax Summary */}
-              {(etfV.length > 0 || stockV.length > 0) && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.08)" }}>
+              {(etfV.length > 0 || stockV.length > 0) && <div style={{ ...cardS, background: "rgba(167,139,250,.02)", borderColor: "rgba(190,149,255,.1)" }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: cs.purple, marginBottom: 8 }}>🏛 Tax Summary ({taxState === "None" ? "Federal Only" : STATE_NAMES[taxState] + " + Federal"})</div>
                 {(() => {
                   let totalUnrealizedGain = 0, totalUnrealizedLoss = 0, stGains = 0, ltGains = 0, stLosses = 0, ltLosses = 0;
@@ -3027,14 +3262,68 @@ useEffect(() => {
               </div>}
 
               {/* ── Rebalance Advisor ── */}
-              {metrics && totalVal > 0 && <div style={{ ...cardS, background: "rgba(110,231,183,.02)", borderColor: "rgba(110,231,183,.12)" }}>
+              {metrics && totalVal > 0 && <div style={{ ...cardS, background: "rgba(66,190,101,.04)", borderColor: "rgba(110,231,183,.12)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 700, color: cs.green }}>🎯 Rebalance Advisor</div>
                     <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Runs the optimizer on your full portfolio value to find the optimal allocation from scratch, then compares it against your current holdings using the same hurdle logic as the backtest.</div>
                   </div>
-                  <button onClick={() => {
+                  <button onClick={async () => {
                     setRebalRunning(true);
+                    try {
+                    // ── Fetch live trailing data (same as Deploy Cash optimizer) ──
+                    const baseCandidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
+                    const tickers = baseCandidates.map(c => c.t);
+                    const endDate = new Date().toISOString().slice(0, 10);
+                    const startDate = new Date(Date.now() - 14 * 30 * 86400000).toISOString().slice(0, 10);
+                    let histData = {};
+                    try {
+                      for (let i = 0; i < tickers.length; i += 15) {
+                        const batch = tickers.slice(i, i + 15);
+                        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=${startDate}&end=${endDate}`);
+                        const json = await resp.json();
+                        if (json.data) Object.assign(histData, json.data);
+                      }
+                    } catch (e) { console.warn("Rebal: failed to fetch history", e); }
+
+                    let candidates;
+                    const fetchedTickers = Object.keys(histData).filter(k => histData[k]?.length >= 7);
+                    if (fetchedTickers.length > 10) {
+                      const returnsByDate = {};
+                      for (const sym of fetchedTickers) {
+                        const prices = histData[sym].sort((a, b) => a.date.localeCompare(b.date));
+                        for (let j = 1; j < prices.length; j++) {
+                          const date = prices[j].date.slice(0, 7);
+                          const ret = (prices[j].close - prices[j - 1].close) / prices[j - 1].close;
+                          if (!returnsByDate[date]) returnsByDate[date] = {};
+                          returnsByDate[date][sym] = { ret, close: prices[j].close };
+                        }
+                      }
+                      const sortedDates = Object.keys(returnsByDate).sort();
+                      const etfDbMap = {}; baseCandidates.forEach(c => { etfDbMap[c.t] = c; });
+                      const liveCandidates = [];
+                      const mIdx = sortedDates.length;
+                      const trailStart = Math.max(0, mIdx - 12);
+                      for (const sym of fetchedTickers) {
+                        let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
+                        for (let ti = trailStart; ti < mIdx; ti++) {
+                          const entry = returnsByDate[sortedDates[ti]]?.[sym];
+                          if (entry) { const age = mIdx - 1 - ti; const w = Math.exp(-0.05 * age); sumWRet += w * entry.ret; sumW += w; sumRet += entry.ret; sumRetSq += entry.ret * entry.ret; count++; }
+                        }
+                        if (count < 6) continue;
+                        const db = etfDbMap[sym]; if (!db) continue;
+                        const rawR = (sumWRet / sumW) * 12 * 100;
+                        const shrunkR = shrinkReturn(rawR, db.type === "stock");
+                        const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) ** 2)) * Math.sqrt(12) * 100, 1);
+                        liveCandidates.push({ t: sym, n: db.n, c: db.c, h: db.h || 1, er: db.er || 0, d: db.d || 0, lev: db.lev || null, r: shrunkR, v: vol, type: db.type || "etf", ipo: db.ipo });
+                      }
+                      const liveSet = new Set(liveCandidates.map(c => c.t));
+                      for (const c of baseCandidates) { if (!liveSet.has(c.t)) liveCandidates.push(c); }
+                      candidates = liveCandidates.filter(c => c.t !== "SPY" && c.v > 0 && c.r > -80);
+                    } else {
+                      candidates = baseCandidates;
+                    }
+
                     // Build regime context (same as Deploy Cash optimizer)
                     let regimeCtx = null;
                     if (useRegime && regimeData?.regime) {
@@ -3063,8 +3352,7 @@ useEffect(() => {
                         }
                       }
                     }
-                    // Run optimizer on FULL portfolio value (not just cash)
-                    const candidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
+                    // Run optimizer on FULL portfolio value with LIVE candidates
                     const optimalAlloc = optimizeCash([], totalVal, 0, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
 
                     // Build current holdings map: ticker → { dollars, cat, r, v, costBasis, shares, purchaseDate, type }
@@ -3152,13 +3440,14 @@ useEffect(() => {
                       sells, buys, keeps, reduces, increases,
                       currMetrics: metrics, propMetrics, wtdSpyCorrVal, regimeCtx,
                       optimalAlloc });
+                    } catch (e) { console.error("Rebalance analysis error:", e); }
                     setRebalRunning(false);
-                  }} disabled={rebalRunning} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 9, fontWeight: 600, cursor: rebalRunning ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  }} disabled={rebalRunning} style={{ padding: "6px 12px", borderRadius: 0, border: "1px solid rgba(110,231,183,.2)", background: "rgba(66,190,101,.08)", color: cs.green, fontSize: 9, fontWeight: 600, cursor: rebalRunning ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                     {rebalRunning ? "Analyzing..." : rebalAnalysis ? "⟳ Re-analyze" : "Run Rebalance Analysis"}
                   </button>
                 </div>
 
-                {!rebalAnalysis && !rebalRunning && <div style={{ textAlign: "center", padding: 14, color: cs.muted, fontSize: 9, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7, marginTop: 8 }}>
+                {!rebalAnalysis && !rebalRunning && <div style={{ textAlign: "center", padding: 14, color: cs.muted, fontSize: 9, border: "1px dashed #393939", borderRadius: 0, marginTop: 8 }}>
                   Runs the optimizer on your entire portfolio value ({fmt$(totalVal)}) to find the optimal allocation from scratch. Then compares the optimal portfolio against your current holdings to determine if rebalancing is justified after accounting for tax costs and transaction friction.
                 </div>}
 
@@ -3166,7 +3455,7 @@ useEffect(() => {
                   const ra = rebalAnalysis;
                   return <div style={{ marginTop: 8 }}>
                     {/* Verdict */}
-                    <div style={{ padding: "12px 14px", borderRadius: 8, background: ra.shouldRebalance ? "rgba(110,231,183,.06)" : "rgba(251,191,36,.06)", border: `1px solid ${ra.shouldRebalance ? "rgba(110,231,183,.2)" : "rgba(251,191,36,.2)"}`, marginBottom: 12 }}>
+                    <div style={{ padding: "12px 14px", borderRadius: 0, background: ra.shouldRebalance ? "rgba(66,190,101,.08)" : "rgba(255,171,145,.08)", border: `1px solid ${ra.shouldRebalance ? "rgba(66,190,101,.25)" : "rgba(255,171,145,.2)"}`, marginBottom: 12 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                         <span style={{ fontSize: 20 }}>{ra.shouldRebalance ? "✅" : "⏸️"}</span>
                         <div>
@@ -3203,7 +3492,7 @@ useEffect(() => {
                           ].map(row => {
                             const d = row.p - row.c;
                             const good = row.hi ? d > 0.01 : d < -0.01;
-                            return <tr key={row.l} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                            return <tr key={row.l} style={{ borderTop: "1px solid #222222" }}>
                               <td style={{ padding: "5px 8px", color: cs.dim }}>{row.l}</td>
                               <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text }}>{row.c.toFixed(2)}{row.u}</td>
                               <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: cs.text, fontWeight: 600 }}>{row.p.toFixed(2)}{row.u}</td>
@@ -3217,32 +3506,32 @@ useEffect(() => {
                     {/* Hurdle Breakdown */}
                     <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Hurdle Rate Breakdown</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 6, marginBottom: 12 }}>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 0, background: "#1c1c1c" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Tax Cost</div>
                         <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.red }}>{ra.tcPct.toFixed(2)}%</div>
                         <div style={{ fontSize: 7, color: cs.muted }}>{fmt$(ra.estTax)} on {fmt$(ra.grossGains)} gains</div>
                       </div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 0, background: "#1c1c1c" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Tax Hurdle</div>
                         <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.yellow }}>{ra.taxHurdle.toFixed(2)}%</div>
                         <div style={{ fontSize: 7, color: cs.muted }}>{ra.curAlpha > 3 ? "2.0× (outperforming)" : ra.curAlpha < -2 ? "0.8× (underperf.)" : "1.2× (default)"}</div>
                       </div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 0, background: "#1c1c1c" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Min Floor</div>
                         <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.blue }}>{ra.minFloor.toFixed(1)}%</div>
                         <div style={{ fontSize: 7, color: cs.muted }}>Always required</div>
                       </div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)" }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 0, background: "#1c1c1c" }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Turnover Cost</div>
                         <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: cs.purple }}>{ra.turnoverCost.toFixed(2)}%</div>
                         <div style={{ fontSize: 7, color: cs.muted }}>{ra.turnoverPct.toFixed(0)}% changed</div>
                       </div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: ra.shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(251,191,36,.04)", border: `1px solid ${ra.shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(251,191,36,.15)"}` }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 0, background: ra.shouldRebalance ? "rgba(66,190,101,.06)" : "rgba(251,191,36,.04)", border: `1px solid ${ra.shouldRebalance ? "rgba(66,190,101,.18)" : "rgba(255,171,145,.15)"}` }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Total Hurdle</div>
                         <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: ra.shouldRebalance ? cs.green : cs.yellow }}>{ra.totalHurdle.toFixed(2)}%</div>
                         <div style={{ fontSize: 7, color: cs.muted }}>max(tax,floor)+turnover</div>
                       </div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: ra.shouldRebalance ? "rgba(110,231,183,.04)" : "rgba(248,113,113,.04)", border: `1px solid ${ra.shouldRebalance ? "rgba(110,231,183,.15)" : "rgba(248,113,113,.15)"}` }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 0, background: ra.shouldRebalance ? "rgba(66,190,101,.06)" : "rgba(255,131,137,.06)", border: `1px solid ${ra.shouldRebalance ? "rgba(66,190,101,.18)" : "rgba(255,131,137,.18)"}` }}>
                         <div style={{ fontSize: 7, color: cs.dim }}>Return Improvement</div>
                         <div style={{ fontSize: 13, fontWeight: 700, fontFamily: mono2, color: ra.retImprovement > ra.totalHurdle ? cs.green : cs.red }}>{ra.retImprovement > 0 ? "+" : ""}{ra.retImprovement.toFixed(2)}%</div>
                         <div style={{ fontSize: 7, color: cs.muted }}>{ra.shouldRebalance ? "Exceeds hurdle ✓" : "Below hurdle ✗"}</div>
@@ -3261,29 +3550,29 @@ useEffect(() => {
                     </div>
 
                     <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 12 }}>
-                      {ra.sells.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(248,113,113,.03)", fontSize: 9 }}>
+                      {ra.sells.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(255,131,137,.05)", fontSize: 9 }}>
                         <Badge color={cs.red}>SELL</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.red, minWidth: 40 }}>{t2.ticker}</span>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: cs.text }}>{fmt$(t2.curDollars)}</span>
                       </div>)}
-                      {ra.reduces.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(251,191,36,.03)", fontSize: 9 }}>
+                      {ra.reduces.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(255,171,145,.04)", fontSize: 9 }}>
                         <Badge color={cs.yellow}>REDUCE</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.yellow, minWidth: 40 }}>{t2.ticker}</span>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: t2.gl >= 0 ? cs.green : cs.red }}>{t2.gl >= 0 ? "+" : ""}{fmt$(t2.gl)}</span>
                       </div>)}
-                      {ra.keeps.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(96,165,250,.02)", fontSize: 9 }}>
+                      {ra.keeps.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(120,169,255,.04)", fontSize: 9 }}>
                         <Badge color={cs.blue}>KEEP</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.blue, minWidth: 40 }}>{t2.ticker}</span>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                       </div>)}
-                      {ra.increases.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(167,139,250,.03)", fontSize: 9 }}>
+                      {ra.increases.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(190,149,255,.04)", fontSize: 9 }}>
                         <Badge color={cs.purple}>ADD</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.purple, minWidth: 40 }}>{t2.ticker}</span>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                       </div>)}
-                      {ra.buys.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4, background: "rgba(110,231,183,.03)", fontSize: 9 }}>
+                      {ra.buys.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(110,231,183,.03)", fontSize: 9 }}>
                         <Badge color={cs.green}>BUY</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.green, minWidth: 40 }}>{t2.ticker}</span>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
@@ -3327,7 +3616,7 @@ useEffect(() => {
                     })()}
 
                     {/* Decision Logic */}
-                    <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.muted, lineHeight: 1.7 }}>
+                    <div style={{ padding: "8px 10px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.muted, lineHeight: 1.7 }}>
                       <span style={{ fontWeight: 600, color: cs.text }}>Decision Logic: </span>
                       Return improvement ({ra.retImprovement > 0 ? "+" : ""}{ra.retImprovement.toFixed(2)}%) {ra.shouldRebalance ? ">" : "≤"} hurdle ({ra.totalHurdle.toFixed(2)}%)
                       {" = "}max(tax {ra.taxHurdle.toFixed(2)}%, floor {ra.minFloor}%) + turnover {ra.turnoverCost.toFixed(2)}%.
@@ -3377,7 +3666,7 @@ useEffect(() => {
                             { label: "📊 Base", rate: fwdReturn, color: cs.green },
                             { label: "🐂 Bull", rate: bullReturn, color: cs.blue },
                           ].map(sc => (
-                            <tr key={sc.label} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                            <tr key={sc.label} style={{ borderTop: "1px solid #222222" }}>
                               <td style={{ padding: "5px 6px", color: sc.color, fontWeight: 600 }}>{sc.label}</td>
                               <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, color: sc.color }}>{sc.rate.toFixed(1)}%</td>
                               {[1, 5, 10, 20].map(yr => {
@@ -3397,7 +3686,7 @@ useEffect(() => {
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ borderCollapse: "separate", borderSpacing: 2 }}><thead><tr><th />{allPos.slice(0, 10).map(p => <th key={p.ticker} style={{ padding: 2, fontSize: 8, fontFamily: mono2, color: cs.dim }}>{p.ticker}</th>)}</tr></thead>
                     <tbody>{allPos.slice(0, 10).map(row => <tr key={row.ticker}><td style={{ padding: "2px 5px", fontSize: 8, fontFamily: mono2, color: cs.dim }}>{row.ticker}</td>
-                      {allPos.slice(0, 10).map(col => { const cr = gc(row.cat, col.cat); return <td key={col.ticker} style={{ padding: 2, textAlign: "center", fontSize: 8, fontFamily: mono2, background: cr > .8 ? "rgba(248,113,113,.1)" : cr < 0 ? "rgba(110,231,183,.1)" : "rgba(255,255,255,.02)", color: cr > .7 ? cs.red : cr < 0 ? cs.green : cs.text, borderRadius: 2 }}>{cr.toFixed(2)}</td> })}
+                      {allPos.slice(0, 10).map(col => { const cr = gc(row.cat, col.cat); return <td key={col.ticker} style={{ padding: 2, textAlign: "center", fontSize: 8, fontFamily: mono2, background: cr > .8 ? "rgba(248,113,113,.1)" : cr < 0 ? "rgba(66,190,101,.12)" : "#1e1e1e", color: cr > .7 ? cs.red : cr < 0 ? cs.green : cs.text, borderRadius: 2 }}>{cr.toFixed(2)}</td> })}
                     </tr>)}</tbody></table>
                 </div>
               </div>}
@@ -3409,28 +3698,28 @@ useEffect(() => {
                     <div style={{ fontSize: 12, fontWeight: 700 }}>🌊 Market Regime Analysis</div>
                     <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>12-factor FRED composite: HY Spreads, VIX, VIX3M, NFCI, yield curves (10Y-2Y, 10Y-3M), TED Spread, Sahm Rule, jobless claims, S&P 500, gold, 10Y yield</div>
                   </div>
-                  <button onClick={fetchRegime} disabled={regimeLoading} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(110,231,183,.2)", background: "rgba(110,231,183,.06)", color: cs.green, fontSize: 9, fontWeight: 600, cursor: regimeLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
+                  <button onClick={fetchRegime} disabled={regimeLoading} style={{ padding: "6px 12px", borderRadius: 0, border: "1px solid rgba(110,231,183,.2)", background: "rgba(66,190,101,.08)", color: cs.green, fontSize: 9, fontWeight: 600, cursor: regimeLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
                     {regimeLoading ? "Loading..." : regimeData ? "⟳ Refresh" : "Fetch Live Data"}
                   </button>
                 </div>
 
-                {regimeError && <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(248,113,113,.04)", border: "1px solid rgba(248,113,113,.12)", fontSize: 9, color: cs.red, marginBottom: 10 }}>{regimeError}</div>}
+                {regimeError && <div style={{ padding: "8px 10px", borderRadius: 0, background: "rgba(255,131,137,.06)", border: "1px solid rgba(248,113,113,.12)", fontSize: 9, color: cs.red, marginBottom: 10 }}>{regimeError}</div>}
 
-                {!regimeData && !regimeLoading && !regimeError && <div style={{ textAlign: "center", padding: 20, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>
+                {!regimeData && !regimeLoading && !regimeError && <div style={{ textAlign: "center", padding: 20, color: cs.muted, fontSize: 10, border: "1px dashed #393939", borderRadius: 0 }}>
                   Auto-fetches on app launch. 12 FRED macro series analyzed with rolling z-scores, EMA smoothing, and cross-asset correlation to determine 5-state market regime (strong risk-on → strong risk-off).
                 </div>}
 
                 {regimeData?.regime && (() => {
                   const r = regimeData.regime;
                   const regimeColor = r.regime === "bull" ? cs.green : r.regime === "bear" ? cs.red : cs.yellow;
-                  const state5Colors = { strong_risk_on: "#22c55e", mild_risk_on: "#6ee7b7", neutral: "#fbbf24", mild_risk_off: "#fb923c", strong_risk_off: "#ef4444" };
+                  const state5Colors = { strong_risk_on: "#42be65", mild_risk_on: "#6fdc8c", neutral: "#ffab91", mild_risk_off: "#ff832b", strong_risk_off: "#ff8389" };
                   const state5Labels = { strong_risk_on: "STRONG RISK-ON", mild_risk_on: "MILD RISK-ON", neutral: "NEUTRAL", mild_risk_off: "MILD RISK-OFF", strong_risk_off: "STRONG RISK-OFF" };
                   const s5 = r.state5 || "neutral";
                   const s5Color = state5Colors[s5] || cs.yellow;
 
                   return <div>
                     {/* 5-State Regime Banner */}
-                    <div style={{ padding: "14px 16px", borderRadius: 8, background: `${s5Color}0a`, border: `1px solid ${s5Color}30`, marginBottom: 12 }}>
+                    <div style={{ padding: "14px 16px", borderRadius: 0, background: `${s5Color}0a`, border: `1px solid ${s5Color}30`, marginBottom: 12 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
                         <div style={{ fontSize: 28 }}>{s5 === "strong_risk_on" ? "🟢" : s5 === "mild_risk_on" ? "🟩" : s5 === "neutral" ? "🟡" : s5 === "mild_risk_off" ? "🟧" : "🔴"}</div>
                         <div style={{ flex: 1 }}>
@@ -3444,7 +3733,7 @@ useEffect(() => {
                         </div>
                       </div>
                       {/* 5-state gauge bar */}
-                      <div style={{ display: "flex", height: 10, borderRadius: 5, overflow: "hidden", background: "rgba(255,255,255,.03)" }}>
+                      <div style={{ display: "flex", height: 10, borderRadius: 0, overflow: "hidden", background: "#222222" }}>
                         {Object.entries(state5Colors).map(([state, color]) => (
                           <div key={state} style={{ flex: 1, background: s5 === state ? `${color}60` : "transparent", borderRight: "1px solid rgba(0,0,0,.2)", position: "relative" }}>
                             {s5 === state && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ width: 4, height: 4, borderRadius: 2, background: color }} /></div>}
@@ -3479,7 +3768,7 @@ useEffect(() => {
                         if (!d) return null;
                         const sig = d.signal || "neutral";
                         const sigColor = sig === "risk-on" ? cs.green : sig === "risk-off" ? cs.red : cs.yellow;
-                        return <div key={f.key} style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.01)", border: `1px solid ${sigColor}12` }}>
+                        return <div key={f.key} style={{ padding: "8px 10px", borderRadius: 0, background: "rgba(255,255,255,.01)", border: `1px solid ${sigColor}12` }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
                             <span style={{ fontSize: 10 }}>{f.icon}</span>
                             <span style={{ width: 6, height: 6, borderRadius: 3, background: sigColor, display: "inline-block" }} />
@@ -3492,7 +3781,7 @@ useEffect(() => {
                     </div>
 
                     {/* Cross-Asset Correlations */}
-                    {r.crossAsset && Object.keys(r.crossAsset).length > 0 && <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 7, background: "rgba(255,255,255,.015)" }}>
+                    {r.crossAsset && Object.keys(r.crossAsset).length > 0 && <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 0, background: "#1c1c1c" }}>
                       <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Cross-Asset Correlations (60-day rolling)</div>
                       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                         {[
@@ -3522,7 +3811,7 @@ useEffect(() => {
                       ].map((s, i) => {
                         const sig = s.data?.signal || "neutral";
                         const sigColor = sig === "risk-on" ? cs.green : sig === "risk-off" ? cs.red : cs.yellow;
-                        return <div key={i} style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.01)", border: `1px solid ${sigColor}10` }}>
+                        return <div key={i} style={{ padding: "8px 10px", borderRadius: 0, background: "rgba(255,255,255,.01)", border: `1px solid ${sigColor}10` }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                             <span style={{ fontSize: 9, color: cs.dim }}>{s.label}</span>
                             <span style={{ width: 6, height: 6, borderRadius: 3, background: sigColor, display: "inline-block" }} />
@@ -3534,7 +3823,7 @@ useEffect(() => {
                     </div>
 
                     {/* Signal Summary */}
-                    <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim, marginBottom: 8 }}>
+                    <div style={{ padding: "8px 10px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim, marginBottom: 8 }}>
                       {(() => {
                         const allSignals = Object.values(r.details || {}).filter(d => d?.signal);
                         const on = allSignals.filter(d => d.signal === "risk-on").length;
@@ -3545,7 +3834,7 @@ useEffect(() => {
                     </div>
 
                     {/* 5-State Optimizer Guidance */}
-                    <div style={{ padding: "10px 12px", borderRadius: 7, background: `${s5Color}08`, border: `1px solid ${s5Color}15` }}>
+                    <div style={{ padding: "10px 12px", borderRadius: 0, background: `${s5Color}08`, border: `1px solid ${s5Color}15` }}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: s5Color, marginBottom: 4 }}>Optimizer Guidance: {state5Labels[s5]}{r.momentum ? ` / ${r.momentum}` : ""}</div>
                       <div style={{ fontSize: 9, color: cs.dim, lineHeight: 1.6 }}>
                         {s5 === "strong_risk_on" && "Aggressive allocation. Optimizer tilts +15% to growth, tech, small cap, EM. Full Kelly sizing. Historically best environment for risk assets. Return shrinkage still applies — no single-stock dominance."}
@@ -3568,12 +3857,12 @@ useEffect(() => {
                     <div style={{ fontSize: 12, fontWeight: 700 }}>📊 Regime Duration & Entry Signal Analysis</div>
                     <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>Historical regime episodes, transition probabilities, and forward returns by duration. Auto-fetched from 12 FRED series (2005–2025).</div>
                   </div>
-                  <button onClick={fetchRegimeAnalytics} disabled={analyticsLoading} style={{ padding: "6px 12px", borderRadius: 5, border: "1px solid rgba(251,191,36,.2)", background: "rgba(251,191,36,.06)", color: cs.yellow, fontSize: 9, fontWeight: 600, cursor: analyticsLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
+                  <button onClick={fetchRegimeAnalytics} disabled={analyticsLoading} style={{ padding: "6px 12px", borderRadius: 0, border: "1px solid rgba(251,191,36,.2)", background: "rgba(255,171,145,.08)", color: cs.yellow, fontSize: 9, fontWeight: 600, cursor: analyticsLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
                     {analyticsLoading ? "Computing..." : regimeAnalytics ? "⟳ Refresh" : "Run Analysis"}
                   </button>
                 </div>
 
-                {!regimeAnalytics && !analyticsLoading && <div style={{ textAlign: "center", padding: 18, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>
+                {!regimeAnalytics && !analyticsLoading && <div style={{ textAlign: "center", padding: 18, color: cs.muted, fontSize: 10, border: "1px dashed #393939", borderRadius: 0 }}>
                   Auto-fetches on app launch. Computes regime episodes, transition probabilities, and optimal entry signals from 20 years of FRED macro data.
                 </div>}
 
@@ -3583,14 +3872,14 @@ useEffect(() => {
 
                   return <div>
                     {/* Current Position */}
-                    {a.current && <div style={{ padding: "12px 14px", borderRadius: 8, background: `${regColors[a.current.regime]}08`, border: `1px solid ${regColors[a.current.regime]}20`, marginBottom: 12 }}>
+                    {a.current && <div style={{ padding: "12px 14px", borderRadius: 0, background: `${regColors[a.current.regime]}08`, border: `1px solid ${regColors[a.current.regime]}20`, marginBottom: 12 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: regColors[a.current.regime], marginBottom: 4 }}>Current Position</div>
                       <div style={{ fontSize: 10, color: cs.dim, lineHeight: 1.7 }}>
                         <span style={{ color: regColors[a.current.regime], fontWeight: 600 }}>{a.current.regime.toUpperCase()}</span> regime for <span style={{ color: cs.text, fontWeight: 600, fontFamily: mono2 }}>{a.current.runLength}</span> months
                         {a.current.transition && <span> · Transition: <span style={{ fontFamily: mono2, color: cs.text }}>{a.current.transition}</span></span>}
                         {a.current.prevDuration && <span> · Previous {a.current.prevRegime} lasted {a.current.prevDuration}m</span>}
                       </div>
-                      {a.current.signalMatch && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.02)" }}>
+                      {a.current.signalMatch && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 0, background: "#1e1e1e" }}>
                         <div style={{ fontSize: 9, fontWeight: 600, color: cs.blue, marginBottom: 3 }}>📍 Historical Pattern Match ({a.current.signalMatch.historicalMatches} similar episodes)</div>
                         <div style={{ display: "flex", gap: 10, fontSize: 9 }}>
                           {["1m","3m","6m","12m"].map(h => {
@@ -3666,12 +3955,12 @@ useEffect(() => {
                         transition: { label: "Other Transition", emoji: "↔️", desc: "Regime change without strong directional signal." },
                       };
 
-                      return <div style={{ padding: "12px 14px", borderRadius: 8, background: "rgba(167,139,250,.04)", border: "1px solid rgba(167,139,250,.12)", marginBottom: 12 }}>
+                      return <div style={{ padding: "12px 14px", borderRadius: 0, background: "rgba(190,149,255,.06)", border: "1px solid rgba(167,139,250,.12)", marginBottom: 12 }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: cs.purple, marginBottom: 2 }}>🔮 Three-Stage Regime Context</div>
                         <div style={{ fontSize: 8, color: cs.dim, marginBottom: 10 }}>Analyzes the pattern: prevRegime → bridgeRegime → currentRegime. Bridge duration determines whether a pause is a continuation or a genuine reversal.</div>
 
                         {/* Current Three-Stage */}
-                        {curThreeStage && <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,.02)", marginBottom: 10 }}>
+                        {curThreeStage && <div style={{ padding: "8px 10px", borderRadius: 0, background: "#1e1e1e", marginBottom: 10 }}>
                           <div style={{ fontSize: 10, fontWeight: 600, color: cs.text, marginBottom: 4 }}>Current Pattern</div>
                           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <span style={{ fontSize: 14 }}>{typeLabels[curThreeStage.patternType]?.emoji || "↔️"}</span>
@@ -3705,7 +3994,7 @@ useEffect(() => {
                                 const info = typeLabels[type] || { label: type, emoji: "↔️" };
                                 const avgBridge = data.bridges.length > 0 ? (data.bridges.reduce((s, v) => s + v, 0) / data.bridges.length).toFixed(1) : "—";
                                 const avgSignal = data.count > 0 ? data.totalSignal / data.count : 0;
-                                return <tr key={type} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                                return <tr key={type} style={{ borderTop: "1px solid #222222" }}>
                                   <td style={{ padding: "5px 6px" }}><span style={{ marginRight: 3 }}>{info.emoji}</span> <span style={{ fontWeight: 600, color: cs.text }}>{info.label}</span></td>
                                   <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2 }}>{data.count}</td>
                                   <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2 }}>{avgBridge}m</td>
@@ -3723,7 +4012,7 @@ useEffect(() => {
                           {patterns.slice(-8).reverse().map((p, i) => {
                             const info = typeLabels[p.patternType] || { emoji: "↔️", label: p.patternType };
                             const parts = p.pattern.split("→");
-                            return <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderRadius: 5, background: i === 0 ? "rgba(167,139,250,.04)" : "rgba(255,255,255,.01)", border: `1px solid ${i === 0 ? "rgba(167,139,250,.12)" : "rgba(255,255,255,.03)"}`, flexWrap: "wrap" }}>
+                            return <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderRadius: 0, background: i === 0 ? "rgba(190,149,255,.06)" : "rgba(255,255,255,.01)", border: `1px solid ${i === 0 ? "rgba(190,149,255,.15)" : "#222222"}`, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 11 }}>{info.emoji}</span>
                               <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
                                 <span style={{ fontSize: 9, fontFamily: mono2, color: regColors[parts[0]], fontWeight: 600 }}>{parts[0]}</span>
@@ -3748,7 +4037,7 @@ useEffect(() => {
 
                     {/* Regime Timeline */}
                     <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Regime Timeline ({a.episodes?.length} episodes, {a.totalMonths} months)</div>
-                    <div style={{ display: "flex", height: 28, borderRadius: 4, overflow: "hidden", marginBottom: 12, border: "1px solid rgba(255,255,255,.04)" }}>
+                    <div style={{ display: "flex", height: 28, borderRadius: 0, overflow: "hidden", marginBottom: 12, border: "1px solid #262626" }}>
                       {a.episodes?.map((ep, i) => {
                         const widthPct = (ep.months / a.totalMonths) * 100;
                         return <div key={i} title={`${ep.regime}: ${ep.start} → ${ep.end} (${ep.months}m)`}
@@ -3763,7 +4052,7 @@ useEffect(() => {
                       {["bull","neutral","bear"].map(regime => {
                         const s = a.durationStats?.[regime];
                         if (!s) return null;
-                        return <div key={regime} style={{ padding: "10px 12px", borderRadius: 7, background: "rgba(255,255,255,.015)", border: `1px solid ${regColors[regime]}12` }}>
+                        return <div key={regime} style={{ padding: "10px 12px", borderRadius: 0, background: "#1c1c1c", border: `1px solid ${regColors[regime]}12` }}>
                           <div style={{ fontSize: 10, fontWeight: 600, color: regColors[regime], marginBottom: 4 }}>{regime.toUpperCase()}</div>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, fontSize: 9 }}>
                             <div><span style={{ color: cs.dim }}>Episodes:</span> <span style={{ fontFamily: mono2 }}>{s.count}</span></div>
@@ -3787,12 +4076,12 @@ useEffect(() => {
                             {["bull","neutral","bear"].map(to => <th key={to} style={{ padding: "5px 8px", textAlign: "center", color: regColors[to], fontSize: 8, fontWeight: 600 }}>{to.toUpperCase()}</th>)}
                           </tr></thead>
                           <tbody>
-                            {["bull","neutral","bear"].map(from => <tr key={from} style={{ borderTop: "1px solid rgba(255,255,255,.03)" }}>
+                            {["bull","neutral","bear"].map(from => <tr key={from} style={{ borderTop: "1px solid #222222" }}>
                               <td style={{ padding: "5px 8px", color: regColors[from], fontWeight: 600 }}>{from.toUpperCase()}</td>
                               {["bull","neutral","bear"].map(to => {
                                 const pct = a.transitionProb[from]?.[to] || 0;
                                 const isHigh = pct > 50;
-                                return <td key={to} style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, fontWeight: isHigh ? 700 : 400, color: isHigh ? cs.text : cs.muted, background: isHigh ? "rgba(255,255,255,.03)" : "transparent" }}>{pct}%</td>;
+                                return <td key={to} style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, fontWeight: isHigh ? 700 : 400, color: isHigh ? cs.text : cs.muted, background: isHigh ? "#222222" : "transparent" }}>{pct}%</td>;
                               })}
                             </tr>)}
                           </tbody>
@@ -3814,7 +4103,7 @@ useEffect(() => {
                           <tbody>
                             {["bull","neutral","bear"].map(regime =>
                               Object.entries(a.durationReturns[regime] || {}).map(([bucket, d], i) =>
-                                <tr key={`${regime}-${bucket}`} style={{ borderTop: i === 0 ? `1px solid ${regColors[regime]}20` : "1px solid rgba(255,255,255,.02)" }}>
+                                <tr key={`${regime}-${bucket}`} style={{ borderTop: i === 0 ? `1px solid ${regColors[regime]}20` : "1px solid #1e1e1e" }}>
                                   {i === 0 && <td rowSpan={Object.keys(a.durationReturns[regime] || {}).length} style={{ padding: "5px 6px", color: regColors[regime], fontWeight: 600, verticalAlign: "top" }}>{regime.toUpperCase()}</td>}
                                   <td style={{ padding: "5px 6px", fontFamily: mono2, color: cs.dim }}>{bucket}</td>
                                   <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, color: cs.muted }}>{d.n}</td>
@@ -3837,7 +4126,7 @@ useEffect(() => {
                         {a.entrySignals.slice(0, 8).map((sig, i) => {
                           const [from, to] = sig.pattern.split("→");
                           const isBest = i === 0;
-                          return <div key={sig.pattern} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 6, background: isBest ? "rgba(110,231,183,.04)" : "rgba(255,255,255,.01)", border: `1px solid ${isBest ? "rgba(110,231,183,.15)" : "rgba(255,255,255,.03)"}` }}>
+                          return <div key={sig.pattern} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 0, background: isBest ? "rgba(66,190,101,.06)" : "rgba(255,255,255,.01)", border: `1px solid ${isBest ? "rgba(66,190,101,.18)" : "#222222"}` }}>
                             <div style={{ fontSize: 12, width: 20, textAlign: "center" }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i+1}`}</div>
                             <div style={{ flex: 1 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
@@ -3874,7 +4163,7 @@ useEffect(() => {
                             {Object.entries(a.transitionPatterns).sort(([,a2],[,b2]) => (b2.avgFwd["6m"]||0) - (a2.avgFwd["6m"]||0)).map(([pattern, p]) => {
                               const [from, to] = pattern.split("→");
                               const isActive = pattern === a.current?.transition;
-                              return <tr key={pattern} style={{ borderTop: "1px solid rgba(255,255,255,.03)", background: isActive ? "rgba(251,191,36,.04)" : "transparent" }}>
+                              return <tr key={pattern} style={{ borderTop: "1px solid #222222", background: isActive ? "rgba(251,191,36,.04)" : "transparent" }}>
                                 <td style={{ padding: "5px 6px" }}>
                                   <span style={{ color: regColors[from], fontWeight: 600 }}>{from}</span>
                                   <span style={{ color: cs.muted }}> → </span>
@@ -3925,7 +4214,7 @@ useEffect(() => {
                 { k: "rebalance", l: "Rebalancing", i: "⚖️", d: "Trim/add to ETF positions" },
                 { k: "taxloss", l: "Tax-Loss Harvesting", i: "📉", d: "Harvest losses & replacements" },
               ].map(c => (
-                <button key={c.k} onClick={() => { setAiCtx(c.k); getAI(c.k) }} disabled={aiL} style={{ flex: "1 1 130px", padding: "10px 12px", borderRadius: 8, border: "1px solid", cursor: aiL ? "wait" : "pointer", fontFamily: "inherit", textAlign: "left", borderColor: aiCtx === c.k && aiText ? "rgba(110,231,183,.25)" : "rgba(255,255,255,.06)", background: aiCtx === c.k && aiText ? "rgba(110,231,183,.06)" : "rgba(255,255,255,.02)", color: aiCtx === c.k && aiText ? cs.green : cs.dim, opacity: aiL ? .5 : 1 }}>
+                <button key={c.k} onClick={() => { setAiCtx(c.k); getAI(c.k) }} disabled={aiL} style={{ flex: "1 1 130px", padding: "10px 12px", borderRadius: 0, border: "1px solid", cursor: aiL ? "wait" : "pointer", fontFamily: "inherit", textAlign: "left", borderColor: aiCtx === c.k && aiText ? "rgba(66,190,101,.25)" : "#393939", background: aiCtx === c.k && aiText ? "rgba(66,190,101,.08)" : "#1e1e1e", color: aiCtx === c.k && aiText ? cs.green : cs.dim, opacity: aiL ? .5 : 1 }}>
                   <div style={{ fontSize: 14, marginBottom: 3 }}>{c.i}</div>
                   <div style={{ fontSize: 10, fontWeight: 600 }}>{c.l}</div>
                   <div style={{ fontSize: 8, opacity: .6, marginTop: 1 }}>{c.d}</div>
@@ -3933,9 +4222,9 @@ useEffect(() => {
               ))}
             </div>
 
-            {!etfs.length && !stocks.length && <div style={{ textAlign: "center", padding: 25, color: cs.muted, fontSize: 10, border: "1px dashed rgba(255,255,255,.06)", borderRadius: 7 }}>Add holdings first.</div>}
+            {!etfs.length && !stocks.length && <div style={{ textAlign: "center", padding: 25, color: cs.muted, fontSize: 10, border: "1px dashed #393939", borderRadius: 0 }}>Add holdings first.</div>}
             {aiL && <div style={{ padding: 18, textAlign: "center" }}><div style={{ fontSize: 12, color: cs.green }}><span style={{ display: "inline-block", animation: "pulse 1.5s ease-in-out infinite" }}>✦</span> Analyzing with live market data...</div></div>}
-            {aiText && !aiL && <div style={{ padding: 16, borderRadius: 9, background: "rgba(110,231,183,.02)", border: "1px solid rgba(110,231,183,.08)", fontSize: 11, lineHeight: 1.65, color: "#d1d5db" }}><AiMarkdown text={aiText} /></div>}
+            {aiText && !aiL && <div style={{ padding: 16, borderRadius: 0, background: "rgba(66,190,101,.04)", border: "1px solid rgba(110,231,183,.08)", fontSize: 11, lineHeight: 1.65, color: "#d1d5db" }}><AiMarkdown text={aiText} /></div>}
           </div>
         </div>}
 
@@ -3963,7 +4252,7 @@ useEffect(() => {
               </div>
             </div>
 
-            <button onClick={runBacktest} disabled={btRunning} style={{ width: "100%", padding: "11px", borderRadius: 7, border: "none", background: btRunning ? "rgba(255,255,255,.06)" : "linear-gradient(135deg,#6ee7b7,#3b82f6)", color: btRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: btRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
+            <button onClick={runBacktest} disabled={btRunning} style={{ width: "100%", padding: "11px", borderRadius: 0, border: "none", background: btRunning ? "#393939" : cs.blue, color: btRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: btRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
               {btRunning ? btProgress : "Run Backtest (2006–2025)"}
             </button>
           </div>
@@ -3996,7 +4285,7 @@ useEffect(() => {
                   {/* Grid lines */}
                   {[0, .25, .5, .75, 1].map(f => {
                     const yy = pd.t + h * (1 - f), val = minV + f * (maxV - minV);
-                    return <g key={f}><line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke="rgba(255,255,255,0.04)" /><text x={pd.l - 5} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{fmt$(val)}</text></g>;
+                    return <g key={f}><line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke="#262626" /><text x={pd.l - 5} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{fmt$(val)}</text></g>;
                   })}
                   {/* Year labels */}
                   {curves.opt.filter((_, i) => i % 12 === 0).map((p, i) => {
@@ -4067,7 +4356,7 @@ useEffect(() => {
                   <div style={{ fontSize: 11, fontWeight: 700 }}>Annual Returns & Rebalancing</div>
                   <div style={{ fontSize: 8, color: cs.dim }}>Click a year to see holdings & trades</div>
                 </div>
-                {useRegime && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6, padding: "5px 8px", borderRadius: 5, background: "rgba(255,255,255,.015)" }}>
+                {useRegime && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6, padding: "5px 8px", borderRadius: 0, background: "#1c1c1c" }}>
                   <span style={{ fontSize: 8, color: cs.dim, fontWeight: 600 }}>Regime:</span>
                   <span style={{ fontSize: 8, color: cs.dim }}>🟢 Strong Risk-On</span>
                   <span style={{ fontSize: 8, color: cs.dim }}>🟩 Mild Risk-On</span>
@@ -4078,7 +4367,7 @@ useEffect(() => {
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
                     <thead>
-                      <tr style={{ borderBottom: "1px solid rgba(255,255,255,.08)" }}>
+                      <tr style={{ borderBottom: "1px solid #393939" }}>
                         <th style={{ padding: "6px 8px", textAlign: "left", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Year</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Value</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.green, fontFamily: mono2, fontSize: 9 }}>Opt</th>
@@ -4098,8 +4387,8 @@ useEffect(() => {
                         const cs2 = 8 + (useRegime ? 2 : 0);
                         return (<React.Fragment key={a.year}>
                           <tr onClick={() => setBtExpandedYear(isExp ? null : a.year)}
-                            style={{ borderBottom: isExp ? "none" : "1px solid rgba(255,255,255,.03)", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : "transparent" }}
-                            onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = "rgba(255,255,255,.02)" }}
+                            style={{ borderBottom: isExp ? "none" : "1px solid #222222", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : "transparent" }}
+                            onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = "#1e1e1e" }}
                             onMouseLeave={e => { if (!isExp) e.currentTarget.style.background = "transparent" }}>
                             <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>{isExp ? "▾" : "▸"} {a.year}</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: cs.dim, fontSize: 9 }}>{fmt$(a.portfolioValue || 0)}</td>
@@ -4124,14 +4413,14 @@ useEffect(() => {
                           </tr>
                           {/* ── Expanded Detail Row ── */}
                           {isExp && <tr><td colSpan={cs2} style={{ padding: 0 }}>
-                            <div style={{ padding: "10px 12px 14px", background: "rgba(110,231,183,.02)", borderBottom: "1px solid rgba(110,231,183,.08)" }}>
+                            <div style={{ padding: "10px 12px 14px", background: "rgba(66,190,101,.04)", borderBottom: "1px solid rgba(110,231,183,.08)" }}>
                               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                                 {/* Holdings */}
                                 <div style={{ flex: "1 1 250px", minWidth: 200 }}>
                                   <div style={{ fontSize: 10, fontWeight: 700, color: cs.green, marginBottom: 6 }}>📊 Holdings ({a.holdings?.length || 0} ETFs · {fmt$(a.portfolioValue || 0)})</div>
                                   {a.holdings?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                                     {a.holdings.map((h, i) => (
-                                      <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 4, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
+                                      <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 0, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
                                         <span style={{ width: 4, height: 14, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
                                         <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color: cs.green, minWidth: 40 }}>{h.ticker}</span>
                                         <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
@@ -4139,7 +4428,7 @@ useEffect(() => {
                                         <span style={{ fontFamily: mono2, fontSize: 8, color: cs.muted, minWidth: 50, textAlign: "right" }}>{fmt$(h.dollars)}</span>
                                       </div>
                                     ))}
-                                    <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 4, background: "rgba(255,255,255,.015)", fontSize: 8, color: cs.dim }}>
+                                    <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
                                       {(() => { const cats = {}; (a.holdings || []).forEach(h => { cats[h.cat] = (cats[h.cat] || 0) + h.weight; }); return Object.entries(cats).sort(([,x],[,y]) => y - x).map(([cat, wt]) => `${cat}: ${wt.toFixed(0)}%`).join(" · "); })()}
                                     </div>
                                   </div> : <div style={{ fontSize: 9, color: cs.muted }}>No data</div>}
@@ -4149,7 +4438,7 @@ useEffect(() => {
                                   <div style={{ fontSize: 10, fontWeight: 700, color: a.rebalanceCount > 0 ? cs.blue : cs.blue, marginBottom: 6 }}>{a.rebalanceCount > 0 ? `⚡ ${a.rebalanceCount} Rebalance${a.rebalanceCount > 1 ? "s" : ""} This Year` : "🛡 Held All Year (tax-optimized)"}</div>
                                   {a.rebalanceEvents?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                                     {a.rebalanceEvents.map((evt, ei) => (
-                                      <div key={ei} style={{ padding: "6px 8px", borderRadius: 5, background: "rgba(110,231,183,.02)", border: "1px solid rgba(110,231,183,.06)" }}>
+                                      <div key={ei} style={{ padding: "6px 8px", borderRadius: 0, background: "rgba(66,190,101,.04)", border: "1px solid rgba(110,231,183,.06)" }}>
                                         <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginBottom: 3 }}>📅 {evt.date} · {evt.taxType} rate ({evt.taxRate?.toFixed(1)}%)
                                           {evt.regime && <span style={{ color: cs.yellow, fontWeight: 400 }}> · {evt.regime.replace(/_/g," ")}</span>}
                                           {evt.duration > 0 && <span style={{ color: cs.dim, fontWeight: 400 }}> · {evt.duration}m</span>}
@@ -4166,7 +4455,7 @@ useEffect(() => {
                                           {(evt.lossCarryover || 0) > 0 && <span style={{ color: cs.blue }}>Carry: {fmt$(evt.lossCarryover)}</span>}
                                         </div>
                                         {evt.trades?.map((t2, i) => (
-                                          <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 4px", fontSize: 9, borderBottom: i < evt.trades.length - 1 ? "1px solid rgba(255,255,255,.03)" : "none" }}>
+                                          <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 4px", fontSize: 9, borderBottom: i < evt.trades.length - 1 ? "1px solid #222222" : "none" }}>
                                             <Badge color={t2.action === "BUY" ? cs.green : cs.red}>{t2.action}</Badge>
                                             <span style={{ fontFamily: mono2, fontWeight: 600, color: t2.action === "BUY" ? cs.green : cs.red, minWidth: 36 }}>{t2.ticker}</span>
                                             <span style={{ fontSize: 8, color: cs.dim, minWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t2.name}</span>
@@ -4184,7 +4473,7 @@ useEffect(() => {
                                 </div>
                               </div>
                               {/* Regime Context for this year */}
-                              {useRegime && a.state5 && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(251,191,36,.03)", border: "1px solid rgba(251,191,36,.08)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              {useRegime && a.state5 && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 0, background: "rgba(255,171,145,.04)", border: "1px solid rgba(251,191,36,.08)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 9, fontWeight: 600, color: cs.yellow }}>🌊 Regime</span>
                                 <span style={{ fontSize: 9, fontFamily: mono2, color: cs.text }}>{a.state5?.replace(/_/g, " ")}</span>
                                 {a.duration > 0 && <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Duration: <span style={{ color: cs.text, fontWeight: 600 }}>{a.duration}m</span></span>}
@@ -4198,13 +4487,13 @@ useEffect(() => {
                                 })()}
                               </div>}
                               {/* Rebalance Decision */}
-                              <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: a.rebalanceCount > 0 ? "rgba(110,231,183,.03)" : "rgba(96,165,250,.03)", border: `1px solid ${a.rebalanceCount > 0 ? "rgba(110,231,183,.08)" : "rgba(96,165,250,.12)"}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 0, background: a.rebalanceCount > 0 ? "rgba(110,231,183,.03)" : "rgba(120,169,255,.05)", border: `1px solid ${a.rebalanceCount > 0 ? "rgba(66,190,101,.1)" : "rgba(96,165,250,.12)"}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                                 <Badge color={a.rebalanceCount > 0 ? cs.green : cs.blue}>{a.rebalanceCount > 0 ? `${a.rebalanceCount} REBALANCE${a.rebalanceCount > 1 ? "S" : ""}` : "HOLD ALL YEAR"}</Badge>
                                 <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Monitored monthly · {12 - (a.rebalanceCount || 0)} holds, {a.rebalanceCount || 0} trades</span>
                                 {a.rebalanceCount === 0 && <span style={{ fontSize: 8, color: cs.blue }}>Tax cost exceeded expected improvement every month → kept existing positions</span>}
                               </div>
                               {/* Tax Impact for this year */}
-                              {(a.taxPaid > 0 || a.grossGains > 0 || a.grossLosses > 0 || a.taxSaved > 0) && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(167,139,250,.03)", border: "1px solid rgba(167,139,250,.08)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              {(a.taxPaid > 0 || a.grossGains > 0 || a.grossLosses > 0 || a.taxSaved > 0) && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 0, background: "rgba(190,149,255,.04)", border: "1px solid rgba(167,139,250,.08)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 9, fontWeight: 600, color: cs.purple }}>🏛 Tax</span>
                                 <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Gross Gains: <span style={{ color: cs.green }}>{fmt$(a.grossGains || 0)}</span></span>
                                 <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Losses: <span style={{ color: cs.red }}>{fmt$(a.grossLosses || 0)}</span></span>
@@ -4236,7 +4525,7 @@ useEffect(() => {
                 <div style={{ fontSize: 12, fontWeight: 700 }}>🎲 Monte Carlo Simulation</div>
                 <div style={{ fontSize: 9, color: cs.dim }}>Run the backtest 100 times with randomized optimizer seeds and candidate selection. Measures consistency of outperformance vs S&P 500, with full tax model, return shrinkage, and diversification constraints matching the main backtest.</div>
               </div>
-              <button onClick={runSimulation} disabled={simRunning || !btResult} style={{ padding: "9px 18px", borderRadius: 7, border: "none", background: (!btResult || simRunning) ? "rgba(255,255,255,.05)" : "linear-gradient(135deg,#a78bfa,#60a5fa)", color: (!btResult || simRunning) ? cs.dim : cs.bg, fontSize: 11, fontWeight: 700, cursor: (!btResult || simRunning) ? "default" : "pointer", fontFamily: "inherit", opacity: simRunning ? 0.6 : 1 }}>
+              <button onClick={runSimulation} disabled={simRunning || !btResult} style={{ padding: "9px 18px", borderRadius: 0, border: "none", background: (!btResult || simRunning) ? "#2a2a2a" : cs.purple, color: (!btResult || simRunning) ? cs.dim : cs.bg, fontSize: 11, fontWeight: 700, cursor: (!btResult || simRunning) ? "default" : "pointer", fontFamily: "inherit", opacity: simRunning ? 0.6 : 1 }}>
                 {simRunning ? simProgress || "Running..." : !btResult ? "Run Backtest First" : "Run 100 Simulations"}
               </button>
             </div>
@@ -4248,7 +4537,7 @@ useEffect(() => {
             <div style={{ fontSize: 12, fontWeight: 700, color: cs.purple, marginBottom: 10 }}>🎲 Simulation Results ({simResult.numSims} runs)</div>
 
             {/* Win Rate */}
-            <div style={{ textAlign: "center", padding: "14px 0 18px", marginBottom: 14, background: "rgba(255,255,255,.015)", borderRadius: 8 }}>
+            <div style={{ textAlign: "center", padding: "14px 0 18px", marginBottom: 14, background: "#1c1c1c", borderRadius: 0 }}>
               <div style={{ fontSize: 10, color: cs.dim, marginBottom: 4 }}>Win Rate vs S&P 500</div>
               <div style={{ fontSize: 42, fontWeight: 800, fontFamily: mono2, color: simResult.winPct >= 60 ? cs.green : simResult.winPct >= 40 ? cs.yellow : cs.red }}>
                 {simResult.winPct}%
@@ -4267,7 +4556,7 @@ useEffect(() => {
                 { l: "Avg CAGR", v: `${simResult.avgCAGR}%`, c: simResult.avgCAGR > simResult.spyCAGR ? cs.green : cs.red },
                 { l: "Avg Tax Drag", v: fmt$(simResult.avgTaxPaid), c: cs.red },
               ].map(s => (
-                <div key={s.l} style={{ textAlign: "center", padding: "8px 4px", background: "rgba(255,255,255,.015)", borderRadius: 6 }}>
+                <div key={s.l} style={{ textAlign: "center", padding: "8px 4px", background: "#1c1c1c", borderRadius: 0 }}>
                   <div style={{ fontSize: 7, color: cs.dim }}>{s.l}</div>
                   <div style={{ fontSize: 13, fontWeight: 600, fontFamily: mono2, color: s.c }}>{s.v}</div>
                 </div>
@@ -4275,18 +4564,18 @@ useEffect(() => {
             </div>
 
             {/* Distribution bar */}
-            <div style={{ padding: "10px 12px", background: "rgba(255,255,255,.015)", borderRadius: 6, marginBottom: 10 }}>
+            <div style={{ padding: "10px 12px", background: "#1c1c1c", borderRadius: 0, marginBottom: 10 }}>
               <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>Distribution of Final Portfolio Values</div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: mono2, fontSize: 10 }}>
                 <span style={{ color: cs.red, minWidth: 60 }}>{fmt$(simResult.minFinal)}</span>
-                <div style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(255,255,255,.04)", position: "relative", overflow: "hidden" }}>
+                <div style={{ flex: 1, height: 8, borderRadius: 0, background: "#262626", position: "relative", overflow: "hidden" }}>
                   {(() => {
                     const range = simResult.maxFinal - simResult.minFinal || 1;
                     const p10L = ((simResult.p10Final - simResult.minFinal) / range) * 100;
                     const p90L = ((simResult.p90Final - simResult.minFinal) / range) * 100;
                     const spyL = ((simResult.spyFinal - simResult.minFinal) / range) * 100;
                     const medL = ((simResult.p50Final - simResult.minFinal) / range) * 100;
-                    return <><div style={{ position: "absolute", left: `${p10L}%`, right: `${100 - p90L}%`, top: 0, bottom: 0, background: "rgba(110,231,183,.2)", borderRadius: 4 }} /><div style={{ position: "absolute", left: `${spyL}%`, top: -2, width: 2, height: 12, background: cs.blue, borderRadius: 1 }} title={`SPY: ${fmt$(simResult.spyFinal)}`} /><div style={{ position: "absolute", left: `${medL}%`, top: -2, width: 2, height: 12, background: cs.green, borderRadius: 1 }} title={`Median: ${fmt$(simResult.p50Final)}`} /></>;
+                    return <><div style={{ position: "absolute", left: `${p10L}%`, right: `${100 - p90L}%`, top: 0, bottom: 0, background: "rgba(66,190,101,.25)", borderRadius: 4 }} /><div style={{ position: "absolute", left: `${spyL}%`, top: -2, width: 2, height: 12, background: cs.blue, borderRadius: 1 }} title={`SPY: ${fmt$(simResult.spyFinal)}`} /><div style={{ position: "absolute", left: `${medL}%`, top: -2, width: 2, height: 12, background: cs.green, borderRadius: 1 }} title={`Median: ${fmt$(simResult.p50Final)}`} /></>;
                   })()}
                 </div>
                 <span style={{ color: cs.green, minWidth: 60, textAlign: "right" }}>{fmt$(simResult.maxFinal)}</span>
@@ -4300,7 +4589,7 @@ useEffect(() => {
             </div>
 
             {/* Alpha histogram */}
-            <div style={{ padding: "10px 12px", background: "rgba(255,255,255,.015)", borderRadius: 6 }}>
+            <div style={{ padding: "10px 12px", background: "#1c1c1c", borderRadius: 0 }}>
               <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>Alpha Distribution (CAGR vs SPY)</div>
               <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 50 }}>
                 {(() => {
@@ -4323,7 +4612,7 @@ useEffect(() => {
           </div>}
         </div>}
 
-        <div style={{ marginTop: 24, padding: "12px 0", borderTop: "1px solid rgba(255,255,255,.03)", fontSize: 8, color: "#3d4250", textAlign: "center", lineHeight: 1.5 }}>
+        <div style={{ marginTop: 24, padding: "12px 0", borderTop: "1px solid #222222", fontSize: 8, color: "#3d4250", textAlign: "center", lineHeight: 1.5 }}>
           Historical data from Yahoo Finance. Backtest uses actual monthly close prices, real cost basis tracking, tax-loss netting with carryover, and return shrinkage to dampen momentum bias. Stock universe filtered to S&P 500 sector leaders at each year (no survivorship bias). Past performance ≠ future results. Not financial advice. Consult a professional.
         </div>
       </div>
