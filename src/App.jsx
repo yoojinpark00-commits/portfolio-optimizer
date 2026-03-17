@@ -2880,7 +2880,8 @@ useEffect(() => {
       const tickers = [...etfs.map(e => e.ticker), ...stocks.map(s => s.ticker)].filter(Boolean);
       if (!tickers.length) { setLiveL(false); return; }
       const results = {};
-      // Batch up to 50 per request (Twelve Data supports batch via comma)
+
+      // Primary: /api/prices (Yahoo v7 quote)
       for (let i = 0; i < tickers.length; i += 50) {
         const batch = tickers.slice(i, i + 50);
         try {
@@ -2891,8 +2892,37 @@ useEffect(() => {
           }
         } catch (e) { console.warn("Price fetch batch failed:", e); }
       }
+
+      // Fallback: for tickers missing from primary results, try /api/history for latest close
+      const missing = tickers.filter(t => !results[t]?.price);
+      if (missing.length > 0) {
+        const endDate = new Date().toISOString().slice(0, 10);
+        const startDate = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+        for (let i = 0; i < missing.length; i += 15) {
+          const batch = missing.slice(i, i + 15);
+          try {
+            const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=${startDate}&end=${endDate}`);
+            if (resp.ok) {
+              const json = await resp.json();
+              if (json.data) {
+                for (const [sym, hist] of Object.entries(json.data)) {
+                  if (hist?.length > 0) {
+                    const latest = hist[hist.length - 1];
+                    const prev = hist.length > 1 ? hist[hist.length - 2] : null;
+                    const change = prev?.close > 0 ? ((latest.close - prev.close) / prev.close) * 100 : 0;
+                    results[sym] = { price: latest.close, change: +change.toFixed(2), prevClose: prev?.close || 0, ts: Date.now() };
+                  }
+                }
+              }
+            }
+          } catch (e) { console.warn("History fallback batch failed:", e); }
+        }
+      }
+
       if (Object.keys(results).length > 0) {
-        setLive(results); setLastF(new Date());
+        // MERGE with existing live data (don't replace — preserves prices from addHolding)
+        setLive(prev => ({ ...prev, ...results }));
+        setLastF(new Date());
       }
     } catch (e) { console.warn("Price fetch failed:", e); }
     setLiveL(false);
@@ -3209,7 +3239,7 @@ useEffect(() => {
             </span>}
           </span>}
           <button onClick={() => setSrMode(m => m === "std" ? "var" : m === "var" ? "vol2" : "std")} style={{ padding: "4px 8px", borderRadius: 0, border: `1px solid ${srMode !== "std" ? "rgba(190,149,255,.3)" : "#393939"}`, background: srMode !== "std" ? "rgba(190,149,255,.1)" : "transparent", color: srMode !== "std" ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{srMode === "var" ? "VaR" : srMode === "vol2" ? "σ²" : "Std"} SR</button>
-          {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()}</span>}
+          {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()} · {Object.keys(live).length}/{etfs.length + stocks.length} live</span>}
           <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 0, border: `1px solid ${lastF ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.12)"}`, background: liveL ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.12)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "Refreshing..." : lastF ? "⟳ Refresh" : "⟳ Get Prices"}</button>
         </div>
       </div>
@@ -3355,13 +3385,13 @@ useEffect(() => {
                   </div>
                 </div>
                 <div style={{ textAlign: "right", minWidth: 85 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: cs.text }}>{fmt$(s.mktValue)}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: lp ? cs.text : cs.dim }}>{fmt$(s.mktValue)}</div>
                   {gl != null && <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2, color: gl >= 0 ? cs.green : cs.red }}>
                     {gl >= 0 ? "+" : ""}{fmt$(gl)} <span style={{ fontSize: 8, fontWeight: 400 }}>({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
                   </div>}
-                  {lp && <div style={{ fontSize: 8, fontFamily: mono2, color: dayChg >= 0 ? cs.green : cs.red }}>
+                  {lp ? <div style={{ fontSize: 8, fontFamily: mono2, color: dayChg >= 0 ? cs.green : cs.red }}>
                     Day {dayChg > 0 ? "+" : ""}{dayChg.toFixed(2)}%
-                  </div>}
+                  </div> : s.shares > 0 && <div style={{ fontSize: 7, fontFamily: mono2, color: cs.yellow }}>at cost — awaiting live price</div>}
                 </div>
                 <button onClick={() => removeHolding(s.ticker, "stock")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e => e.currentTarget.style.color = cs.red} onMouseLeave={e => e.currentTarget.style.color = cs.muted}>×</button>
               </div>);
@@ -3395,13 +3425,13 @@ useEffect(() => {
                   </div>
                 </div>
                 <div style={{ textAlign: "right", minWidth: 85 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: cs.text }}>{fmt$(e.mktValue)}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: lp ? cs.text : cs.dim }}>{fmt$(e.mktValue)}</div>
                   {gl != null && <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2, color: gl >= 0 ? cs.green : cs.red }}>
                     {gl >= 0 ? "+" : ""}{fmt$(gl)} <span style={{ fontSize: 8, fontWeight: 400 }}>({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)</span>
                   </div>}
-                  {lp && <div style={{ fontSize: 8, fontFamily: mono2, color: dayChg >= 0 ? cs.green : cs.red }}>
+                  {lp ? <div style={{ fontSize: 8, fontFamily: mono2, color: dayChg >= 0 ? cs.green : cs.red }}>
                     Day {dayChg > 0 ? "+" : ""}{dayChg.toFixed(2)}%
-                  </div>}
+                  </div> : e.shares > 0 && <div style={{ fontSize: 7, fontFamily: mono2, color: cs.yellow }}>at cost — awaiting live price</div>}
                 </div>
                 {(() => { const held = hp ? hp.days : 999; return (
                   <button onClick={() => removeHolding(e.ticker, "etf")}
