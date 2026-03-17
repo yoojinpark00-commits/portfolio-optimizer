@@ -1616,6 +1616,206 @@ function EquityCurve({ curves, sc2 }) {
   </div>;
 }
 
+// ─── Portfolio vs S&P 500 Performance Tracker ───
+const SNAP_KEY = "portfolio_perf_snapshots_v1";
+function PortfolioPerf({ etfV, stockV, holdingsVal, totalCostBasis, live, lastF }) {
+  const [spyHist, setSpyHist] = React.useState(null);
+  const [snapshots, setSnapshots] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+
+  // Find inception: earliest purchaseDate across all holdings
+  const inception = React.useMemo(() => {
+    let earliest = null;
+    [...etfV, ...stockV].forEach(h => {
+      if (h.purchaseDate && (!earliest || h.purchaseDate < earliest)) earliest = h.purchaseDate;
+    });
+    return earliest;
+  }, [etfV, stockV]);
+
+  // Load snapshots from localStorage
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SNAP_KEY);
+      if (raw) setSnapshots(JSON.parse(raw));
+    } catch (e) { }
+  }, []);
+
+  // Save snapshot on each live price update (max 1 per day)
+  React.useEffect(() => {
+    if (!lastF || holdingsVal <= 0 || !inception) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const spyPrice = live["SPY"]?.price;
+    setSnapshots(prev => {
+      const existing = prev.find(s => s.date === today);
+      let next;
+      if (existing) {
+        next = prev.map(s => s.date === today ? { ...s, value: holdingsVal, spy: spyPrice || s.spy, costBasis: totalCostBasis } : s);
+      } else {
+        next = [...prev, { date: today, value: holdingsVal, spy: spyPrice || 0, costBasis: totalCostBasis }];
+      }
+      // Keep last 3 years of daily snapshots max
+      const cutoff = new Date(Date.now() - 3 * 365 * 86400000).toISOString().slice(0, 10);
+      next = next.filter(s => s.date >= cutoff);
+      try { localStorage.setItem(SNAP_KEY, JSON.stringify(next)); } catch (e) { }
+      return next;
+    });
+  }, [lastF, holdingsVal, totalCostBasis, inception, live]);
+
+  // Fetch SPY history from inception
+  React.useEffect(() => {
+    if (!inception) return;
+    setLoading(true);
+    (async () => {
+      try {
+        const end = new Date().toISOString().slice(0, 10);
+        const resp = await fetch(`/api/history?symbols=SPY&start=${inception}&end=${end}`);
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json.data?.SPY?.length > 0) setSpyHist(json.data.SPY);
+        }
+      } catch (e) { console.warn("SPY history fetch failed:", e); }
+      setLoading(false);
+    })();
+  }, [inception]);
+
+  if (!inception || holdingsVal <= 0 || totalCostBasis <= 0) return null;
+
+  // Compute returns
+  const portReturn = ((holdingsVal / totalCostBasis) - 1) * 100;
+  const inceptionDate = new Date(inception);
+  const daysSince = Math.floor((Date.now() - inceptionDate.getTime()) / 86400000);
+  const yearsSince = daysSince / 365.25;
+
+  // SPY return over same period
+  let spyReturn = null, spyCAGR = null;
+  if (spyHist && spyHist.length >= 2) {
+    const spyStart = spyHist[0].close;
+    const spyEnd = spyHist[spyHist.length - 1].close;
+    spyReturn = ((spyEnd / spyStart) - 1) * 100;
+    if (yearsSince > 0.25) spyCAGR = (Math.pow(spyEnd / spyStart, 1 / yearsSince) - 1) * 100;
+  }
+  const portCAGR = yearsSince > 0.25 ? (Math.pow(holdingsVal / totalCostBasis, 1 / yearsSince) - 1) * 100 : null;
+  const alpha = portReturn != null && spyReturn != null ? portReturn - spyReturn : null;
+
+  // Build chart data: normalize both to 100 at inception
+  // SPY line: from monthly history
+  // Portfolio line: from snapshots
+  const WP = 560, HP = 200, pdP = { t: 20, r: 12, b: 28, l: 45 };
+  const wP = WP - pdP.l - pdP.r, hP = HP - pdP.t - pdP.b;
+
+  let spyNorm = [], portNorm = [];
+  if (spyHist && spyHist.length >= 2) {
+    const spyBase = spyHist[0].close;
+    spyNorm = spyHist.map(p => ({ date: p.date, value: (p.close / spyBase) * 100 }));
+  }
+  // Portfolio: use cost basis as starting 100, then snapshots, then current
+  if (snapshots.length > 0 && totalCostBasis > 0) {
+    // Find earliest snapshot that has a cost basis
+    const firstSnap = snapshots[0];
+    const base = firstSnap.costBasis || totalCostBasis;
+    portNorm = snapshots.map(s => ({ date: s.date, value: (s.value / base) * 100 }));
+  }
+  // Ensure current point is included
+  const today = new Date().toISOString().slice(0, 10);
+  if (portNorm.length > 0 && portNorm[portNorm.length - 1].date !== today) {
+    const base = snapshots[0]?.costBasis || totalCostBasis;
+    portNorm.push({ date: today, value: (holdingsVal / base) * 100 });
+  } else if (portNorm.length === 0 && totalCostBasis > 0) {
+    portNorm = [
+      { date: inception, value: 100 },
+      { date: today, value: (holdingsVal / totalCostBasis) * 100 },
+    ];
+  }
+
+  // Combine all dates for x-axis
+  const allDates = [...new Set([...spyNorm.map(p => p.date), ...portNorm.map(p => p.date)])].sort();
+  if (allDates.length < 2) return null;
+  const dateRange = [allDates[0], allDates[allDates.length - 1]];
+  const allVals = [...spyNorm.map(p => p.value), ...portNorm.map(p => p.value)];
+  const minVal = Math.min(80, ...allVals);
+  const maxVal = Math.max(120, ...allVals);
+
+  const sx = (date) => pdP.l + ((new Date(date) - new Date(dateRange[0])) / (new Date(dateRange[1]) - new Date(dateRange[0]) || 1)) * wP;
+  const sy = (v) => pdP.t + hP - ((v - minVal) / (maxVal - minVal || 1)) * hP;
+
+  const spyLine = spyNorm.map(p => `${sx(p.date)},${sy(p.value)}`).join(" ");
+  const portLine = portNorm.map(p => `${sx(p.date)},${sy(p.value)}`).join(" ");
+
+  // Year markers
+  const years = [];
+  for (const d of allDates) {
+    const y = d.slice(0, 4);
+    if (!years.length || years[years.length - 1] !== y) years.push(y);
+  }
+
+  return <div style={cardS}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+      <div style={{ fontSize: 11, fontWeight: 700 }}>Portfolio vs S&P 500</div>
+      <div style={{ fontSize: 8, color: cs.dim, fontFamily: mono2 }}>Since {inception} · {daysSince}d ({yearsSince >= 1 ? yearsSince.toFixed(1) + "y" : daysSince + "d"})</div>
+    </div>
+
+    {/* Metrics row */}
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 6, marginBottom: 10 }}>
+      <div style={{ background: "#1e1e1e", padding: "8px 10px" }}>
+        <div style={{ fontSize: 7, color: cs.dim, fontFamily: mono2 }}>PORTFOLIO RETURN</div>
+        <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: portReturn >= 0 ? cs.green : cs.red }}>{portReturn >= 0 ? "+" : ""}{portReturn.toFixed(1)}%</div>
+        {portCAGR != null && <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>{portCAGR.toFixed(1)}% CAGR</div>}
+      </div>
+      <div style={{ background: "#1e1e1e", padding: "8px 10px" }}>
+        <div style={{ fontSize: 7, color: cs.dim, fontFamily: mono2 }}>S&P 500 RETURN</div>
+        <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: spyReturn != null ? (spyReturn >= 0 ? cs.blue : cs.red) : cs.dim }}>
+          {spyReturn != null ? `${spyReturn >= 0 ? "+" : ""}${spyReturn.toFixed(1)}%` : loading ? "..." : "—"}
+        </div>
+        {spyCAGR != null && <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>{spyCAGR.toFixed(1)}% CAGR</div>}
+      </div>
+      <div style={{ background: "#1e1e1e", padding: "8px 10px" }}>
+        <div style={{ fontSize: 7, color: cs.dim, fontFamily: mono2 }}>ALPHA</div>
+        <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: alpha != null ? (alpha >= 0 ? cs.green : cs.red) : cs.dim }}>
+          {alpha != null ? `${alpha >= 0 ? "+" : ""}${alpha.toFixed(1)}%` : "—"}
+        </div>
+        <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>{alpha != null && alpha >= 0 ? "Beating market" : alpha != null ? "Trailing market" : ""}</div>
+      </div>
+      <div style={{ background: "#1e1e1e", padding: "8px 10px" }}>
+        <div style={{ fontSize: 7, color: cs.dim, fontFamily: mono2 }}>COST BASIS</div>
+        <div style={{ fontSize: 16, fontWeight: 700, fontFamily: mono2, color: cs.text }}>{fmt$(totalCostBasis)}</div>
+        <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>→ {fmt$(holdingsVal)} today</div>
+      </div>
+    </div>
+
+    {/* Chart: both lines normalized to 100 */}
+    {(spyNorm.length >= 2 || portNorm.length >= 2) && <>
+      <div style={{ display: "flex", gap: 12, marginBottom: 4 }}>
+        <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, background: cs.green, display: "inline-block" }} />Portfolio</span>
+        <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 14, height: 3, background: cs.blue, display: "inline-block" }} />S&P 500</span>
+        <span style={{ fontSize: 8, color: cs.dim }}>Normalized to 100 at inception</span>
+      </div>
+      <svg width={WP} height={HP} viewBox={`0 0 ${WP} ${HP}`} style={{ overflow: "visible", maxWidth: "100%" }}>
+        {/* Grid */}
+        {[0, .25, .5, .75, 1].map(f => {
+          const yy = pdP.t + hP * (1 - f), val = minVal + f * (maxVal - minVal);
+          return <g key={f}><line x1={pdP.l} x2={WP - pdP.r} y1={yy} y2={yy} stroke="#262626" />
+            <text x={pdP.l - 4} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{val.toFixed(0)}</text></g>;
+        })}
+        {/* 100 baseline */}
+        <line x1={pdP.l} x2={WP - pdP.r} y1={sy(100)} y2={sy(100)} stroke={cs.dim} strokeDasharray="3,3" strokeWidth={0.5} />
+        {/* Year labels */}
+        {years.filter((_, i) => i % Math.ceil(years.length / 8) === 0).map(y => (
+          <text key={y} x={sx(`${y}-07-01`)} y={HP - 6} fill={cs.muted} fontSize={8} textAnchor="middle" fontFamily={mono2}>{y}</text>
+        ))}
+        {/* Lines */}
+        {spyLine && <polyline points={spyLine} fill="none" stroke={cs.blue} strokeWidth={1.5} opacity={.7} />}
+        {portLine && <polyline points={portLine} fill="none" stroke={cs.green} strokeWidth={2} />}
+        {/* End dots */}
+        {spyNorm.length > 0 && <circle cx={sx(spyNorm[spyNorm.length-1].date)} cy={sy(spyNorm[spyNorm.length-1].value)} r={3} fill={cs.blue} />}
+        {portNorm.length > 0 && <circle cx={sx(portNorm[portNorm.length-1].date)} cy={sy(portNorm[portNorm.length-1].value)} r={3} fill={cs.green} />}
+      </svg>
+      <div style={{ fontSize: 7, color: cs.dim, textAlign: "center", marginTop: 4 }}>
+        Chart builds over time as daily snapshots accumulate · SPY data from Yahoo Finance (adjusted close, includes dividends)
+      </div>
+    </>}
+  </div>;
+}
+
 // ─── Lightweight Markdown renderer for AI Advisor ───
 function AiMarkdown({ text }) {
   if (!text) return null;
@@ -2036,7 +2236,7 @@ export default function App() {
         const isStk = db?.type === "stock";
         const shrunkR = shrinkReturn(rawR, isStk);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
-        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null };
+        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null, type: db?.type || "etf", ipo: db?.ipo };
       }
       const isBullish = btState5 && (btState5.includes("risk_on"));
       // In bull markets: exclude assets below -50% (likely broken).
@@ -2541,7 +2741,7 @@ export default function App() {
           const rawR = (sWR / sW) * 12 * 100;
           const shrunkR = shrinkReturn(rawR, db?.type === "stock");
           const vol = Math.max(Math.sqrt(Math.max(0, sR2 / cnt - (sR/cnt) ** 2)) * Math.sqrt(12) * 100, 1);
-          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null };
+          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null, type: db?.type || "etf" };
         }
 
         const cands = Object.values(trailingStats).filter(s => {
@@ -3040,7 +3240,7 @@ useEffect(() => {
   const fetchLive = useCallback(async () => {
     setLiveL(true);
     try {
-      const tickers = [...etfs.map(e => e.ticker), ...stocks.map(s => s.ticker)].filter(Boolean);
+      const tickers = [...new Set([...etfs.map(e => e.ticker), ...stocks.map(s => s.ticker), "SPY"])].filter(Boolean);
       if (!tickers.length) { setLiveL(false); return; }
       const results = {};
 
@@ -3434,6 +3634,9 @@ useEffect(() => {
               {catBreak.map((it, i) => <span key={i} style={{ fontSize: 8, color: cs.dim, display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 6, height: 6, borderRadius: 2, background: it.c, display: "inline-block" }} />{it.l} {fmt$(it.v)}</span>)}
             </div>
           </div>}
+
+          {/* Portfolio vs S&P 500 Performance */}
+          <PortfolioPerf etfV={etfV} stockV={stockV} holdingsVal={holdingsVal} totalCostBasis={totalCostBasis} live={live} lastF={lastF} />
 
           {/* Cash contribution */}
           <div style={{ ...cardS, background: "rgba(120,169,255,.04)", borderColor: "rgba(96,165,250,.1)" }}>
