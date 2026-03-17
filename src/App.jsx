@@ -1628,14 +1628,14 @@ function AiMarkdown({ text }) {
   return <div>{elements}</div>;
 }
 
-const TABS = ["My Holdings", "Deploy Cash", "Analysis", "Frontier", "AI Advisor", "Backtest"];
+const TABS = ["My Portfolio", "Deploy Cash", "Analysis", "Frontier", "AI Advisor", "Backtest"];
 // ═══ MAIN APP ═══
 export default function App() {
   const [etfs, setEtfs] = useState([]);       // {ticker, data, shares, costBasis, mktValue}
   const [stocks, setStocks] = useState([]);    // {ticker, name, shares, costBasis, mktValue, sector, locked:true}
   const [cashBalance, setCashBalance] = useState(0); // $ to deploy
 
-  const [tab, setTab] = useState("My Holdings");
+  const [tab, setTab] = useState("My Portfolio");
   const [sq, setSq] = useState(""); const [so, setSo] = useState(false); const [sc, setSc] = useState("All");
   const [srMode, setSrMode] = useState("std"); // "std" | "var" | "vol2"
   const [ot, setOt] = useState("max_sharpe");
@@ -1650,7 +1650,7 @@ export default function App() {
   const [lastRegimeCtx, setLastRegimeCtx] = useState(null); // regime context used by last optimizer run
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
-  const [sf, setSf] = useState({ t: "", n: "", sh: "", cb: "", sec: "Technology" });
+  const [sf, setSf] = useState({ t: "", n: "", sh: "", cb: "", sec: "Technology", pd: "" });
   const [stockDD, setStockDD] = useState(false); const [stockResults, setStockResults] = useState([]);
   const [stockSearching, setStockSearching] = useState(false); const [stockTimer, setStockTimer] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -2706,7 +2706,7 @@ useEffect(() => {
     if (!sf.t) return;
     const ticker = sf.t.toUpperCase(); const shares = +sf.sh || 0; const costBasis = +sf.cb || 0;
     const price = sf.livePrice || costBasis; const mktValue = price * shares;
-    const purchaseDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const purchaseDate = sf.pd || new Date().toISOString().slice(0, 10); // use user-provided or today
     if (addType === "etf") {
       if (etfs.find(e => e.ticker === ticker)) return;
       let etfData = ETF_DB.find(e => e.t === ticker);
@@ -2719,13 +2719,24 @@ useEffect(() => {
       if (stocks.find(s => s.ticker === ticker)) return;
       setStocks(p => [...p, { ticker, name: sf.n || ticker, shares, costBasis, mktValue, sector: sf.sec || "Technology", type: "stock", locked: true, purchaseDate }]);
     }
-    setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology" });
+    setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology", pd: "" });
   }, [sf, addType, etfs, stocks]);
 
   const removeHolding = useCallback((ticker, type) => {
-    if (type === "etf") setEtfs(p => p.filter(e => e.ticker !== ticker));
+    if (type === "etf") {
+      // Enforce minimum 10-day holding period for ETFs
+      const etf = etfs.find(e => e.ticker === ticker);
+      if (etf?.purchaseDate) {
+        const daysSince = Math.floor((Date.now() - new Date(etf.purchaseDate).getTime()) / 86400000);
+        if (daysSince < 10) {
+          alert(`Cannot remove ${ticker} — ETFs must be held for a minimum of 10 days. Held ${daysSince} day${daysSince !== 1 ? "s" : ""} so far (${10 - daysSince} remaining).`);
+          return;
+        }
+      }
+      setEtfs(p => p.filter(e => e.ticker !== ticker));
+    }
     else setStocks(p => p.filter(s => s.ticker !== ticker));
-  }, []);
+  }, [etfs]);
 
   // ─── Toggle optimizer recommendation → add or remove ETF holding, adjust cash ───
   const toggleRec = useCallback(async (rec) => {
@@ -3129,7 +3140,7 @@ useEffect(() => {
       <div style={{ maxWidth: 920, margin: "0 auto", padding: "14px 14px 50px" }}>
 
         {/* ════ MY HOLDINGS ════ */}
-        {tab === "My Holdings" && <div>
+        {tab === "My Portfolio" && <div>
           {/* Summary cards */}
           <div style={{ display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" }}>
             <MC label="Holdings Value" value={fmt$(holdingsVal)} accent={cs.green} sub="Auto-calculated from shares × price" />
@@ -3193,7 +3204,7 @@ useEffect(() => {
               <div style={{ fontSize: 12, fontWeight: 700 }}>Add Existing Holdings</div>
               <div style={{ display: "flex", gap: 3 }}>
                 {["stock", "etf"].map(t => (
-                  <button key={t} onClick={() => { setAddType(t); setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology" }); setStockResults([]) }} style={{ padding: "4px 10px", borderRadius: 0, border: "1px solid", borderColor: addType === t ? "rgba(66,190,101,.25)" : "#393939", background: addType === t ? "rgba(66,190,101,.1)" : "transparent", color: addType === t ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{t === "stock" ? "🔒 Stock" : "📊 ETF"}</button>
+                  <button key={t} onClick={() => { setAddType(t); setSf({ t: "", n: "", sh: "", cb: "", sec: "Technology", pd: "" }); setStockResults([]) }} style={{ padding: "4px 10px", borderRadius: 0, border: "1px solid", borderColor: addType === t ? "rgba(66,190,101,.25)" : "#393939", background: addType === t ? "rgba(66,190,101,.1)" : "transparent", color: addType === t ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{t === "stock" ? "Stock" : "ETF"}</button>
                 ))}
               </div>
             </div>
@@ -3218,6 +3229,8 @@ useEffect(() => {
                 <input type="number" value={sf.sh} onChange={e => setSf(f => ({ ...f, sh: e.target.value }))} placeholder="100" style={inpS} /></div>
               <div style={{ flex: "1 1 70px", minWidth: 60 }}><label style={{ fontSize: 8, color: cs.dim, display: "block", marginBottom: 2, fontFamily: mono2 }}>COST/SH ($)</label>
                 <input type="number" value={sf.cb} onChange={e => setSf(f => ({ ...f, cb: e.target.value }))} placeholder="150" style={inpS} /></div>
+              <div style={{ flex: "1 1 90px", minWidth: 80 }}><label style={{ fontSize: 8, color: cs.dim, display: "block", marginBottom: 2, fontFamily: mono2 }}>DATE BOUGHT</label>
+                <input type="date" value={sf.pd} onChange={e => setSf(f => ({ ...f, pd: e.target.value }))} max={new Date().toISOString().slice(0, 10)} style={{ ...inpS, fontSize: 10 }} /></div>
               <div style={{ display: "flex", alignItems: "end" }}><button onClick={addHolding} disabled={adding} style={{ padding: "7px 14px", borderRadius: 0, border: "none", background: adding ? "rgba(66,190,101,.3)" : cs.blue, color: cs.bg, fontSize: 10, fontWeight: 700, cursor: adding ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{adding ? "Looking up..." : "+ Add"}</button></div>
             </div>
             {(adding || priceInfo) && <div style={{ marginTop: 6, padding: "5px 9px", borderRadius: 0, background: "rgba(66,190,101,.06)", fontSize: 9, color: cs.green }}>
@@ -3227,7 +3240,7 @@ useEffect(() => {
 
           {/* Holdings list */}
           {(etfV.length > 0 || stockV.length > 0) && <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            {stockV.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.yellow, marginBottom: 2, marginTop: 4 }}>🔒 Locked Stocks ({stockV.length})</div>}
+            {stockV.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.yellow, marginBottom: 2, marginTop: 4 }}>Stocks ({stockV.length})</div>}
             {stockV.map(s => {
               const gl = s.shares > 0 && s.costBasis > 0 ? s.mktValue - (s.shares * s.costBasis) : null;
               const glPct = gl != null && s.costBasis > 0 ? ((s.mktValue / (s.shares * s.costBasis)) - 1) * 100 : null;
@@ -3235,8 +3248,12 @@ useEffect(() => {
               const lp = live[s.ticker];
               const dayChg = lp?.change || 0;
               return (
-              <div key={s.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: "rgba(255,171,145,.02)", border: "1px solid rgba(255,171,145,.08)" }}>
-                <span style={{ fontSize: 10 }}>🔒</span>
+              <div key={s.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: s.locked ? "rgba(255,171,145,.02)" : "#1c1c1c", border: `1px solid ${s.locked ? "rgba(255,171,145,.08)" : "#262626"}` }}>
+                <button onClick={() => setStocks(p => p.map(st => st.ticker === s.ticker ? { ...st, locked: !st.locked } : st))}
+                  title={s.locked ? "Locked — optimizer works around this stock. Click to unlock." : "Unlocked — optimizer may suggest selling. Click to lock."}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: "2px", opacity: s.locked ? 1 : 0.4 }}>
+                  {s.locked ? "🔒" : "🔓"}
+                </button>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap", marginBottom: 2 }}>
                     <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: cs.yellow }}>{s.ticker}</span>
@@ -3282,6 +3299,7 @@ useEffect(() => {
                     <span style={{ fontSize: 9, color: cs.dim }}>{e.data?.n}</span>
                     <Badge color={cs.dim}>{e.data?.c}</Badge>
                     {hp && <Badge color={hp.isLT ? cs.green : cs.yellow}>{hp.isLT ? "LT" : `${hp.daysToLT}d→LT`}</Badge>}
+                    {hp && hp.days < 10 && <Badge color={cs.red}>HOLD {10 - hp.days}d</Badge>}
                   </div>
                   <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2 }}>
                     {e.shares > 0 ? `${e.shares} sh` : "—"}
@@ -3301,7 +3319,13 @@ useEffect(() => {
                     Day {dayChg > 0 ? "+" : ""}{dayChg.toFixed(2)}%
                   </div>}
                 </div>
-                <button onClick={() => removeHolding(e.ticker, "etf")} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14 }} onMouseEnter={e2 => e2.currentTarget.style.color = cs.red} onMouseLeave={e2 => e2.currentTarget.style.color = cs.muted}>×</button>
+                {(() => { const held = hp ? hp.days : 999; return (
+                  <button onClick={() => removeHolding(e.ticker, "etf")}
+                    title={held < 10 ? `Must hold ${10 - held} more day${10 - held !== 1 ? "s" : ""} (10-day minimum)` : "Remove"}
+                    style={{ background: "none", border: "none", color: held < 10 ? "#393939" : cs.muted, cursor: held < 10 ? "not-allowed" : "pointer", fontSize: 14 }}
+                    onMouseEnter={e2 => { if (held >= 10) e2.currentTarget.style.color = cs.red }}
+                    onMouseLeave={e2 => { e2.currentTarget.style.color = held < 10 ? "#393939" : cs.muted }}>×</button>
+                ); })()}
               </div>);
             })}
           </div>}
@@ -3309,7 +3333,7 @@ useEffect(() => {
           {!etfV.length && !stockV.length && <div style={{ textAlign: "center", padding: "40px 18px", border: "1px dashed rgba(255,255,255,.07)", borderRadius: 0 }}>
             <div style={{ fontSize: 26, marginBottom: 5 }}>📊</div>
             <div style={{ fontSize: 12, fontWeight: 600 }}>Add Your Existing Holdings</div>
-            <div style={{ fontSize: 10, color: cs.muted, maxWidth: 340, margin: "5px auto 0" }}>Add your stocks (locked, won't be traded) and ETFs above. Portfolio value calculates automatically from shares × price.</div>
+            <div style={{ fontSize: 10, color: cs.muted, maxWidth: 340, margin: "5px auto 0" }}>Add your stocks and ETFs above. Stocks can be locked (optimizer works around them) or unlocked. ETFs require a 10-day minimum hold. Set your purchase date for accurate tax tracking.</div>
           </div>}
         </div>}
 
@@ -3319,7 +3343,7 @@ useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
                 <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Fetches trailing 12-month history for all candidates, computes recency-weighted returns and volatility with return shrinkage, then runs 6,000 Monte Carlo simulations. SPY-overlap penalty rewards differentiation. {includeStocks ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
-              {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 0, background: "rgba(255,171,145,.08)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Holdings" tab first</div>}
+              {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 0, background: "rgba(255,171,145,.08)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Portfolio" tab first</div>}
             </div>
 
             {cashBalance > 0 && <>
@@ -3369,7 +3393,10 @@ useEffect(() => {
               </button>
               {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime data loading — fetches automatically on app launch from 12 FRED macro indicators. If this persists, check FRED_API_KEY in Vercel env vars.</div>}
 
-              {stocks.length > 0 && <div style={{ marginTop: 7, fontSize: 9, color: cs.yellow }}>🔒 {stocks.map(s => s.ticker).join(", ")} locked — optimizer works around them.</div>}
+              {stocks.length > 0 && (() => { const locked = stocks.filter(s => s.locked); const unlocked = stocks.filter(s => !s.locked); return <>
+                {locked.length > 0 && <div style={{ marginTop: 7, fontSize: 9, color: cs.yellow }}>🔒 {locked.map(s => s.ticker).join(", ")} locked — optimizer works around them.</div>}
+                {unlocked.length > 0 && <div style={{ marginTop: locked.length > 0 ? 2 : 7, fontSize: 9, color: cs.dim }}>🔓 {unlocked.map(s => s.ticker).join(", ")} unlocked — optimizer may suggest selling.</div>}
+              </>; })()}
             </>}
           </div>
 
