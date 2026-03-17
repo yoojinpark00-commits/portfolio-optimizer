@@ -46,7 +46,12 @@ export default async function handler(req, res) {
       }
 
       const timestamps = result.timestamp;
-      const closes = result.indicators.quote[0].close;
+      // CRITICAL: Use ADJUSTED close (accounts for dividends + stock splits)
+      // Yahoo v8 returns both: quote[0].close (raw) and adjclose[0].adjclose (adjusted)
+      // Using raw close would: miss ~2%/yr SPY dividend, show fake drops on splits
+      const adjCloses = result.indicators?.adjclose?.[0]?.adjclose;
+      const rawCloses = result.indicators.quote[0].close;
+      const closes = adjCloses || rawCloses; // prefer adjusted, fallback to raw
 
       const points = [];
       for (let i = 0; i < timestamps.length; i++) {
