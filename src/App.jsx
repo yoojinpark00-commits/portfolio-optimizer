@@ -2598,34 +2598,72 @@ useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }, [etfs, stocks, cashBalance, tab, srMode, ot, volTarget, useKelly, useRegime, taxState, includeStocks, sc, so]);
 
-  // ─── Computed ───
+  // ─── Computed: merge live prices into holdings ───
+  // When live prices arrive, fix holdings that were added without price data
+  const prevLiveRef = useRef({});
+  useEffect(() => {
+    if (!Object.keys(live).length) return;
+    // Only run when live data actually changes
+    const liveKey = Object.keys(live).sort().join(",");
+    if (prevLiveRef.current === liveKey) return;
+    prevLiveRef.current = liveKey;
+
+    // Fix ETFs with missing shares or costBasis
+    let etfFixed = false;
+    const fixedEtfs = etfs.map(e => {
+      const lp = live[e.ticker]?.price;
+      if (!lp || lp <= 0) return e;
+      let changed = false, newE = { ...e };
+      // If shares=0 but has a dollar value, compute shares from live price
+      if ((!e.shares || e.shares === 0) && e.mktValue > 0) {
+        newE.shares = Math.floor(e.mktValue / lp);
+        newE.costBasis = lp; // bought at current price (just added)
+        newE.mktValue = lp * newE.shares;
+        changed = true;
+      }
+      // If shares exist but costBasis missing, set costBasis to live price
+      if (e.shares > 0 && (!e.costBasis || e.costBasis === 0)) {
+        newE.costBasis = lp;
+        changed = true;
+      }
+      if (changed) { etfFixed = true; return newE; }
+      return e;
+    });
+    if (etfFixed) setEtfs(fixedEtfs);
+
+    // Fix stocks with missing shares or costBasis
+    let stockFixed = false;
+    const fixedStocks = stocks.map(s => {
+      const lp = live[s.ticker]?.price;
+      if (!lp || lp <= 0) return s;
+      let changed = false, newS = { ...s };
+      if ((!s.shares || s.shares === 0) && s.mktValue > 0) {
+        newS.shares = Math.floor(s.mktValue / lp);
+        newS.costBasis = lp;
+        newS.mktValue = lp * newS.shares;
+        changed = true;
+      }
+      if (s.shares > 0 && (!s.costBasis || s.costBasis === 0)) {
+        newS.costBasis = lp;
+        changed = true;
+      }
+      if (changed) { stockFixed = true; return newS; }
+      return s;
+    });
+    if (stockFixed) setStocks(fixedStocks);
+  }, [live]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const etfV = useMemo(() => etfs.map(e => {
     const lp = live[e.ticker]?.price;
-    let mv, shares = e.shares || 0;
-    if (lp && shares > 0) {
-      mv = lp * shares;
-    } else if (lp && shares === 0 && e.mktValue > 0) {
-      // Position was added by dollar amount (no shares computed at add time)
-      // Retroactively compute shares from live price
-      shares = Math.floor(e.mktValue / lp);
-      mv = lp * shares;
-    } else {
-      mv = e.mktValue || 0;
-    }
+    const shares = e.shares || 0;
+    const mv = (lp && shares > 0) ? lp * shares : (e.mktValue || 0);
     return { ...e, mktValue: mv, livePrice: lp, shares };
   }), [etfs, live]);
 
   const stockV = useMemo(() => stocks.map(s => {
     const lp = live[s.ticker]?.price;
-    let mv, shares = s.shares || 0;
-    if (lp && shares > 0) {
-      mv = lp * shares;
-    } else if (lp && shares === 0 && s.mktValue > 0) {
-      shares = Math.floor(s.mktValue / lp);
-      mv = lp * shares;
-    } else {
-      mv = s.mktValue || 0;
-    }
+    const shares = s.shares || 0;
+    const mv = (lp && shares > 0) ? lp * shares : (s.mktValue || 0);
     return { ...s, mktValue: mv, livePrice: lp, shares };
   }), [stocks, live]);
 
