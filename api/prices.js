@@ -12,11 +12,15 @@ export default async function handler(req, res) {
   const symbols = tickers.split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 50);
   if (!symbols.length) return res.status(400).json({ error: "No valid symbols" });
 
+  // Yahoo Finance uses '-' instead of '.' for class shares (BRK.B → BRK-B)
+  const yahooSymbols = symbols.map(s => s.replace(".", "-"));
+  const yahooToOrig = {};
+  symbols.forEach((s, i) => { yahooToOrig[yahooSymbols[i]] = s; });
+
   const results = {};
 
   try {
-    // Yahoo Finance v7 quote endpoint — public, no auth needed
-    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(",")}`;
+    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${yahooSymbols.join(",")}`;
     const resp = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
     });
@@ -28,7 +32,9 @@ export default async function handler(req, res) {
 
     for (const q of quotes) {
       if (!q.symbol) continue;
-      results[q.symbol] = {
+      // Map Yahoo symbol back to original (BRK-B → BRK.B)
+      const origSymbol = yahooToOrig[q.symbol] || q.symbol;
+      results[origSymbol] = {
         price: q.regularMarketPrice || 0,
         change: q.regularMarketChangePercent != null ? +q.regularMarketChangePercent.toFixed(2) : 0,
         prevClose: q.regularMarketPreviousClose || 0,
