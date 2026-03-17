@@ -296,6 +296,18 @@ function gc(a,b){
 
 const RF=4.5;
 
+// ── Forward Return Estimator ──
+// Trailing 12m returns are NOT forward expectations. This shrinks them toward
+// a long-term equity mean (10%) with more shrinkage for higher-vol portfolios.
+// Clamped to 3-18% to prevent absurd projections.
+function shrinkToForward(trailing, vol) {
+  const longTermMean = 10; // long-term equity real return
+  const volFactor = Math.min(1, (vol || 15) / 30);
+  const shrinkWeight = 0.4 + volFactor * 0.3; // 40-70% toward mean
+  const fwd = trailing * (1 - shrinkWeight) + longTermMean * shrinkWeight;
+  return Math.max(3, Math.min(18, fwd));
+}
+
 // ── Return Shrinkage: dampen extreme trailing returns to reduce momentum bias ──
 // A stock that returned 200% last year almost never repeats — mean reversion dominates.
 // This blends extreme returns toward a cap, preventing any single stock from dominating
@@ -1864,7 +1876,7 @@ export default function App() {
       // Commodity
       "GLD","SLV","DBC",
       // Dividend
-      "SCHD","HDV","DGRO",
+      "HDV","DGRO",
     ];
     const benchmarks = ["SPY"];
     // For stocks: use historical S&P 500 top 30 by year (no survivorship bias)
@@ -1926,6 +1938,7 @@ export default function App() {
     let costBasisMap = {}; // ticker → total dollar cost basis (actual purchase cost)
     let sharesMap = {}; // ticker → shares held
     let costPerShareMap = {}; // ticker → average cost per share
+    let posEstablishedMap = {}; // ticker → monthKey when position was first established/last increased
     let totalTaxPaid = 0, totalRebalances = 0;
     let totalTaxSaved = 0; // tax saved via loss offsets
     let lossCarryover = 0; // unused losses carried forward to future periods
@@ -2123,26 +2136,36 @@ export default function App() {
         };
       }).filter(Boolean).sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
 
-      // Compute realized gains AND losses using ACTUAL cost basis
+      // Compute realized gains AND losses using ACTUAL cost basis with per-position LT/ST rates
       let grossGains = 0, grossLosses = 0;
+      let stGains = 0, ltGains = 0; // track ST vs LT gains separately for accurate tax
       for (const sell of trades.filter(t => t.action === "SELL")) {
         const ticker = sell.ticker;
         const oldWt = prevAlloc[ticker] || 0;
         if (oldWt <= 0) continue;
-        const sellWt = Math.abs(sell.change / 100); // weight being sold
-        const proportionSold = Math.min(1, sellWt / oldWt); // fraction of position being liquidated
-        const sellProceeds = sellWt * optValue; // current market value of sold portion
+        const sellWt = Math.abs(sell.change / 100);
+        const proportionSold = Math.min(1, sellWt / oldWt);
+        const sellProceeds = sellWt * optValue;
         const positionCostBasis = costBasisMap[ticker] || 0;
-        const soldCostBasis = positionCostBasis * proportionSold; // cost basis of sold portion
+        const soldCostBasis = positionCostBasis * proportionSold;
         const gl = sellProceeds - soldCostBasis;
-        if (gl > 0) grossGains += gl;
+        // Per-position holding period: months since position was established
+        const estMonth = posEstablishedMap[ticker];
+        const posHoldingMonths = estMonth ? (dateToIdx[monthKey] - dateToIdx[estMonth]) : monthsSinceRebal;
+        const isLongTerm = posHoldingMonths >= 12;
+        if (gl > 0) { grossGains += gl; if (isLongTerm) ltGains += gl; else stGains += gl; }
         else grossLosses += Math.abs(gl);
       }
 
-      // Net gains/losses: losses offset gains dollar-for-dollar
-      const availableLosses = grossLosses + lossCarryover;
-      const netGains = Math.max(0, grossGains - availableLosses);
-      const excessLosses = Math.max(0, availableLosses - grossGains);
+      // Tax computation: per-position ST/LT rates
+      // ST gains taxed at ST rate, LT gains at LT rate (after loss offsets)
+      // Losses offset ST gains first (most tax-efficient), then LT gains
+      const stLosses = Math.min(grossLosses + lossCarryover, stGains);
+      const netStGains = Math.max(0, stGains - stLosses);
+      const remainingLosses = Math.max(0, (grossLosses + lossCarryover) - stGains);
+      const netLtGains = Math.max(0, ltGains - remainingLosses);
+      const netGains = netStGains + netLtGains;
+      const excessLosses = Math.max(0, (grossLosses + lossCarryover) - grossGains);
       // $3,000/year ordinary income offset — track annual usage (IRS annual limit, not per-rebalance)
       if (mYear !== lastOffsetYear) { annualOrdinaryOffsetUsed = 0; lastOffsetYear = mYear; }
       const remainingAnnualOffset = Math.max(0, 3000 - annualOrdinaryOffsetUsed);
@@ -2151,12 +2174,13 @@ export default function App() {
       const ordinaryTaxSaved = ordinaryIncomeOffset * (btTaxRates.st / 100);
       const newCarryover = excessLosses - ordinaryIncomeOffset;
 
-      const appRate = monthsSinceRebal >= 12 ? btTaxRates.lt : btTaxRates.st;
-      const grossTax = grossGains * (appRate / 100);
-      const netTax = netGains * (appRate / 100);
+      // Blended tax: ST gains at ST rate + LT gains at LT rate
+      const grossTax = stGains * (btTaxRates.st / 100) + ltGains * (btTaxRates.lt / 100);
+      const netTax = netStGains * (btTaxRates.st / 100) + netLtGains * (btTaxRates.lt / 100);
       const taxSaved = grossTax - netTax + ordinaryTaxSaved;
       const estTC = netTax;
       const tcPct = optValue > 0 ? (estTC / optValue) * 100 : 0;
+      const appRate = (stGains + ltGains) > 0 ? (estTC / (netGains || 1)) * 100 : btTaxRates.lt; // blended effective rate for display
 
       // Step 7: Decision — rebalance if improvement justifies costs
       const retImp = propExpRet - currExpRet; const curAlpha = currExpRet - spyExpRet;
@@ -2181,8 +2205,11 @@ export default function App() {
       const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01;
 
       if (isFirstAllocation || retImp > hurdle) {
+        // Deduct tax BEFORE computing new cost basis — actual portfolio value is post-tax
+        const postTaxValue = optValue - estTC;
+
         // ── Update cost basis, shares, and cost-per-share maps ──
-        const newCostBasis = {}, newShares = {}, newCostPerShare = {};
+        const newCostBasis = {}, newShares = {}, newCostPerShare = {}, newPosEstablished = {};
         const monthPrices2 = returnsByDateSym[monthKey] || {};
         for (const [ticker, newWt] of Object.entries(newAlloc)) {
           if (newWt <= 0.005) continue;
@@ -2190,37 +2217,41 @@ export default function App() {
           const oldWt = prevAlloc[ticker] || 0;
           if (oldWt <= 0.005) {
             // New position: buying at current close price
-            const dollars = newWt * optValue;
+            const dollars = newWt * postTaxValue;
             newCostBasis[ticker] = dollars;
             newShares[ticker] = closePrice > 0 ? dollars / closePrice : 0;
             newCostPerShare[ticker] = closePrice;
+            newPosEstablished[ticker] = monthKey; // track when position was established
           } else if (newWt <= oldWt) {
             // Reduced/kept position: proportional
             const proportionKept = newWt / oldWt;
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) * proportionKept;
             newShares[ticker] = (sharesMap[ticker] || 0) * proportionKept;
-            newCostPerShare[ticker] = costPerShareMap[ticker] || closePrice; // avg cost unchanged
+            newCostPerShare[ticker] = costPerShareMap[ticker] || closePrice;
+            newPosEstablished[ticker] = posEstablishedMap[ticker] || monthKey; // preserve original establishment date
           } else {
             // Increased position: old basis + new at current price
             const addedWt = newWt - oldWt;
-            const addedDollars = addedWt * optValue;
+            const addedDollars = addedWt * postTaxValue;
             const addedShares = closePrice > 0 ? addedDollars / closePrice : 0;
             const oldShares = sharesMap[ticker] || 0;
             const totalShares = oldShares + addedShares;
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) + addedDollars;
             newShares[ticker] = totalShares;
             newCostPerShare[ticker] = totalShares > 0 ? newCostBasis[ticker] / totalShares : closePrice;
+            newPosEstablished[ticker] = monthKey; // reset establishment date (new lot at higher cost)
           }
         }
 
-        optAlloc = newAlloc; optValue -= estTC; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
-        costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare;
+        optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
+        costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
         lossCarryover = newCarryover;
         rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({ ticker: r.ticker, name: r.name, cat: r.cat, weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1), dollars: Math.round((newAlloc[r.ticker] || 0) * optValue) })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
           taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
           grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
-          lossOffset: Math.round(Math.min(grossGains, availableLosses)), lossCarryover: Math.round(newCarryover),
-          returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: appRate, taxType: monthsSinceRebal >= 12 ? "LT" : "ST", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition,
+          stGains: Math.round(stGains), ltGains: Math.round(ltGains),
+          lossOffset: Math.round(Math.max(0, grossGains - netGains)), lossCarryover: Math.round(newCarryover),
+          returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: +appRate.toFixed(1), taxType: stGains > ltGains ? "ST-heavy" : ltGains > stGains ? "LT-heavy" : "Blended", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition,
           fwdSignal: regimeDurModel ? getRegimeDurationFwd(regimeDurModel, btState5 || "neutral", btDuration) : null,
           threeStage: btRegime?.threeStage ? { pattern: btRegime.threeStage.pattern, type: btRegime.threeStage.patternType, signal: btRegime.threeStage.patternSignal, bridgeDur: btRegime.threeStage.bridgeDuration, effDur: btRegime.threeStage.effectiveDuration } : null,
           candidateCount: candidates.length, iterations: btIterations });
@@ -3952,11 +3983,17 @@ useEffect(() => {
                     const tcPct = totalVal > 0 ? (estTax / totalVal) * 100 : 0;
                     const turnoverPct = totalVal > 0 ? (turnoverDollars / totalVal) * 100 : 0;
 
-                    // Hurdle
-                    const currReturn = metrics.er;
+                    // Hurdle — use FORWARD estimates, not raw trailing returns
+                    // Raw metrics.er uses static DB returns for current, live trailing for proposed — unfair comparison
+                    // shrinkToForward converts trailing returns to reasonable forward estimates
+                    const currTrailing = metrics.er; // raw weighted trailing return (static DB for holdings)
                     const propPos = optimalAlloc.map(r => ({ dollars: r.dollars, r: r.r, v: r.v, d: r.d || 0, cat: r.cat, er: r.er, type: "etf" }));
                     const propMetrics = calcMetrics(propPos, cashBalance, totalVal);
-                    const propReturn = propMetrics?.er || currReturn;
+                    const propTrailing = propMetrics?.er || currTrailing; // raw weighted trailing return (live data)
+
+                    // Shrink both to forward estimates using same method (consistency)
+                    const currReturn = shrinkToForward(currTrailing, metrics.vol);
+                    const propReturn = shrinkToForward(propTrailing, propMetrics?.vol || metrics.vol);
                     const retImprovement = propReturn - currReturn;
                     const spyExpRet = 10;
                     const curAlpha = currReturn - spyExpRet;
@@ -3971,7 +4008,7 @@ useEffect(() => {
                     optimalAlloc.forEach(r => { wtdSpyCorrVal += (r.dollars / (totalVal || 1)) * gc(r.cat || "Stock", "US Large Cap"); });
 
                     setRebalAnalysis({ shouldRebalance, retImprovement, totalHurdle, tcPct, taxHurdle, minFloor, turnoverCost, turnoverPct,
-                      currReturn, propReturn, curAlpha, estTax, grossGains, grossLosses, netGains, stGains, ltGains,
+                      currReturn, propReturn, currTrailing, propTrailing, curAlpha, estTax, grossGains, grossLosses, netGains, stGains, ltGains,
                       sells, buys, keeps, reduces, increases,
                       currMetrics: metrics, propMetrics, wtdSpyCorrVal, regimeCtx,
                       optimalAlloc });
@@ -4019,7 +4056,8 @@ useEffect(() => {
                         </tr></thead>
                         <tbody>
                           {ra.propMetrics && [
-                            { l: "Expected Return", c: ra.currMetrics.er, p: ra.propMetrics.er, u: "%", hi: true },
+                            { l: "Forward Return Est.", c: ra.currReturn, p: ra.propReturn, u: "%", hi: true },
+                            { l: "Trailing 12m (raw)", c: ra.currTrailing, p: ra.propTrailing, u: "%", hi: true },
                             { l: "Volatility", c: ra.currMetrics.vol, p: ra.propMetrics.vol, u: "%", hi: false },
                             { l: srLabel, c: getSR(ra.currMetrics), p: getSR(ra.propMetrics), u: "", hi: true },
                             { l: "VaR (95%)", c: ra.currMetrics.var95, p: ra.propMetrics.var95, u: "%", hi: false },
@@ -4168,20 +4206,13 @@ useEffect(() => {
                 <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Growth Projection ({fmt$(totalVal)})</div>
                 {(() => {
                   // The trailing return (metrics.nr) is backward-looking and often inflated.
-                  // A portfolio that returned 30% last year will NOT return 30% for 20 straight years.
-                  // Forward estimate: blend trailing with long-term equity premium (~10%), weighted by vol.
-                  // Higher-vol portfolios get pulled more toward the mean (more uncertainty).
+                  // shrinkToForward blends trailing with long-term equity premium (~10%), weighted by vol.
                   const trailing = metrics.nr;
-                  const longTermEquity = 10; // long-term S&P 500 nominal CAGR
-                  // Shrink toward long-term mean: the further trailing is from 10%, the more we shrink.
-                  // Shrink factor based on vol: low vol → trust trailing more; high vol → trust less.
-                  const volFactor = Math.min(1, (metrics.vol || 15) / 30); // 0-1, higher = more shrinkage
-                  const shrinkWeight = 0.4 + volFactor * 0.3; // 0.4 to 0.7 shrinkage toward mean
-                  const baseReturn = trailing * (1 - shrinkWeight) + longTermEquity * shrinkWeight;
-                  // Clamp to reasonable range: 3% to 18% forward
-                  const fwdReturn = Math.max(3, Math.min(18, baseReturn));
+                  const fwdReturn = shrinkToForward(trailing, metrics.vol);
                   const bullReturn = Math.min(22, fwdReturn * 1.4);
                   const bearReturn = Math.max(1, fwdReturn * 0.5);
+                  const volFactor = Math.min(1, (metrics.vol || 15) / 30);
+                  const shrinkWeight = 0.4 + volFactor * 0.3;
 
                   return <>
                     <div style={{ fontSize: 8, color: cs.dim, marginBottom: 8 }}>
