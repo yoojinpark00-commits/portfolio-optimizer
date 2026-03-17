@@ -4432,7 +4432,7 @@ useEffect(() => {
                   return <>
                     <div style={{ fontSize: 8, color: cs.dim, marginBottom: 8 }}>
                       Trailing net return: <span style={{ fontFamily: mono2, color: cs.text }}>{trailing.toFixed(1)}%</span> · Forward estimate (shrunk): <span style={{ fontFamily: mono2, color: cs.green }}>{fwdReturn.toFixed(1)}%</span>
-                      <span style={{ color: cs.muted }}> · Blends trailing return with long-term equity premium ({longTermEquity}%), shrinkage {(shrinkWeight*100).toFixed(0)}% toward mean based on {metrics.vol.toFixed(0)}% vol</span>
+                      <span style={{ color: cs.muted }}> · Blends trailing return with long-term equity premium (10%), shrinkage {(shrinkWeight*100).toFixed(0)}% toward mean based on {metrics.vol.toFixed(0)}% vol</span>
                     </div>
                     <div style={{ overflowX: "auto" }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
