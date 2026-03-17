@@ -1646,6 +1646,7 @@ export default function App() {
   const [includeStocks, setIncludeStocks] = useState(false); // ETF+Stocks toggle
   const [optResult, setOptResult] = useState(null);
   const [optRunning, setOptRunning] = useState(false);
+  const [recPrices, setRecPrices] = useState({}); // cached live prices for optimizer recommendations
   const [lastRegimeCtx, setLastRegimeCtx] = useState(null); // regime context used by last optimizer run
   const [aiText, setAiText] = useState(""); const [aiL, setAiL] = useState(false); const [aiCtx, setAiCtx] = useState("deploy");
   const [live, setLive] = useState({}); const [liveL, setLiveL] = useState(false); const [lastF, setLastF] = useState(null);
@@ -2744,20 +2745,28 @@ useEffect(() => {
       }
       setAccepted(prev => { const next = new Set(prev); next.delete(rec.ticker); return next; });
     } else {
-      // SELECT: add to holdings, deduct cash
-      let price = 0;
-      try {
-        const resp = await fetch(`/api/prices?tickers=${rec.ticker}`);
-        if (resp.ok) { const json = await resp.json(); price = json.data?.[rec.ticker]?.price || 0; }
-      } catch (e) { }
+      // SELECT: use pre-fetched price from recPrices (batch-loaded after optimizer runs)
+      let price = recPrices[rec.ticker]?.price || 0;
+
+      // Fallback: individual fetch if batch didn't have this ticker
+      if (price <= 0) {
+        try {
+          const yahooTicker = rec.ticker.replace(".", "-");
+          const resp = await fetch(`/api/prices?tickers=${yahooTicker}`);
+          if (resp.ok) {
+            const json = await resp.json();
+            // Try Yahoo-format ticker first, then original
+            price = json.data?.[yahooTicker]?.price || json.data?.[rec.ticker]?.price || 0;
+          }
+        } catch (e) { console.warn(`Price fetch failed for ${rec.ticker}:`, e); }
+      }
+
       const shares = price > 0 ? Math.floor(rec.dollars / price) : 0;
       const actualCost = price > 0 ? shares * price : rec.dollars;
 
       if (rec.isStock) {
-        // Add as individual stock
-        setStocks(p => [...p, { ticker: rec.ticker, name: rec.name, shares, costBasis: price || 0, mktValue: actualCost, sector: rec.cat.replace("Sector ", ""), locked: false, purchaseDate: new Date().toISOString().slice(0, 10) }]);
+        setStocks(p => [...p, { ticker: rec.ticker, name: rec.name, shares, costBasis: price || 0, mktValue: actualCost, sector: rec.cat.replace("Sector ", "").replace(/^(Tech|Consumer|Fin|Health|Energy|Indust)-\w+$/, "$1"), locked: false, purchaseDate: new Date().toISOString().slice(0, 10) }]);
       } else {
-        // Add as ETF
         let etfData = ETF_DB.find(e => e.t === rec.ticker);
         if (!etfData) {
           etfData = { t: rec.ticker, n: rec.name, c: rec.cat, h: 50, er: rec.er || .20, r: rec.r || 8.0, v: rec.v || 18.0, d: rec.d || 0 };
@@ -2767,7 +2776,7 @@ useEffect(() => {
       setCashBalance(prev => Math.max(0, prev - actualCost));
       setAccepted(prev => new Set([...prev, rec.ticker]));
     }
-  }, [accepted, etfs, stocks]);
+  }, [accepted, etfs, stocks, recPrices]);
 
   // ─── Fetch live prices via Twelve Data (serverless proxy) ───
   const fetchLive = useCallback(async () => {
@@ -2982,6 +2991,34 @@ useEffect(() => {
     const result = optimizeCash(allPos, cashBalance, holdingsVal, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
     setOptResult(result);
     setAccepted(new Set());
+
+    // ── Step 5: Batch-fetch live prices for all recommendations ──
+    // Single API call instead of per-recommendation fetch — avoids Yahoo rate limiting
+    if (result && result.length > 0) {
+      try {
+        const recTickers = result.map(r => r.ticker);
+        // Normalize tickers for Yahoo (BRK.B → BRK-B)
+        const yahooTickers = recTickers.map(t => t.replace(".", "-"));
+        const prices = {};
+        for (let i = 0; i < yahooTickers.length; i += 50) {
+          const batch = yahooTickers.slice(i, i + 50);
+          try {
+            const resp = await fetch(`/api/prices?tickers=${batch.join(",")}`);
+            if (resp.ok) {
+              const json = await resp.json();
+              if (json.data) {
+                // Map Yahoo tickers back to original format
+                for (const [yahooSym, data] of Object.entries(json.data)) {
+                  const origSym = recTickers.find(t => t.replace(".", "-") === yahooSym) || yahooSym;
+                  prices[origSym] = data;
+                }
+              }
+            }
+          } catch (e) { console.warn("Batch rec price fetch failed:", e); }
+        }
+        setRecPrices(prices);
+      } catch (e) { console.warn("Rec price batch failed:", e); }
+    }
     } catch (e) { console.error("Optimizer error:", e); }
     setOptRunning(false);
   }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData, regimeAnalytics, includeStocks]);
@@ -3376,6 +3413,8 @@ useEffect(() => {
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {optResult.map(r => {
                 const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
+                const liveP = recPrices[r.ticker];
+                const estShares = liveP?.price > 0 ? Math.floor(r.dollars / liveP.price) : null;
                 return (
                 <div key={r.ticker} onClick={() => toggleRec(r)}
                   style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 0,
@@ -3390,12 +3429,15 @@ useEffect(() => {
                       <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
                       <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
                       <Badge color={cs.dim}>{r.cat}</Badge>
-                      {r.isStock && <Badge color={cs.blue}>📈 STOCK</Badge>}
-                      {r.lev && <Badge color={cs.red}>⚠ {r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
+                      {r.isStock && <Badge color={cs.blue}>STOCK</Badge>}
+                      {r.lev && <Badge color={cs.red}>{r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
                     </div>
                     <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
                       {r.lev ? `Stated R:${r.r?.toFixed?.(1) || r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r?.toFixed?.(1) || r.r}%`} · V:{r.v?.toFixed?.(1) || r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
-                      {r.lev && <span style={{ color: cs.red }}> · ⚠ Vol decay drag, path-dependent, not for buy-and-hold</span>}
+                      {liveP && <span style={{ color: cs.text }}> · <span style={{ color: liveP.change >= 0 ? cs.green : cs.red }}>${liveP.price?.toFixed(2)} ({liveP.change > 0 ? "+" : ""}{liveP.change}%)</span></span>}
+                      {estShares && <span> · ~{estShares} shares</span>}
+                      {!liveP && <span style={{ color: cs.yellow }}> · Price pending</span>}
+                      {r.lev && <span style={{ color: cs.red }}> · Vol decay drag</span>}
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
