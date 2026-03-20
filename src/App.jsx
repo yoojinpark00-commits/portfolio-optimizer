@@ -1031,6 +1031,142 @@ const REGIME_TILTS = {
   strong_risk_off: [+0.15, -0.12, 0.5],
 };
 
+// ═══════════════════════════════════════════════════════════════════
+//  INLINE HMM REGIME ENGINE — 5-State Gaussian HMM + BOCPD + Ensemble
+//  Bull(0) / Euphoria(1) / Correction(2) / Crisis(3) / Recovery(4)
+// ═══════════════════════════════════════════════════════════════════
+const HMM_REGIMES = [
+  { id: 0, name: "Bull", color: "#42be65", state5: "mild_risk_on" },
+  { id: 1, name: "Euphoria", color: "#fbbf24", state5: "mild_risk_off" },  // late-cycle caution
+  { id: 2, name: "Correction", color: "#fb923c", state5: "mild_risk_off" },
+  { id: 3, name: "Crisis", color: "#ff8389", state5: "strong_risk_off" },
+  { id: 4, name: "Recovery", color: "#60a5fa", state5: "strong_risk_on" },
+];
+const HMM_N = 5;
+const HMM_LOG2PI = Math.log(2 * Math.PI);
+function hmmGauss(x, mu, s) { const z = (x - mu) / s; return -0.5 * (HMM_LOG2PI + 2 * Math.log(s) + z * z); }
+function hmmLSE(v) { if (!v.length) return -Infinity; const m = Math.max(...v); if (m === -Infinity) return -Infinity; return m + Math.log(v.reduce((s, x) => s + Math.exp(x - m), 0)); }
+function hmmNorm(lp) { const l = hmmLSE(lp); return lp.map(x => Math.exp(x - l)); }
+
+function hmmTrain(obs, maxIter = 50) {
+  const T = obs.length, N = HMM_N;
+  let pi = [0.35, 0.10, 0.10, 0.05, 0.40];
+  let A = [[.90,.06,.03,.005,.005],[.05,.80,.12,.02,.01],[.02,.01,.78,.15,.04],[.005,.005,.04,.82,.13],[.20,.02,.03,.02,.73]];
+  let mu = [-0.5, -1.5, 0.8, 2.0, 0.0];
+  let sig = [0.5, 0.6, 0.7, 0.8, 0.6];
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Forward
+    const alpha = [];
+    const a0 = new Array(N);
+    for (let i = 0; i < N; i++) a0[i] = Math.log(pi[i] + 1e-300) + hmmGauss(obs[0], mu[i], sig[i]);
+    alpha.push(a0);
+    for (let t = 1; t < T; t++) {
+      const at = new Array(N);
+      for (let j = 0; j < N; j++) { const tm = new Array(N); for (let i = 0; i < N; i++) tm[i] = alpha[t-1][i] + Math.log(A[i][j]+1e-300); at[j] = hmmLSE(tm) + hmmGauss(obs[t], mu[j], sig[j]); }
+      alpha.push(at);
+    }
+    // Backward
+    const beta = new Array(T);
+    beta[T-1] = new Array(N).fill(0);
+    for (let t = T-2; t >= 0; t--) { beta[t] = new Array(N); for (let i = 0; i < N; i++) { const tm = new Array(N); for (let j = 0; j < N; j++) tm[j] = Math.log(A[i][j]+1e-300) + hmmGauss(obs[t+1], mu[j], sig[j]) + beta[t+1][j]; beta[t][i] = hmmLSE(tm); } }
+    // Gamma
+    const gamma = alpha.map((at, t) => hmmNorm(at.map((v, i) => v + beta[t][i])));
+    // M-step
+    for (let i = 0; i < N; i++) pi[i] = Math.max(gamma[0][i], 1e-10);
+    for (let i = 0; i < N; i++) {
+      let gs = 0; for (let t = 0; t < T-1; t++) gs += gamma[t][i];
+      for (let j = 0; j < N; j++) {
+        let xs = 0; for (let t = 0; t < T-1; t++) { const lx = alpha[t][i]+Math.log(A[i][j]+1e-300)+hmmGauss(obs[t+1],mu[j],sig[j])+beta[t+1][j]; xs += Math.exp(lx - hmmLSE(alpha[t].map((v,k)=>v+beta[t][k]))); }
+        A[i][j] = Math.max(xs / (gs+1e-300), 1e-10);
+      }
+      const rs = A[i].reduce((a,b)=>a+b,0); for (let j = 0; j < N; j++) A[i][j] /= rs;
+    }
+    for (let i = 0; i < N; i++) {
+      let gs = 0, ws = 0, ws2 = 0;
+      for (let t = 0; t < T; t++) { gs += gamma[t][i]; ws += gamma[t][i]*obs[t]; ws2 += gamma[t][i]*obs[t]*obs[t]; }
+      mu[i] = ws / (gs+1e-300); sig[i] = Math.sqrt(Math.max((ws2/(gs+1e-300)) - mu[i]**2, 0.01));
+    }
+  }
+  // Label-switch fix: sort states by emission mean → [Euphoria, Bull, Recovery, Correction, Crisis]
+  const TARGET = [1, 0, 4, 2, 3];
+  const idx = mu.map((m, i) => ({ m, i })).sort((a, b) => a.m - b.m);
+  const o2n = new Array(N); for (let k = 0; k < N; k++) o2n[idx[k].i] = TARGET[k];
+  const nPi = new Array(N), nMu = new Array(N), nSig = new Array(N);
+  for (let i = 0; i < N; i++) { nPi[o2n[i]] = pi[i]; nMu[o2n[i]] = mu[i]; nSig[o2n[i]] = sig[i]; }
+  const nA = Array.from({ length: N }, () => new Array(N).fill(0));
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) nA[o2n[i]][o2n[j]] = A[i][j];
+
+  return { pi: nPi, A: nA, mu: nMu, sig: nSig };
+}
+
+function hmmFilter(obs, model) {
+  const { pi, A, mu, sig } = model;
+  const T = obs.length, N = HMM_N;
+  const result = [];
+  const a0 = new Array(N); for (let i = 0; i < N; i++) a0[i] = Math.log(pi[i]+1e-300) + hmmGauss(obs[0], mu[i], sig[i]);
+  result.push(hmmNorm(a0));
+  let prev = a0;
+  for (let t = 1; t < T; t++) {
+    const at = new Array(N);
+    for (let j = 0; j < N; j++) { const tm = new Array(N); for (let i = 0; i < N; i++) tm[i] = prev[i]+Math.log(A[i][j]+1e-300); at[j] = hmmLSE(tm)+hmmGauss(obs[t],mu[j],sig[j]); }
+    result.push(hmmNorm(at)); prev = at;
+  }
+  return result;
+}
+
+function hmmForecast(probs, A, steps = 12) {
+  const fc = []; let p = [...probs];
+  for (let s = 0; s < steps; s++) { const n = new Array(HMM_N).fill(0); for (let j = 0; j < HMM_N; j++) for (let i = 0; i < HMM_N; i++) n[j] += p[i]*A[i][j]; fc.push(n); p = n; }
+  return fc;
+}
+
+// ── BOCPD (simplified Bayesian Online Change-Point Detection) ──
+function runBOCPD(data, hazard = 1/50) {
+  const T = data.length; const cpProb = new Array(T).fill(0);
+  let rl = [1.0], bMu = [0], bK = [1], bA = [1], bB = [1];
+  for (let t = 0; t < T; t++) {
+    const x = data[t], pLen = rl.length;
+    const pred = new Array(pLen);
+    for (let r = 0; r < pLen; r++) { const s2 = bB[r]*(bK[r]+1)/(bA[r]*bK[r]); const s = Math.sqrt(Math.max(s2,1e-8)); const z = (x-bMu[r])/s; pred[r] = Math.exp(-0.5*z*z)/(s*2.507); }
+    const growth = rl.map((r,i) => r*pred[i]*(1-hazard));
+    let cp = 0; for (let r = 0; r < pLen; r++) cp += rl[r]*pred[r]*hazard;
+    const newRl = [cp, ...growth]; const tot = newRl.reduce((a,b)=>a+b,0)||1e-300;
+    rl = newRl.map(v=>v/tot); cpProb[t] = rl[0];
+    const nm=[0],nk=[1],na=[1],nb=[1];
+    for (let r = 0; r < pLen; r++) { const k=bK[r],m=bMu[r],a=bA[r],b=bB[r]; nm.push((k*m+x)/(k+1)); nk.push(k+1); na.push(a+0.5); nb.push(b+(k*(x-m)**2)/(2*(k+1))); }
+    bMu=nm; bK=nk; bA=na; bB=nb;
+    if (rl.length > 150) { rl=rl.slice(0,150); bMu=bMu.slice(0,150); bK=bK.slice(0,150); bA=bA.slice(0,150); bB=bB.slice(0,150); }
+  }
+  return cpProb;
+}
+
+// ── Ensemble: fuse HMM + BOCPD into adjusted probabilities ──
+function runEnsemble(hmmProbs, cpProbs) {
+  return hmmProbs.map((base, t) => {
+    const cpStress = Math.min(1, (cpProbs[t] || 0) * 3); // amplify CP signal
+    const sf = Math.min(cpStress, 1);
+    const adj = [
+      base[0] * (1 - sf * 0.4),   // Bull penalized
+      base[1] * (1 - sf * 0.2),   // Euphoria penalized
+      base[2] + sf * 0.12,        // Correction boosted
+      base[3] + sf * 0.18,        // Crisis boosted
+      base[4] * (1 - sf * 0.1),   // Recovery mild penalty
+    ];
+    const tot = adj.reduce((a, b) => a + b, 0) || 1;
+    return adj.map(p => Math.max(0, p) / tot);
+  });
+}
+
+// Map HMM 5-state probabilities → existing state5 string for optimizer compatibility
+function hmmToState5(probs) {
+  const maxIdx = probs.indexOf(Math.max(...probs));
+  // Direct map from HMM regime to state5
+  return HMM_REGIMES[maxIdx].state5;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+
 // regimeCtx: { state5, acceleration, duration, transition, durationModel } or just a string
 // prevBest: optional previous allocation weights to warm-start from
 function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest) {
@@ -2005,6 +2141,8 @@ export default function App() {
   const [regimeLoading, setRegimeLoading] = useState(false);
   const [regimeError, setRegimeError] = useState("");
   const [regimeAnalytics, setRegimeAnalytics] = useState(null);
+  const [hmmResult, setHmmResult] = useState(null);
+  const [hmmLoading, setHmmLoading] = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const fetchRegime = useCallback(async () => {
@@ -2035,6 +2173,90 @@ export default function App() {
     setAnalyticsLoading(false);
   }, []);
 
+  // ── Run HMM + BOCPD + Ensemble on regime history data ──
+  const runHmmAnalysis = useCallback(async () => {
+    setHmmLoading(true);
+    try {
+      const resp = await fetch("/api/regime?history=true");
+      const json = await resp.json();
+      if (!json.monthlyRegimes?.length) { setHmmLoading(false); return; }
+
+      const months = json.monthlyRegimes.sort((a, b) => a.date.localeCompare(b.date));
+      // Extract composite scores from FRED data (use the pre-computed score field)
+      const composite = months.map(m => m.score ?? 0);
+      const dates = months.map(m => m.date);
+
+      if (composite.length < 30) { setHmmLoading(false); return; }
+
+      // Train HMM
+      const model = hmmTrain(composite, 40);
+
+      // Get filtered probabilities (real-time, causal)
+      const filtered = hmmFilter(composite, model);
+
+      // BOCPD change-point detection
+      const cpProb = runBOCPD(composite);
+
+      // Ensemble fusion
+      const ensembleProbs = runEnsemble(filtered, cpProb);
+
+      // Current state
+      const currentFiltered = filtered[filtered.length - 1];
+      const currentEnsemble = ensembleProbs[ensembleProbs.length - 1];
+      const hmmRegimeIdx = currentFiltered.indexOf(Math.max(...currentFiltered));
+      const ensRegimeIdx = currentEnsemble.indexOf(Math.max(...currentEnsemble));
+
+      // Viterbi-like: take MAP state at each time step for regime history
+      const regimePath = filtered.map(p => p.indexOf(Math.max(...p)));
+
+      // Forecast (12 months ahead)
+      const forecast = hmmForecast(currentEnsemble, model.A, 12);
+
+      // Expected durations
+      const expDurations = model.A.map((row, i) => 1 / (1 - row[i] + 1e-300));
+
+      // Regime-conditional return stats (using composite as proxy)
+      const condStats = HMM_REGIMES.map((r, ri) => {
+        const vals = composite.filter((_, t) => regimePath[t] === ri);
+        if (vals.length < 3) return { ...r, meanScore: 0, count: 0, pctTime: 0 };
+        const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+        return { ...r, meanScore: mean, count: vals.length, pctTime: vals.length / composite.length };
+      });
+
+      // Build alerts
+      const alerts = [];
+      const lastCP = cpProb[cpProb.length - 1];
+      if (lastCP > 0.2) alerts.push({ source: "Change-Point", message: `CP probability ${(lastCP*100).toFixed(0)}% — regime transition may be underway`, severity: lastCP > 0.5 ? "high" : "medium" });
+      if (hmmRegimeIdx !== ensRegimeIdx) alerts.push({ source: "Ensemble", message: `HMM → ${HMM_REGIMES[hmmRegimeIdx].name} vs Ensemble → ${HMM_REGIMES[ensRegimeIdx].name}`, severity: "medium" });
+
+      // Build timeline for display (downsample if needed)
+      const step = Math.max(1, Math.floor(dates.length / 120));
+      const timeline = [];
+      for (let i = 0; i < dates.length; i += step) {
+        const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i] };
+        HMM_REGIMES.forEach((r, ri) => { entry[`p_${r.name}`] = filtered[i][ri]; entry[`e_${r.name}`] = ensembleProbs[i][ri]; });
+        timeline.push(entry);
+      }
+
+      setHmmResult({
+        model,
+        currentHMM: { idx: hmmRegimeIdx, probs: currentFiltered, name: HMM_REGIMES[hmmRegimeIdx].name, color: HMM_REGIMES[hmmRegimeIdx].color },
+        currentEnsemble: { idx: ensRegimeIdx, probs: currentEnsemble, name: HMM_REGIMES[ensRegimeIdx].name, color: HMM_REGIMES[ensRegimeIdx].color },
+        state5: hmmToState5(currentEnsemble),  // maps to optimizer-compatible state5
+        forecast,
+        expDurations,
+        condStats,
+        alerts,
+        timeline,
+        cpProb,
+        transMatrix: model.A,
+        agreement: hmmRegimeIdx === ensRegimeIdx,
+        dates,
+      });
+    } catch (e) { console.warn("HMM analysis failed:", e); }
+    setHmmLoading(false);
+  }, []);
+
   const didHydrate = useRef(false);
 
   // ── Auto-fetch regime data on mount ──
@@ -2045,7 +2267,8 @@ export default function App() {
     // Fetch both live regime and full analytics in parallel on app launch
     fetchRegime();
     fetchRegimeAnalytics();
-  }, [fetchRegime, fetchRegimeAnalytics]);
+    runHmmAnalysis();
+  }, [fetchRegime, fetchRegimeAnalytics, runHmmAnalysis]);
 
   // ── Backtest runner ──
   const runBacktest = useCallback(async () => {
@@ -3486,6 +3709,28 @@ useEffect(() => {
       }
     }
 
+    // ── Step 3b: Overlay HMM Ensemble classification if available ──
+    if (useRegime && hmmResult) {
+      if (!regimeCtx) regimeCtx = { state5: "neutral", acceleration: 0, duration: 1, transition: null };
+      // The ensemble fuses HMM + BOCPD → more robust state5 classification
+      regimeCtx.hmmState5 = hmmResult.state5;
+      regimeCtx.hmmRegime = hmmResult.currentEnsemble.name;
+      regimeCtx.hmmProbs = hmmResult.currentEnsemble.probs;
+      regimeCtx.hmmAlerts = hmmResult.alerts;
+      // If HMM and FRED agree, boost confidence (use HMM). If they disagree, use the more cautious signal.
+      const fredState5 = regimeCtx.state5;
+      const hmmState5 = hmmResult.state5;
+      const riskOrder = ["strong_risk_off", "mild_risk_off", "neutral", "mild_risk_on", "strong_risk_on"];
+      const fredRisk = riskOrder.indexOf(fredState5);
+      const hmmRisk = riskOrder.indexOf(hmmState5);
+      if (fredRisk >= 0 && hmmRisk >= 0) {
+        // Conservative fusion: take the lower risk (more defensive) of the two
+        const fusedIdx = Math.min(fredRisk, hmmRisk);
+        regimeCtx.state5 = riskOrder[fusedIdx];
+        regimeCtx.fusionNote = fredRisk === hmmRisk ? "FRED & HMM agree" : `Conservative: FRED=${fredState5} HMM=${hmmState5} → ${riskOrder[fusedIdx]}`;
+      }
+    }
+
     // ── Step 4: Run optimizer with live candidates ──
     setLastRegimeCtx(regimeCtx);
     const result = optimizeCash(allPos, cashBalance, holdingsVal, candidates, ot, srMode, volTarget, useKelly, regimeCtx);
@@ -3521,7 +3766,7 @@ useEffect(() => {
     }
     } catch (e) { console.error("Optimizer error:", e); }
     setOptRunning(false);
-  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData, regimeAnalytics, includeStocks]);
+  }, [allPos, cashBalance, holdingsVal, ot, srMode, volTarget, useKelly, useRegime, regimeData, regimeAnalytics, hmmResult, includeStocks]);
 
   // ─── AI Advisor (via serverless proxy) ───
   const getAI = useCallback(async (ctx) => {
@@ -3869,7 +4114,7 @@ useEffect(() => {
                 </button>
                 <button onClick={() => setUseRegime(v => !v)} style={{ padding: "7px 10px", borderRadius: 0, border: `1px solid ${useRegime ? "rgba(255,171,145,.2)" : "#393939"}`, background: useRegime ? "rgba(255,171,145,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
-                  <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
+                  <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (hmmResult ? `${hmmResult.currentEnsemble.name} (HMM+FRED)` : regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
                 </button>
                 <button onClick={() => setIncludeStocks(v => !v)} style={{ padding: "7px 10px", borderRadius: 0, border: `1px solid ${includeStocks ? "rgba(120,169,255,.2)" : "#393939"}`, background: includeStocks ? "rgba(120,169,255,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: includeStocks ? cs.blue : cs.dim, fontWeight: 600 }}>📈</span>
@@ -4963,6 +5208,129 @@ useEffect(() => {
                         </table>
                       </div>
                     </div>}
+                  </div>;
+                })()}
+              </div>
+
+              {/* ── HMM Regime Engine (Probabilistic) ── */}
+              <div style={cardS}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>🧠 Probabilistic Regime Engine</div>
+                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>5-State Gaussian HMM + Bayesian Change-Point Detection + Ensemble Fusion. Trained on FRED composite score history.</div>
+                  </div>
+                  <button onClick={runHmmAnalysis} disabled={hmmLoading} style={{ padding: "6px 12px", borderRadius: 0, border: "1px solid rgba(96,165,250,.2)", background: "rgba(96,165,250,.08)", color: "#60a5fa", fontSize: 9, fontWeight: 600, cursor: hmmLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
+                    {hmmLoading ? "Training..." : hmmResult ? "⟳ Retrain" : "Run HMM"}
+                  </button>
+                </div>
+
+                {!hmmResult && !hmmLoading && <div style={{ textAlign: "center", padding: 18, color: cs.muted, fontSize: 10, border: "1px dashed #393939" }}>
+                  Auto-runs on app launch. Trains a 5-state Gaussian HMM (Baum-Welch EM) on FRED composite scores with BOCPD change-point detection and ensemble fusion.
+                </div>}
+
+                {hmmLoading && <div style={{ textAlign: "center", padding: 18, color: "#60a5fa", fontSize: 10 }}>Training Gaussian HMM (Baum-Welch EM)...</div>}
+
+                {hmmResult && (() => {
+                  const h = hmmResult;
+                  const hmmR = h.currentHMM;
+                  const ensR = h.currentEnsemble;
+                  const agree = h.agreement;
+
+                  return <div>
+                    {/* HMM vs Ensemble comparison */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 12, marginBottom: 12, padding: "14px 16px", borderRadius: 0, background: `${ensR.color}08`, border: `1px solid ${ensR.color}25` }}>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 1 }}>HMM CLASSIFICATION</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: hmmR.color, marginTop: 4 }}>{hmmR.name}</div>
+                        <div style={{ fontSize: 10, color: cs.dim, fontFamily: mono2 }}>{(hmmR.probs[hmmR.idx] * 100).toFixed(1)}%</div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: agree ? "rgba(66,190,101,.1)" : "rgba(248,113,113,.1)", border: `2px solid ${agree ? cs.green : cs.red}40` }}>
+                          <span style={{ fontSize: 8, fontWeight: 700, color: agree ? cs.green : cs.red }}>{agree ? "AGREE" : "SPLIT"}</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 1 }}>ENSEMBLE CONSENSUS</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: ensR.color, marginTop: 4 }}>{ensR.name}</div>
+                        <div style={{ fontSize: 10, color: cs.dim, fontFamily: mono2 }}>{(ensR.probs[ensR.idx] * 100).toFixed(1)}%</div>
+                      </div>
+                    </div>
+
+                    {/* Optimizer fusion note */}
+                    <div style={{ padding: "8px 12px", borderRadius: 0, background: "#1c1c1c", marginBottom: 12, fontSize: 9 }}>
+                      <span style={{ color: cs.dim }}>Optimizer state: </span>
+                      <span style={{ color: "#60a5fa", fontWeight: 600 }}>{h.state5?.replace(/_/g, " ").toUpperCase()}</span>
+                      <span style={{ color: cs.dim }}> · Conservative fusion uses the more defensive of FRED vs HMM</span>
+                    </div>
+
+                    {/* Probability bars */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 12 }}>
+                      {HMM_REGIMES.map((r, i) => (
+                        <div key={i} style={{ padding: "8px 6px", textAlign: "center", borderRadius: 0, background: i === ensR.idx ? `${r.color}12` : "#1c1c1c", border: `1px solid ${i === ensR.idx ? r.color + "30" : "#2a2a2a"}` }}>
+                          <div style={{ fontSize: 7, color: r.color, fontWeight: 600, marginBottom: 4 }}>{r.name}</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: i === ensR.idx ? r.color : cs.dim }}>{(ensR.probs[i] * 100).toFixed(1)}%</div>
+                          <div style={{ height: 3, background: "#262626", borderRadius: 2, marginTop: 4, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${ensR.probs[i] * 100}%`, background: r.color, borderRadius: 2 }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Alerts */}
+                    {h.alerts.length > 0 && <div style={{ marginBottom: 12 }}>
+                      {h.alerts.map((alert, i) => (
+                        <div key={i} style={{ padding: "6px 10px", borderRadius: 0, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, background: alert.severity === "high" ? "rgba(248,113,113,.06)" : "rgba(251,191,36,.06)", borderLeft: `3px solid ${alert.severity === "high" ? cs.red : cs.yellow}` }}>
+                          <span style={{ fontSize: 9, fontWeight: 600, color: alert.severity === "high" ? cs.red : cs.yellow, minWidth: 80 }}>{alert.source}</span>
+                          <span style={{ fontSize: 9, color: cs.dim }}>{alert.message}</span>
+                        </div>
+                      ))}
+                    </div>}
+
+                    {/* Transition matrix (compact) */}
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Transition Matrix (learned)</div>
+                      <div style={{ display: "grid", gridTemplateColumns: `60px repeat(5, 1fr)`, gap: 2, fontSize: 8 }}>
+                        <div />
+                        {HMM_REGIMES.map(r => <div key={r.id} style={{ textAlign: "center", color: r.color, fontWeight: 600, padding: 3 }}>{r.name.slice(0, 4)}</div>)}
+                        {h.transMatrix.map((row, i) => (
+                          <React.Fragment key={i}>
+                            <div style={{ color: HMM_REGIMES[i].color, fontWeight: 600, display: "flex", alignItems: "center", fontSize: 8 }}>{HMM_REGIMES[i].name.slice(0, 4)}</div>
+                            {row.map((p, j) => (
+                              <div key={j} style={{ textAlign: "center", padding: 3, fontFamily: mono2, background: i === j ? `${HMM_REGIMES[i].color}15` : `rgba(255,255,255,${Math.min(p / 0.3, 1) * 0.08})`, color: i === j ? HMM_REGIMES[i].color : cs.dim, fontWeight: i === j ? 700 : 400, borderRadius: 2 }}>{(p * 100).toFixed(1)}</div>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Expected durations & forecast */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div style={{ padding: "10px 12px", borderRadius: 0, background: "#1c1c1c" }}>
+                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>Expected Duration (months)</div>
+                        {HMM_REGIMES.map((r, i) => (
+                          <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                            <span style={{ fontSize: 9, color: r.color }}>{r.name}</span>
+                            <span style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{h.expDurations[i].toFixed(1)}m</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ padding: "10px 12px", borderRadius: 0, background: "#1c1c1c" }}>
+                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>12-Month Forecast</div>
+                        {(() => {
+                          const fc6 = h.forecast[5] || h.forecast[h.forecast.length - 1];
+                          const fc12 = h.forecast[h.forecast.length - 1];
+                          return <>
+                            <div style={{ fontSize: 8, color: cs.dim, marginBottom: 4 }}>+6 months:</div>
+                            {HMM_REGIMES.map((r, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                                <span style={{ fontSize: 8, color: r.color }}>{r.name}</span>
+                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>{(fc6[i] * 100).toFixed(1)}%</span>
+                              </div>
+                            ))}
+                          </>;
+                        })()}
+                      </div>
+                    </div>
                   </div>;
                 })()}
               </div>
