@@ -1560,6 +1560,183 @@ function MC({ label, value, sub, accent, sm }) { return (<div style={{ backgroun
 function Badge({ children, color = cs.green }) { return <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 0, fontSize: 8, fontWeight: 700, background: `${color}20`, color, letterSpacing: ".03em", fontFamily: mono2 }}>{children}</span> }
 function GR({ value, max, label, color, sz = 78 }) { const pct = Math.min(Math.max(value, 0) / max, 1), r2 = (sz - 8) / 2, ci = 2 * Math.PI * r2; return (<div style={{ textAlign: "center" }}><svg width={sz} height={sz}><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke="#393939" strokeWidth={5} /><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke={color} strokeWidth={5} strokeDasharray={`${pct * ci} ${ci}`} strokeLinecap="butt" transform={`rotate(-90 ${sz / 2} ${sz / 2})`} style={{ transition: "stroke-dasharray .8s" }} /><text x={sz / 2} y={sz / 2 + 1} textAnchor="middle" dominantBaseline="middle" fill={cs.text} fontSize={12} fontWeight="700" fontFamily={mono2}>{typeof value === 'number' ? value.toFixed(2) : value}</text></svg><div style={{ fontSize: 9, color: cs.dim, marginTop: 2, fontFamily: mono2 }}>{label}</div></div>) }
 
+/**
+ * RegimeLineChart — Multi-line SVG time series with hover interaction.
+ *
+ * Props:
+ *   data: [{ date, ...values }]        — array of data points
+ *   series: [{ key, label, color, width?, dash?, opacity? }] — line definitions
+ *   regimeBands: { key: string }?       — if set, draws colored background bands from data[key] (0-4 regime idx)
+ *   thresholds: [{ value, color, label, dash? }]? — horizontal reference lines
+ *   yDomain: [min, max]?                — fixed Y axis domain (auto if omitted)
+ *   yFormat: (v) => string?             — Y axis label formatter
+ *   height: number?                     — SVG height (default 200)
+ *   stacked: boolean?                   — if true, renders stacked area instead of lines
+ *   title: string?
+ *   subtitle: string?
+ */
+function RegimeLineChart({ data, series, regimeBands, thresholds, yDomain, yFormat, height: H = 200, stacked, title, subtitle }) {
+  const [hoverIdx, setHoverIdx] = React.useState(null);
+  const svgRef = React.useRef(null);
+  if (!data?.length || !series?.length) return null;
+
+  const W = 580;
+  const pd = { t: 20, r: 14, b: 44, l: 48 };
+  const w = W - pd.l - pd.r, h = H - pd.t - pd.b;
+  const hmmColors = ["#42be65", "#fbbf24", "#fb923c", "#ff8389", "#60a5fa"];
+
+  // Compute Y domain
+  let yMin, yMax;
+  if (yDomain) { [yMin, yMax] = yDomain; }
+  else if (stacked) { yMin = 0; yMax = 1; }
+  else {
+    const allVals = data.flatMap(d => series.map(s => d[s.key] ?? 0));
+    yMin = Math.min(...allVals); yMax = Math.max(...allVals);
+    const padding = (yMax - yMin) * 0.08 || 0.1;
+    yMin -= padding; yMax += padding;
+  }
+
+  const sx = (i) => pd.l + (i / Math.max(1, data.length - 1)) * w;
+  const sy = (v) => pd.t + h - ((v - yMin) / (yMax - yMin || 1)) * h;
+  const fmt = yFormat || (v => v.toFixed(2));
+
+  // Date labels
+  const dateLabels = [];
+  const labelInterval = Math.max(1, Math.floor(data.length / 6));
+  for (let i = 0; i < data.length; i += labelInterval) {
+    const d = data[i]?.date;
+    if (d) dateLabels.push({ i, label: d.length > 7 ? d.slice(0, 7) : d });
+  }
+  // Always show last date
+  const lastDate = data[data.length - 1]?.date;
+  if (lastDate && (dateLabels.length === 0 || dateLabels[dateLabels.length - 1].i < data.length - 3))
+    dateLabels.push({ i: data.length - 1, label: lastDate.length > 7 ? lastDate.slice(0, 7) : lastDate });
+
+  const getIdx = (e) => {
+    if (!svgRef.current) return null;
+    const rect = svgRef.current.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / rect.width * W;
+    return Math.max(0, Math.min(data.length - 1, Math.round(((mx - pd.l) / w) * (data.length - 1))));
+  };
+
+  // Build polyline points for each series
+  const lines = series.map(s => ({
+    ...s,
+    points: data.map((d, i) => `${sx(i)},${sy(d[s.key] ?? 0)}`).join(" "),
+  }));
+
+  // Stacked area paths
+  let stackedPaths = null;
+  if (stacked) {
+    stackedPaths = [];
+    const cumulative = data.map(() => 0);
+    for (let si = 0; si < series.length; si++) {
+      const s = series[si];
+      const topPoints = data.map((d, i) => {
+        cumulative[i] += (d[s.key] ?? 0);
+        return { x: sx(i), y: sy(cumulative[i]) };
+      });
+      const bottomPoints = data.map((d, i) => {
+        const bottom = cumulative[i] - (d[s.key] ?? 0);
+        return { x: sx(i), y: sy(bottom) };
+      }).reverse();
+      const pathD = `M${topPoints.map(p => `${p.x},${p.y}`).join("L")} L${bottomPoints.map(p => `${p.x},${p.y}`).join("L")} Z`;
+      stackedPaths.push({ ...s, pathD });
+    }
+  }
+
+  const hPt = hoverIdx != null ? data[hoverIdx] : null;
+
+  return <div style={cardS}>
+    {title && <div style={{ fontSize: 12, fontWeight: 700, marginBottom: subtitle ? 2 : 8 }}>{title}</div>}
+    {subtitle && <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>{subtitle}</div>}
+
+    {/* Legend */}
+    <div style={{ display: "flex", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
+      {series.map(s => (
+        <span key={s.key} style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 14, height: s.dash ? 1 : 3, background: s.color, display: "inline-block", borderTop: s.dash ? `2px dashed ${s.color}` : "none" }} />
+          <span style={{ color: s.color }}>{s.label}</span>
+          {hPt && <span style={{ fontFamily: mono2, fontWeight: 600, color: s.color, marginLeft: 2 }}>{(hPt[s.key] ?? 0).toFixed(stacked ? 1 : 2)}{stacked ? "%" : ""}</span>}
+        </span>
+      ))}
+    </div>
+
+    <svg ref={svgRef} width={W} height={H} style={{ overflow: "visible", maxWidth: "100%", cursor: "crosshair" }}
+      viewBox={`0 0 ${W} ${H}`}
+      onMouseMove={(e) => setHoverIdx(getIdx(e))}
+      onMouseLeave={() => setHoverIdx(null)}>
+
+      {/* Regime background bands */}
+      {regimeBands && data.map((d, i) => {
+        const rIdx = d[regimeBands.key];
+        if (rIdx == null) return null;
+        const x1 = sx(i), x2 = i < data.length - 1 ? sx(i + 1) : x1 + w / data.length;
+        return <rect key={i} x={x1} y={pd.t} width={Math.max(1, x2 - x1)} height={h} fill={hmmColors[rIdx] || "#333"} opacity={0.06} />;
+      })}
+
+      {/* Grid lines */}
+      {[0, 0.25, 0.5, 0.75, 1].map(f => {
+        const yy = pd.t + h * (1 - f), val = yMin + f * (yMax - yMin);
+        return <g key={f}>
+          <line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke="#262626" />
+          <text x={pd.l - 5} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{fmt(val)}</text>
+        </g>;
+      })}
+
+      {/* Threshold lines */}
+      {thresholds?.map((t, i) => {
+        const yy = sy(t.value);
+        if (yy < pd.t || yy > pd.t + h) return null;
+        return <g key={i}>
+          <line x1={pd.l} x2={W - pd.r} y1={yy} y2={yy} stroke={t.color} strokeWidth={1} strokeDasharray={t.dash || "4,3"} opacity={0.6} />
+          {t.label && <text x={W - pd.r + 3} y={yy + 3} fill={t.color} fontSize={7} fontFamily={mono2}>{t.label}</text>}
+        </g>;
+      })}
+
+      {/* Date labels */}
+      {dateLabels.map(({ i, label }) => (
+        <g key={i}>
+          <line x1={sx(i)} x2={sx(i)} y1={pd.t} y2={pd.t + h} stroke="#1e1e1e" strokeDasharray="2,3" />
+          <text x={sx(i)} y={H - 14} fill={cs.muted} fontSize={7} textAnchor="middle" fontFamily={mono2}>{label}</text>
+        </g>
+      ))}
+
+      {/* Stacked areas or lines */}
+      {stacked ? stackedPaths.map(s => (
+        <path key={s.key} d={s.pathD} fill={s.color} opacity={s.opacity || 0.55} stroke={s.color} strokeWidth={0.5} />
+      )) : lines.map(s => (
+        <polyline key={s.key} points={s.points} fill="none" stroke={s.color}
+          strokeWidth={s.width || 1.5} strokeDasharray={s.dash || "none"} opacity={s.opacity || 0.85} />
+      ))}
+
+      {/* Hover crosshair & dots */}
+      {hoverIdx != null && <>
+        <line x1={sx(hoverIdx)} x2={sx(hoverIdx)} y1={pd.t} y2={pd.t + h} stroke={cs.dim} strokeWidth={0.5} strokeDasharray="3,2" />
+        {!stacked && series.map(s => {
+          const val = data[hoverIdx]?.[s.key];
+          if (val == null) return null;
+          return <circle key={s.key} cx={sx(hoverIdx)} cy={sy(val)} r={3} fill={s.color} stroke={cs.bg} strokeWidth={1.5} />;
+        })}
+      </>}
+
+      {/* Hover tooltip background */}
+      {hPt && <g>
+        <rect x={sx(hoverIdx) + (hoverIdx > data.length * 0.7 ? -130 : 10)} y={pd.t + 2} width={120} height={12 + series.length * 13}
+          rx={3} fill="rgba(22,22,22,0.92)" stroke="#393939" strokeWidth={0.5} />
+        <text x={sx(hoverIdx) + (hoverIdx > data.length * 0.7 ? -124 : 16)} y={pd.t + 12}
+          fill={cs.dim} fontSize={8} fontFamily={mono2}>{hPt.date}</text>
+        {series.map((s, si) => (
+          <text key={s.key} x={sx(hoverIdx) + (hoverIdx > data.length * 0.7 ? -124 : 16)} y={pd.t + 24 + si * 13}
+            fill={s.color} fontSize={8} fontWeight="600" fontFamily={mono2}>
+            {s.label}: {(hPt[s.key] ?? 0).toFixed(stacked ? 1 : 3)}{stacked ? "%" : ""}
+          </text>
+        ))}
+      </g>}
+    </svg>
+  </div>;
+}
+
 function Scatter({ data, cp, w: W = 520, h: H = 320 }) {
   if (!data?.all) return null;
   const pd = { t: 28, r: 28, b: 38, l: 52 }, w = W - pd.l - pd.r, h2 = H - pd.t - pd.b; const pts = data.all;
@@ -4863,108 +5040,105 @@ useEffect(() => {
                 ))}
               </div>}
 
-              {/* ── Regime History Timeline ── */}
+              {/* ── Chart 1: Composite Stress Score + Change-Point Detection ── */}
+              <RegimeLineChart
+                data={tl}
+                title="📈 Composite Stress Score & Change-Point Detection"
+                subtitle="FRED composite z-score (stress level) with BOCPD change-point probability overlay. Background bands show detected regime."
+                series={[
+                  { key: "composite", label: "Stress Score", color: cs.yellow, width: 2 },
+                  { key: "cpProb", label: "CP Probability", color: cs.red, width: 1.5, dash: "4,2" },
+                ]}
+                regimeBands={{ key: "regime" }}
+                thresholds={[
+                  { value: 0, color: cs.dim, label: "0", dash: "2,4" },
+                  { value: 0.2, color: cs.red, label: "20% CP alert", dash: "4,3" },
+                ]}
+                height={220}
+              />
+
+              {/* ── Chart 2: HMM Filtered Probabilities (stacked) ── */}
+              <RegimeLineChart
+                data={tl.map(d => ({
+                  date: d.date,
+                  Bull: (d.p_Bull || 0) * 100,
+                  Euphoria: (d.p_Euphoria || 0) * 100,
+                  Correction: (d.p_Correction || 0) * 100,
+                  Crisis: (d.p_Crisis || 0) * 100,
+                  Recovery: (d.p_Recovery || 0) * 100,
+                }))}
+                title="🎯 HMM Filtered Probabilities"
+                subtitle="Real-time (causal) probability of each regime. Stacked areas sum to 100%. Shows how regime confidence evolves over time."
+                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
+                stacked
+                yDomain={[0, 100]}
+                yFormat={v => `${v.toFixed(0)}%`}
+                height={220}
+              />
+
+              {/* ── Chart 3: Ensemble Probabilities (stacked) ── */}
+              <RegimeLineChart
+                data={tl.map(d => ({
+                  date: d.date,
+                  Bull: (d.e_Bull || 0) * 100,
+                  Euphoria: (d.e_Euphoria || 0) * 100,
+                  Correction: (d.e_Correction || 0) * 100,
+                  Crisis: (d.e_Crisis || 0) * 100,
+                  Recovery: (d.e_Recovery || 0) * 100,
+                }))}
+                title="🔀 Ensemble Probabilities (HMM + BOCPD Fused)"
+                subtitle="After fusing HMM with Bayesian change-point detection. When BOCPD fires, mass shifts from Bull/Euphoria → Correction/Crisis."
+                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
+                stacked
+                yDomain={[0, 100]}
+                yFormat={v => `${v.toFixed(0)}%`}
+                height={220}
+              />
+
+              {/* ── Chart 4: Individual Regime Lines (non-stacked overlay) ── */}
+              <RegimeLineChart
+                data={tl.map(d => ({
+                  date: d.date, regime: d.regime,
+                  Bull: (d.e_Bull || 0) * 100,
+                  Crisis: (d.e_Crisis || 0) * 100,
+                  Correction: (d.e_Correction || 0) * 100,
+                  Recovery: (d.e_Recovery || 0) * 100,
+                  Euphoria: (d.e_Euphoria || 0) * 100,
+                }))}
+                title="📊 Regime Probability Lines (Ensemble)"
+                subtitle="Individual regime probability traces. Crossovers indicate regime transitions. Hover to compare exact values."
+                series={[
+                  { key: "Bull", label: "Bull", color: "#42be65", width: 2 },
+                  { key: "Crisis", label: "Crisis", color: "#ff8389", width: 2 },
+                  { key: "Correction", label: "Correction", color: "#fb923c", width: 1.5 },
+                  { key: "Recovery", label: "Recovery", color: "#60a5fa", width: 1.5 },
+                  { key: "Euphoria", label: "Euphoria", color: "#fbbf24", width: 1, dash: "3,2" },
+                ]}
+                yDomain={[0, 100]}
+                yFormat={v => `${v.toFixed(0)}%`}
+                regimeBands={{ key: "regime" }}
+                height={240}
+              />
+
+              {/* ── Regime Timeline (compact bar) ── */}
               <div style={cardS}>
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📊 Regime History Timeline</div>
-                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 12 }}>Viterbi-decoded regime assignments over FRED history. Each bar = one month.</div>
-                {/* Color-coded timeline */}
-                <div style={{ display: "flex", height: 28, borderRadius: 0, overflow: "hidden", marginBottom: 4 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Regime Timeline (Viterbi Decoded)</div>
+                <div style={{ display: "flex", height: 20, borderRadius: 0, overflow: "hidden", marginBottom: 4 }}>
                   {tl.map((d, i) => (
-                    <div key={i} style={{ flex: 1, background: hmmColors[d.regime] || "#333", opacity: 0.75, borderRight: i < tl.length - 1 ? "1px solid rgba(0,0,0,.3)" : "none", cursor: "default", position: "relative" }} title={`${d.date}: ${HMM_REGIMES[d.regime]?.name || "?"}`} />
+                    <div key={i} style={{ flex: 1, background: hmmColors[d.regime] || "#333", opacity: 0.75, borderRight: i < tl.length - 1 ? "1px solid rgba(0,0,0,.3)" : "none" }} title={`${d.date}: ${HMM_REGIMES[d.regime]?.name || "?"}`} />
                   ))}
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginBottom: 10 }}>
-                  <span>{tl[0]?.date || ""}</span>
-                  <span>{tl[Math.floor(tl.length / 2)]?.date || ""}</span>
-                  <span>{tl[tl.length - 1]?.date || ""}</span>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginBottom: 6 }}>
+                  <span>{tl[0]?.date || ""}</span><span>{tl[tl.length - 1]?.date || ""}</span>
                 </div>
-                {/* Legend */}
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   {HMM_REGIMES.map(r => (
                     <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <div style={{ width: 10, height: 10, borderRadius: 2, background: r.color }} />
                       <span style={{ fontSize: 8, color: cs.dim }}>{r.name}</span>
+                      <span style={{ fontSize: 8, fontFamily: mono2, color: cs.muted }}>{(tl.filter(d => d.regime === r.id).length / tl.length * 100).toFixed(0)}%</span>
                     </div>
                   ))}
-                </div>
-              </div>
-
-              {/* ── Composite Stress Score Chart ── */}
-              <div style={cardS}>
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📈 Composite Stress Score</div>
-                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>FRED-derived weighted z-score composite. Higher = more market stress. Color = regime at that point.</div>
-                <div style={{ height: 120, display: "flex", alignItems: "flex-end", gap: 1 }}>
-                  {tl.map((d, i) => {
-                    const score = d.composite || 0;
-                    const maxAbs = Math.max(2, ...tl.map(t => Math.abs(t.composite || 0)));
-                    const normalized = (score + maxAbs) / (2 * maxAbs); // 0-1 range
-                    const h = Math.max(2, normalized * 110);
-                    return <div key={i} style={{ flex: 1, height: h, background: hmmColors[d.regime] || "#444", opacity: 0.6, borderRadius: "2px 2px 0 0" }} title={`${d.date}: ${score.toFixed(2)}`} />;
-                  })}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
-                  <span>{tl[0]?.date || ""}</span>
-                  <span>Stress →</span>
-                  <span>{tl[tl.length - 1]?.date || ""}</span>
-                </div>
-              </div>
-
-              {/* ── HMM Probability Stacked Area ── */}
-              <div style={cardS}>
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>🎯 HMM Filtered Probabilities</div>
-                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>Real-time (causal) probability of each regime at every timestep. Stacked to sum to 100%.</div>
-                <div style={{ height: 100, display: "flex", gap: 0 }}>
-                  {tl.map((d, i) => (
-                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column-reverse" }}>
-                      {HMM_REGIMES.map((r, ri) => {
-                        const p = d[`p_${r.name}`] || 0;
-                        return <div key={ri} style={{ height: `${p * 100}%`, background: r.color, opacity: 0.7 }} title={`${d.date} ${r.name}: ${(p*100).toFixed(1)}%`} />;
-                      })}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
-                  <span>{tl[0]?.date || ""}</span>
-                  <span>{tl[tl.length - 1]?.date || ""}</span>
-                </div>
-              </div>
-
-              {/* ── Ensemble vs HMM Comparison ── */}
-              <div style={cardS}>
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>🔀 Ensemble Probabilities (HMM + BOCPD Fused)</div>
-                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>Regime probabilities after fusing HMM with Bayesian change-point detection. Stress signals shift mass toward Correction/Crisis.</div>
-                <div style={{ height: 100, display: "flex", gap: 0 }}>
-                  {tl.map((d, i) => (
-                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column-reverse" }}>
-                      {HMM_REGIMES.map((r, ri) => {
-                        const p = d[`e_${r.name}`] || 0;
-                        return <div key={ri} style={{ height: `${p * 100}%`, background: r.color, opacity: 0.7 }} title={`${d.date} ${r.name}: ${(p*100).toFixed(1)}%`} />;
-                      })}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
-                  <span>{tl[0]?.date || ""}</span>
-                  <span>{tl[tl.length - 1]?.date || ""}</span>
-                </div>
-              </div>
-
-              {/* ── Change-Point Detection Chart ── */}
-              <div style={cardS}>
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>⚡ Change-Point Detection (BOCPD)</div>
-                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>Bayesian probability that a regime transition just occurred. Spikes indicate structural breaks in the macro environment.</div>
-                <div style={{ height: 60, display: "flex", alignItems: "flex-end", gap: 1, position: "relative" }}>
-                  {/* Threshold line at 20% */}
-                  <div style={{ position: "absolute", left: 0, right: 0, bottom: "20%", borderTop: "1px dashed rgba(251,191,36,.3)", zIndex: 1 }} />
-                  <div style={{ position: "absolute", right: 2, bottom: "21%", fontSize: 7, color: cs.yellow, zIndex: 1 }}>20% alert</div>
-                  {tl.map((d, i) => {
-                    const cp = d.cpProb || 0;
-                    return <div key={i} style={{ flex: 1, height: `${Math.min(cp * 100, 100)}%`, minHeight: cp > 0.01 ? 1 : 0, background: cp > 0.5 ? cs.red : cp > 0.2 ? cs.yellow : "rgba(96,165,250,.4)", borderRadius: "2px 2px 0 0", opacity: 0.8 }} title={`${d.date}: ${(cp*100).toFixed(1)}%`} />;
-                  })}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
-                  <span>{tl[0]?.date || ""}</span>
-                  <span>{tl[tl.length - 1]?.date || ""}</span>
                 </div>
               </div>
 
