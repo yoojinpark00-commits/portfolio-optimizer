@@ -2095,7 +2095,7 @@ function AiMarkdown({ text }) {
   return <div>{elements}</div>;
 }
 
-const TABS = ["My Portfolio", "Deploy Cash", "Analysis", "Frontier", "AI Advisor", "Backtest"];
+const TABS = ["My Portfolio", "Deploy Cash", "Portfolio Analysis", "Regime Analysis", "Frontier", "AI Advisor", "Backtest"];
 // ═══ MAIN APP ═══
 export default function App() {
   const [etfs, setEtfs] = useState([]);       // {ticker, data, shares, costBasis, mktValue}
@@ -2291,6 +2291,24 @@ export default function App() {
       }
     }
 
+    // ── Train HMM on historical FRED composite scores (backtest-integrated) ──
+    let btHmmModel = null, btHmmFiltered = null, btHmmDates = null, btHmmCPProb = null, btHmmEnsemble = null;
+    if (historicalRegimes) {
+      try {
+        const regEntries = Object.entries(historicalRegimes).sort((a, b) => a[0].localeCompare(b[0]));
+        const scores = regEntries.map(([, r]) => r.score ?? 0);
+        btHmmDates = regEntries.map(([d]) => d);
+        if (scores.length > 30) {
+          setBtProgress("Training 5-state HMM on FRED history...");
+          btHmmModel = hmmTrain(scores, 40);
+          btHmmFiltered = hmmFilter(scores, btHmmModel);
+          btHmmCPProb = runBOCPD(scores);
+          btHmmEnsemble = runEnsemble(btHmmFiltered, btHmmCPProb);
+          setBtProgress(`HMM trained on ${scores.length} months. Fetching ETF prices...`);
+        }
+      } catch (e) { console.warn("Backtest HMM training failed:", e); }
+    }
+
     // Core ETF universe for backtest — focused on uncorrelated categories for better optimization
     // (fewer but more diverse ETFs runs faster AND produces better results than 80+ correlated funds)
     const btETFs = [
@@ -2437,6 +2455,29 @@ export default function App() {
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
             threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) };
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
+
+          // ── HMM ensemble overlay (conservative fusion, same logic as live optimizer) ──
+          if (btHmmEnsemble && btHmmDates) {
+            const hmmIdx = btHmmDates.indexOf(monthKey);
+            if (hmmIdx >= 0 && btHmmEnsemble[hmmIdx]) {
+              const ensProbs = btHmmEnsemble[hmmIdx];
+              const hmmState5 = hmmToState5(ensProbs);
+              const fredState5 = btRegime.state5;
+              const riskOrder = ["strong_risk_off", "mild_risk_off", "neutral", "mild_risk_on", "strong_risk_on"];
+              const fredRisk = riskOrder.indexOf(fredState5);
+              const hmmRisk = riskOrder.indexOf(hmmState5);
+              if (fredRisk >= 0 && hmmRisk >= 0) {
+                btRegime.state5 = riskOrder[Math.min(fredRisk, hmmRisk)];
+              }
+              btRegime.hmmState5 = hmmState5;
+              btRegime.hmmProbs = ensProbs;
+              // Detect regime change from HMM perspective too
+              if (hmmIdx > 0 && btHmmEnsemble[hmmIdx - 1]) {
+                const prevHmmState = hmmToState5(btHmmEnsemble[hmmIdx - 1]);
+                if (prevHmmState !== hmmState5) regimeChanged = true;
+              }
+            }
+          }
         }
       }
       if (!(isFirstAllocation || regimeChanged || mMonth % 3 === 0)) { continue; } // Quarterly (Jan/Apr/Jul/Oct) + regime changes
@@ -2785,6 +2826,15 @@ export default function App() {
         acceleration: yearEndAcceleration,
         duration: yearEndDuration,
         transition: yearEndTransition,
+        hmmState5: (() => {
+          if (!btHmmEnsemble || !btHmmDates) return null;
+          for (let m = 12; m >= 1; m--) {
+            const mk = `${year}-${String(m).padStart(2, "0")}`;
+            const hIdx = btHmmDates.indexOf(mk);
+            if (hIdx >= 0 && btHmmEnsemble[hIdx]) return hmmToState5(btHmmEnsemble[hIdx]);
+          }
+          return null;
+        })(),
       });
     }
 
@@ -2828,7 +2878,7 @@ export default function App() {
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
-      regimeSource: historicalRegimes ? "FRED (12-series, 5-state, daily EMA)" : "Proxy (SPY momentum/vol)",
+      regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (5-state, BOCPD)" : "FRED (12-series, 5-state, daily EMA)") : "Proxy (SPY momentum/vol)",
       regimeDurationModel: regimeDurModel ? true : false,
       tax: {
         totalPaid: Math.round(totalTaxPaid),
@@ -2914,6 +2964,22 @@ export default function App() {
           regJson.monthlyRegimes.forEach(r => { simHistRegimes[r.date] = r; });
         }
       } catch (e) { /* proceed without regime */ }
+    }
+
+    // Train HMM once for simulation (same model reused across all 100 sims)
+    let simHmmEnsemble = null, simHmmDates = null;
+    if (simHistRegimes) {
+      try {
+        const entries = Object.entries(simHistRegimes).sort((a, b) => a[0].localeCompare(b[0]));
+        const scores = entries.map(([, r]) => r.score ?? 0);
+        simHmmDates = entries.map(([d]) => d);
+        if (scores.length > 30) {
+          const model = hmmTrain(scores, 30); // fewer iterations for speed
+          const filtered = hmmFilter(scores, model);
+          const cp = runBOCPD(scores);
+          simHmmEnsemble = runEnsemble(filtered, cp);
+        }
+      } catch (e) { /* proceed without HMM */ }
     }
 
     // ── Run N simulations ──
@@ -3004,6 +3070,16 @@ export default function App() {
               if (prev && prev.regime === sRegime3) sDur++; else break;
             }
             simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null };
+            // HMM overlay (conservative fusion)
+            if (simHmmEnsemble && simHmmDates) {
+              const hIdx = simHmmDates.indexOf(monthKey);
+              if (hIdx >= 0 && simHmmEnsemble[hIdx]) {
+                const hmmS5 = hmmToState5(simHmmEnsemble[hIdx]);
+                const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
+                const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
+                if (fR >= 0 && hR >= 0) simRegime.state5 = ro[Math.min(fR, hR)];
+              }
+            }
           }
         }
         const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, simRegime, 100);
@@ -4243,8 +4319,8 @@ useEffect(() => {
           </div>}
         </div>}
 
-        {/* ════ ANALYSIS ════ */}
-        {tab === "Analysis" && <div>
+        {/* ════ PORTFOLIO ANALYSIS ════ */}
+        {tab === "Portfolio Analysis" && <div>
           {!metrics ? <div style={{ textAlign: "center", padding: 45, color: cs.muted }}><div style={{ fontSize: 24, marginBottom: 5 }}>📈</div><div style={{ fontSize: 11 }}>Add holdings first</div></div>
             : <>
               <div style={{ display: "flex", justifyContent: "center", gap: 18, flexWrap: "wrap", padding: "14px 0 18px", borderBottom: "1px solid #262626", marginBottom: 14 }}>
@@ -4716,6 +4792,228 @@ useEffect(() => {
                     </tr>)}</tbody></table>
                 </div>
               </div>}
+
+            </>}
+        </div>}
+
+        {/* ════ REGIME ANALYSIS ════ */}
+        {tab === "Regime Analysis" && <div>
+
+          {/* ── Regime History Charts (HMM-based) ── */}
+          {hmmResult && (() => {
+            const tl = hmmResult.timeline || [];
+            const h = hmmResult;
+            const ensR = h.currentEnsemble;
+            const hmmR = h.currentHMM;
+            const agree = h.agreement;
+            const state5Colors = { strong_risk_on: "#42be65", mild_risk_on: "#6fdc8c", neutral: "#ffab91", mild_risk_off: "#ff832b", strong_risk_off: "#ff8389" };
+            const hmmColors = ["#42be65", "#fbbf24", "#fb923c", "#ff8389", "#60a5fa"];
+
+            return <>
+              {/* Current Regime Banner */}
+              <div style={{ ...cardS, background: `${ensR.color}08`, borderColor: `${ensR.color}25`, marginBottom: 0 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 16, alignItems: "center" }}>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 2, textTransform: "uppercase" }}>HMM Classification</div>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: hmmR.color, marginTop: 4 }}>{hmmR.name}</div>
+                    <div style={{ fontSize: 11, color: cs.dim, fontFamily: mono2 }}>{(hmmR.probs[hmmR.idx] * 100).toFixed(1)}% confidence</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <div style={{ width: 48, height: 48, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: agree ? "rgba(66,190,101,.1)" : "rgba(248,113,113,.1)", border: `2px solid ${agree ? cs.green : cs.red}40` }}>
+                      <span style={{ fontSize: 8, fontWeight: 700, color: agree ? cs.green : cs.red }}>{agree ? "AGREE" : "SPLIT"}</span>
+                    </div>
+                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 4 }}>HMM vs Ensemble</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 2, textTransform: "uppercase" }}>Ensemble Consensus</div>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: ensR.color, marginTop: 4 }}>{ensR.name}</div>
+                    <div style={{ fontSize: 11, color: cs.dim, fontFamily: mono2 }}>{(ensR.probs[ensR.idx] * 100).toFixed(1)}% confidence</div>
+                  </div>
+                </div>
+                {/* 5-regime probability bars */}
+                <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
+                  {HMM_REGIMES.map((r, i) => (
+                    <div key={i} style={{ flex: 1 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                        <span style={{ fontSize: 7, color: r.color, fontWeight: 600, letterSpacing: 0.5 }}>{r.name}</span>
+                        <span style={{ fontSize: 8, fontFamily: mono2, color: i === ensR.idx ? r.color : cs.dim }}>{(ensR.probs[i] * 100).toFixed(1)}%</span>
+                      </div>
+                      <div style={{ height: 4, background: "#262626", borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${ensR.probs[i] * 100}%`, background: r.color, borderRadius: 2, transition: "width .5s" }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Optimizer fusion note */}
+                <div style={{ marginTop: 10, padding: "6px 10px", borderRadius: 0, background: "#1a1a1a", fontSize: 9 }}>
+                  <span style={{ color: cs.dim }}>Optimizer → </span>
+                  <span style={{ color: state5Colors[h.state5] || cs.yellow, fontWeight: 700 }}>{h.state5?.replace(/_/g, " ").toUpperCase()}</span>
+                  <span style={{ color: cs.dim }}> · Conservative fusion uses the more defensive of FRED threshold vs HMM ensemble</span>
+                </div>
+              </div>
+
+              {/* Alerts */}
+              {h.alerts?.length > 0 && <div style={{ ...cardS, padding: "10px 14px", marginBottom: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 8 }}>⚡ Active Alerts</div>
+                {h.alerts.map((alert, i) => (
+                  <div key={i} style={{ padding: "6px 10px", borderRadius: 0, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, background: alert.severity === "high" ? "rgba(248,113,113,.06)" : "rgba(251,191,36,.06)", borderLeft: `3px solid ${alert.severity === "high" ? cs.red : cs.yellow}` }}>
+                    <span style={{ fontSize: 9, fontWeight: 600, color: alert.severity === "high" ? cs.red : cs.yellow, minWidth: 80 }}>{alert.source}</span>
+                    <span style={{ fontSize: 9, color: cs.dim }}>{alert.message}</span>
+                  </div>
+                ))}
+              </div>}
+
+              {/* ── Regime History Timeline ── */}
+              <div style={cardS}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📊 Regime History Timeline</div>
+                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 12 }}>Viterbi-decoded regime assignments over FRED history. Each bar = one month.</div>
+                {/* Color-coded timeline */}
+                <div style={{ display: "flex", height: 28, borderRadius: 0, overflow: "hidden", marginBottom: 4 }}>
+                  {tl.map((d, i) => (
+                    <div key={i} style={{ flex: 1, background: hmmColors[d.regime] || "#333", opacity: 0.75, borderRight: i < tl.length - 1 ? "1px solid rgba(0,0,0,.3)" : "none", cursor: "default", position: "relative" }} title={`${d.date}: ${HMM_REGIMES[d.regime]?.name || "?"}`} />
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginBottom: 10 }}>
+                  <span>{tl[0]?.date || ""}</span>
+                  <span>{tl[Math.floor(tl.length / 2)]?.date || ""}</span>
+                  <span>{tl[tl.length - 1]?.date || ""}</span>
+                </div>
+                {/* Legend */}
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  {HMM_REGIMES.map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: 2, background: r.color }} />
+                      <span style={{ fontSize: 8, color: cs.dim }}>{r.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── Composite Stress Score Chart ── */}
+              <div style={cardS}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📈 Composite Stress Score</div>
+                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>FRED-derived weighted z-score composite. Higher = more market stress. Color = regime at that point.</div>
+                <div style={{ height: 120, display: "flex", alignItems: "flex-end", gap: 1 }}>
+                  {tl.map((d, i) => {
+                    const score = d.composite || 0;
+                    const maxAbs = Math.max(2, ...tl.map(t => Math.abs(t.composite || 0)));
+                    const normalized = (score + maxAbs) / (2 * maxAbs); // 0-1 range
+                    const h = Math.max(2, normalized * 110);
+                    return <div key={i} style={{ flex: 1, height: h, background: hmmColors[d.regime] || "#444", opacity: 0.6, borderRadius: "2px 2px 0 0" }} title={`${d.date}: ${score.toFixed(2)}`} />;
+                  })}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
+                  <span>{tl[0]?.date || ""}</span>
+                  <span>Stress →</span>
+                  <span>{tl[tl.length - 1]?.date || ""}</span>
+                </div>
+              </div>
+
+              {/* ── HMM Probability Stacked Area ── */}
+              <div style={cardS}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>🎯 HMM Filtered Probabilities</div>
+                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>Real-time (causal) probability of each regime at every timestep. Stacked to sum to 100%.</div>
+                <div style={{ height: 100, display: "flex", gap: 0 }}>
+                  {tl.map((d, i) => (
+                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column-reverse" }}>
+                      {HMM_REGIMES.map((r, ri) => {
+                        const p = d[`p_${r.name}`] || 0;
+                        return <div key={ri} style={{ height: `${p * 100}%`, background: r.color, opacity: 0.7 }} title={`${d.date} ${r.name}: ${(p*100).toFixed(1)}%`} />;
+                      })}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
+                  <span>{tl[0]?.date || ""}</span>
+                  <span>{tl[tl.length - 1]?.date || ""}</span>
+                </div>
+              </div>
+
+              {/* ── Ensemble vs HMM Comparison ── */}
+              <div style={cardS}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>🔀 Ensemble Probabilities (HMM + BOCPD Fused)</div>
+                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>Regime probabilities after fusing HMM with Bayesian change-point detection. Stress signals shift mass toward Correction/Crisis.</div>
+                <div style={{ height: 100, display: "flex", gap: 0 }}>
+                  {tl.map((d, i) => (
+                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column-reverse" }}>
+                      {HMM_REGIMES.map((r, ri) => {
+                        const p = d[`e_${r.name}`] || 0;
+                        return <div key={ri} style={{ height: `${p * 100}%`, background: r.color, opacity: 0.7 }} title={`${d.date} ${r.name}: ${(p*100).toFixed(1)}%`} />;
+                      })}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
+                  <span>{tl[0]?.date || ""}</span>
+                  <span>{tl[tl.length - 1]?.date || ""}</span>
+                </div>
+              </div>
+
+              {/* ── Change-Point Detection Chart ── */}
+              <div style={cardS}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>⚡ Change-Point Detection (BOCPD)</div>
+                <div style={{ fontSize: 9, color: cs.dim, marginBottom: 10 }}>Bayesian probability that a regime transition just occurred. Spikes indicate structural breaks in the macro environment.</div>
+                <div style={{ height: 60, display: "flex", alignItems: "flex-end", gap: 1, position: "relative" }}>
+                  {/* Threshold line at 20% */}
+                  <div style={{ position: "absolute", left: 0, right: 0, bottom: "20%", borderTop: "1px dashed rgba(251,191,36,.3)", zIndex: 1 }} />
+                  <div style={{ position: "absolute", right: 2, bottom: "21%", fontSize: 7, color: cs.yellow, zIndex: 1 }}>20% alert</div>
+                  {tl.map((d, i) => {
+                    const cp = d.cpProb || 0;
+                    return <div key={i} style={{ flex: 1, height: `${Math.min(cp * 100, 100)}%`, minHeight: cp > 0.01 ? 1 : 0, background: cp > 0.5 ? cs.red : cp > 0.2 ? cs.yellow : "rgba(96,165,250,.4)", borderRadius: "2px 2px 0 0", opacity: 0.8 }} title={`${d.date}: ${(cp*100).toFixed(1)}%`} />;
+                  })}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted, marginTop: 4 }}>
+                  <span>{tl[0]?.date || ""}</span>
+                  <span>{tl[tl.length - 1]?.date || ""}</span>
+                </div>
+              </div>
+
+              {/* ── Transition Matrix + Durations ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={cardS}>
+                  <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 8 }}>Transition Matrix (learned)</div>
+                  <div style={{ display: "grid", gridTemplateColumns: `52px repeat(5, 1fr)`, gap: 2, fontSize: 8 }}>
+                    <div />
+                    {HMM_REGIMES.map(r => <div key={r.id} style={{ textAlign: "center", color: r.color, fontWeight: 600, padding: 2 }}>{r.name.slice(0, 4)}</div>)}
+                    {h.transMatrix.map((row, i) => (
+                      <React.Fragment key={i}>
+                        <div style={{ color: HMM_REGIMES[i].color, fontWeight: 600, display: "flex", alignItems: "center", fontSize: 7 }}>{HMM_REGIMES[i].name.slice(0, 4)}</div>
+                        {row.map((p, j) => (
+                          <div key={j} style={{ textAlign: "center", padding: 3, fontFamily: mono2, fontSize: 8, background: i === j ? `${HMM_REGIMES[i].color}15` : `rgba(255,255,255,${Math.min(p / 0.3, 1) * 0.08})`, color: i === j ? HMM_REGIMES[i].color : cs.dim, fontWeight: i === j ? 700 : 400, borderRadius: 2 }}>{(p * 100).toFixed(1)}</div>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+                <div style={cardS}>
+                  <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 8 }}>Expected Durations & Forecast</div>
+                  {HMM_REGIMES.map((r, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, padding: "3px 0" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
+                        <span style={{ fontSize: 9, color: r.color }}>{r.name}</span>
+                      </div>
+                      <span style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{h.expDurations[i].toFixed(1)}m</span>
+                      <span style={{ fontSize: 8, fontFamily: mono2, color: cs.dim }}>→ 6m: {(h.forecast[5]?.[i] * 100 || 0).toFixed(1)}%</span>
+                    </div>
+                  ))}
+                  <div style={{ marginTop: 8, padding: "6px 8px", borderRadius: 0, background: "#1a1a1a", fontSize: 8, color: cs.dim }}>
+                    Forecast propagates ensemble probabilities through learned transition matrix. Expected durations = 1/(1-P(self-transition)).
+                  </div>
+                </div>
+              </div>
+            </>;
+          })()}
+
+          {!hmmResult && !hmmLoading && <div style={{ ...cardS, textAlign: "center", padding: 20 }}>
+            <div style={{ fontSize: 24, marginBottom: 8 }}>🧠</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>Probabilistic regime charts appear here once HMM training completes.</div>
+            <button onClick={runHmmAnalysis} style={{ padding: "8px 16px", borderRadius: 0, border: "1px solid rgba(96,165,250,.2)", background: "rgba(96,165,250,.08)", color: "#60a5fa", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Train HMM Now</button>
+          </div>}
+
+          {hmmLoading && <div style={{ ...cardS, textAlign: "center", padding: 24 }}>
+            <div style={{ fontSize: 11, color: "#60a5fa" }}>Training 5-state Gaussian HMM (Baum-Welch EM)...</div>
+          </div>}
 
               {/* ── Regime Analysis ── */}
               <div style={cardS}>
@@ -5212,130 +5510,6 @@ useEffect(() => {
                 })()}
               </div>
 
-              {/* ── HMM Regime Engine (Probabilistic) ── */}
-              <div style={cardS}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700 }}>🧠 Probabilistic Regime Engine</div>
-                    <div style={{ fontSize: 9, color: cs.dim, marginTop: 2 }}>5-State Gaussian HMM + Bayesian Change-Point Detection + Ensemble Fusion. Trained on FRED composite score history.</div>
-                  </div>
-                  <button onClick={runHmmAnalysis} disabled={hmmLoading} style={{ padding: "6px 12px", borderRadius: 0, border: "1px solid rgba(96,165,250,.2)", background: "rgba(96,165,250,.08)", color: "#60a5fa", fontSize: 9, fontWeight: 600, cursor: hmmLoading ? "wait" : "pointer", fontFamily: "inherit" }}>
-                    {hmmLoading ? "Training..." : hmmResult ? "⟳ Retrain" : "Run HMM"}
-                  </button>
-                </div>
-
-                {!hmmResult && !hmmLoading && <div style={{ textAlign: "center", padding: 18, color: cs.muted, fontSize: 10, border: "1px dashed #393939" }}>
-                  Auto-runs on app launch. Trains a 5-state Gaussian HMM (Baum-Welch EM) on FRED composite scores with BOCPD change-point detection and ensemble fusion.
-                </div>}
-
-                {hmmLoading && <div style={{ textAlign: "center", padding: 18, color: "#60a5fa", fontSize: 10 }}>Training Gaussian HMM (Baum-Welch EM)...</div>}
-
-                {hmmResult && (() => {
-                  const h = hmmResult;
-                  const hmmR = h.currentHMM;
-                  const ensR = h.currentEnsemble;
-                  const agree = h.agreement;
-
-                  return <div>
-                    {/* HMM vs Ensemble comparison */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 12, marginBottom: 12, padding: "14px 16px", borderRadius: 0, background: `${ensR.color}08`, border: `1px solid ${ensR.color}25` }}>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 1 }}>HMM CLASSIFICATION</div>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: hmmR.color, marginTop: 4 }}>{hmmR.name}</div>
-                        <div style={{ fontSize: 10, color: cs.dim, fontFamily: mono2 }}>{(hmmR.probs[hmmR.idx] * 100).toFixed(1)}%</div>
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                        <div style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: agree ? "rgba(66,190,101,.1)" : "rgba(248,113,113,.1)", border: `2px solid ${agree ? cs.green : cs.red}40` }}>
-                          <span style={{ fontSize: 8, fontWeight: 700, color: agree ? cs.green : cs.red }}>{agree ? "AGREE" : "SPLIT"}</span>
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 1 }}>ENSEMBLE CONSENSUS</div>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: ensR.color, marginTop: 4 }}>{ensR.name}</div>
-                        <div style={{ fontSize: 10, color: cs.dim, fontFamily: mono2 }}>{(ensR.probs[ensR.idx] * 100).toFixed(1)}%</div>
-                      </div>
-                    </div>
-
-                    {/* Optimizer fusion note */}
-                    <div style={{ padding: "8px 12px", borderRadius: 0, background: "#1c1c1c", marginBottom: 12, fontSize: 9 }}>
-                      <span style={{ color: cs.dim }}>Optimizer state: </span>
-                      <span style={{ color: "#60a5fa", fontWeight: 600 }}>{h.state5?.replace(/_/g, " ").toUpperCase()}</span>
-                      <span style={{ color: cs.dim }}> · Conservative fusion uses the more defensive of FRED vs HMM</span>
-                    </div>
-
-                    {/* Probability bars */}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 12 }}>
-                      {HMM_REGIMES.map((r, i) => (
-                        <div key={i} style={{ padding: "8px 6px", textAlign: "center", borderRadius: 0, background: i === ensR.idx ? `${r.color}12` : "#1c1c1c", border: `1px solid ${i === ensR.idx ? r.color + "30" : "#2a2a2a"}` }}>
-                          <div style={{ fontSize: 7, color: r.color, fontWeight: 600, marginBottom: 4 }}>{r.name}</div>
-                          <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: i === ensR.idx ? r.color : cs.dim }}>{(ensR.probs[i] * 100).toFixed(1)}%</div>
-                          <div style={{ height: 3, background: "#262626", borderRadius: 2, marginTop: 4, overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${ensR.probs[i] * 100}%`, background: r.color, borderRadius: 2 }} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Alerts */}
-                    {h.alerts.length > 0 && <div style={{ marginBottom: 12 }}>
-                      {h.alerts.map((alert, i) => (
-                        <div key={i} style={{ padding: "6px 10px", borderRadius: 0, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, background: alert.severity === "high" ? "rgba(248,113,113,.06)" : "rgba(251,191,36,.06)", borderLeft: `3px solid ${alert.severity === "high" ? cs.red : cs.yellow}` }}>
-                          <span style={{ fontSize: 9, fontWeight: 600, color: alert.severity === "high" ? cs.red : cs.yellow, minWidth: 80 }}>{alert.source}</span>
-                          <span style={{ fontSize: 9, color: cs.dim }}>{alert.message}</span>
-                        </div>
-                      ))}
-                    </div>}
-
-                    {/* Transition matrix (compact) */}
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Transition Matrix (learned)</div>
-                      <div style={{ display: "grid", gridTemplateColumns: `60px repeat(5, 1fr)`, gap: 2, fontSize: 8 }}>
-                        <div />
-                        {HMM_REGIMES.map(r => <div key={r.id} style={{ textAlign: "center", color: r.color, fontWeight: 600, padding: 3 }}>{r.name.slice(0, 4)}</div>)}
-                        {h.transMatrix.map((row, i) => (
-                          <React.Fragment key={i}>
-                            <div style={{ color: HMM_REGIMES[i].color, fontWeight: 600, display: "flex", alignItems: "center", fontSize: 8 }}>{HMM_REGIMES[i].name.slice(0, 4)}</div>
-                            {row.map((p, j) => (
-                              <div key={j} style={{ textAlign: "center", padding: 3, fontFamily: mono2, background: i === j ? `${HMM_REGIMES[i].color}15` : `rgba(255,255,255,${Math.min(p / 0.3, 1) * 0.08})`, color: i === j ? HMM_REGIMES[i].color : cs.dim, fontWeight: i === j ? 700 : 400, borderRadius: 2 }}>{(p * 100).toFixed(1)}</div>
-                            ))}
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Expected durations & forecast */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                      <div style={{ padding: "10px 12px", borderRadius: 0, background: "#1c1c1c" }}>
-                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>Expected Duration (months)</div>
-                        {HMM_REGIMES.map((r, i) => (
-                          <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                            <span style={{ fontSize: 9, color: r.color }}>{r.name}</span>
-                            <span style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{h.expDurations[i].toFixed(1)}m</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ padding: "10px 12px", borderRadius: 0, background: "#1c1c1c" }}>
-                        <div style={{ fontSize: 9, fontWeight: 600, color: cs.dim, marginBottom: 6 }}>12-Month Forecast</div>
-                        {(() => {
-                          const fc6 = h.forecast[5] || h.forecast[h.forecast.length - 1];
-                          const fc12 = h.forecast[h.forecast.length - 1];
-                          return <>
-                            <div style={{ fontSize: 8, color: cs.dim, marginBottom: 4 }}>+6 months:</div>
-                            {HMM_REGIMES.map((r, i) => (
-                              <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                                <span style={{ fontSize: 8, color: r.color }}>{r.name}</span>
-                                <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>{(fc6[i] * 100).toFixed(1)}%</span>
-                              </div>
-                            ))}
-                          </>;
-                        })()}
-                      </div>
-                    </div>
-                  </div>;
-                })()}
-              </div>
-
-            </>}
         </div>}
 
         {/* ════ FRONTIER ════ */}
@@ -5595,6 +5769,7 @@ useEffect(() => {
                                 {a.duration > 0 && <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Duration: <span style={{ color: cs.text, fontWeight: 600 }}>{a.duration}m</span></span>}
                                 {a.transition && <span style={{ fontSize: 9, fontFamily: mono2, color: cs.dim }}>Transition: <span style={{ color: cs.blue, fontWeight: 600 }}>{a.transition}</span></span>}
                                 {a.acceleration != null && <span style={{ fontSize: 9, fontFamily: mono2, color: a.acceleration > 0.1 ? cs.red : a.acceleration < -0.1 ? cs.green : cs.dim }}>Accel: {a.acceleration > 0 ? "+" : ""}{a.acceleration.toFixed(2)} {a.acceleration < -0.1 ? "↓ improving" : a.acceleration > 0.1 ? "↑ deteriorating" : "→ stable"}</span>}
+                                {a.hmmState5 && <span style={{ fontSize: 9, fontFamily: mono2, color: "#60a5fa" }}>HMM: <span style={{ fontWeight: 600 }}>{a.hmmState5.replace(/_/g, " ")}</span>{a.hmmState5 !== a.state5 ? " ⚡" : " ✓"}</span>}
                                 {a.transition && (() => {
                                   const [from, to] = a.transition.includes("→") ? a.transition.split("→") : [null, null];
                                   if (from === "bear" && (to === "bull" || to === "neutral") && a.duration >= 2 && a.duration <= 8)
