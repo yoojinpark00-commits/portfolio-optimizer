@@ -806,6 +806,48 @@ const DEFENSIVE_CATS = new Set(["US Bond","US Treasury","US Corp Bond","Intl Bon
 const AGGRESSIVE_CATS = new Set(["US Growth","US Small Cap","US Mid Cap","Emerging Mkts","Sector Tech","Sector Consumer","Sector Comms","Sector Finance","Factor Momentum",
   "Tech-Semi","Tech-Software","Tech-Internet","Tech-Hardware","Tech-Cyber","Consumer-Disc","Consumer-Auto","Fin-Bank","Fin-Payments","Health-Biotech"]);
 
+// ── Macro-Sector mapping for concentration limits ──
+// Maps ETF categories to broad macro-sectors to prevent over-concentration
+const MACRO_SECTOR_MAP = {
+  "US Large Cap": "equity-core", "US Total Mkt": "equity-core", "US Value": "equity-core",
+  "US Growth": "equity-growth", "Sector Tech": "equity-growth", "Sector Comms": "equity-growth", "Factor Momentum": "equity-growth",
+  "US Small Cap": "equity-satellite", "US Mid Cap": "equity-satellite", "US Dividend": "equity-satellite", "Factor Quality": "equity-satellite", "Factor LowVol": "equity-satellite",
+  "Sector Health": "sector-defensive", "Sector Utilities": "sector-defensive", "Sector Consumer": "sector-cyclical", "Sector Finance": "sector-cyclical",
+  "Sector Energy": "sector-cyclical", "Sector Indust": "sector-cyclical", "Sector Materials": "sector-cyclical", "Sector RE": "sector-cyclical",
+  "International": "intl", "Intl Developed": "intl", "Emerging Mkts": "intl-em",
+  "US Bond": "fixed-income", "US Treasury": "fixed-income", "US Corp Bond": "fixed-income", "US High Yield": "fixed-income", "Intl Bond": "fixed-income",
+  "Commodity": "alternatives",
+};
+
+// ── Category-level skewness estimates for CVaR computation ──
+// Negative skew = fat left tail (crash-prone), positive = fat right tail
+const CATEGORY_SKEW = {
+  "US Growth": -0.45, "Sector Tech": -0.50, "Sector Comms": -0.40, "Factor Momentum": -0.55,
+  "US Small Cap": -0.35, "Emerging Mkts": -0.60, "US Mid Cap": -0.30,
+  "US Large Cap": -0.25, "US Total Mkt": -0.25, "US Value": -0.15, "US Dividend": -0.10,
+  "Sector Health": -0.20, "Sector Finance": -0.40, "Sector Energy": -0.50,
+  "Sector Consumer": -0.30, "Sector Indust": -0.25, "Sector Utilities": 0.05,
+  "US Bond": 0.15, "US Treasury": 0.25, "US Corp Bond": 0.10, "Intl Bond": 0.05,
+  "Commodity": -0.10, "Factor LowVol": 0.0, "Factor Quality": -0.15,
+};
+
+/**
+ * Cornish-Fisher CVaR (Expected Shortfall) at 95% confidence.
+ * Adjusts for skewness to capture true tail risk beyond parametric VaR.
+ * @param {number} vol - annualized portfolio volatility (%)
+ * @param {number} skew - portfolio skewness (negative = fatter left tail)
+ * @returns {number} CVaR as annualized percentage
+ */
+function computeCVaR(vol, skew = -0.3) {
+  const z = 1.645; // 95% quantile
+  // Cornish-Fisher expansion for skewed distributions
+  const zCF = z + (z * z - 1) * skew / 6;
+  // CVaR ≈ E[loss | loss > VaR] ≈ σ × φ(zCF) / (1 - Φ(zCF))
+  // Simplified: CVaR ≈ VaR × (1 + 0.4 × |skew|) for moderate skewness
+  const cvar = vol * zCF * (1 + 0.2 * Math.abs(skew));
+  return Math.max(cvar, vol * 1.645); // floor at parametric VaR
+}
+
 // ── US State Capital Gains Tax Rates (2024/2025) ──
 // Most states tax capital gains as ordinary income; these are the top marginal rates
 const STATE_TAX_RATES = {
@@ -1591,8 +1633,13 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const adjRet = new Float64Array(n), volArr = new Float64Array(n), isLev = new Uint8Array(n);
   // Pre-compute each candidate's correlation with SPY (US Large Cap category)
   const spyCorr = new Float64Array(n);
+  // Pre-compute skewness and macro-sector for each candidate
+  const skewArr = new Float64Array(n);
+  const macroSectors = new Array(n);
   for (let i = 0; i < n; i++) {
     spyCorr[i] = gc(candidates[i].c, "US Large Cap");
+    skewArr[i] = CATEGORY_SKEW[candidates[i].c] ?? -0.25;
+    macroSectors[i] = MACRO_SECTOR_MAP[candidates[i].c] || "other";
   }
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
@@ -1602,6 +1649,14 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     adjRet[i] = baseRet;
     volArr[i] = c.v / 100;
     isLev[i] = (c.lev && Math.abs(c.lev) > 1) ? 1 : 0;
+  }
+
+  // ── Momentum crash filter: dampen extreme momentum when crowded ──
+  let extremeMomCount = 0;
+  for (let i = 0; i < n; i++) { if (adjRet[i] > 18) extremeMomCount++; }
+  if (extremeMomCount / n > 0.4) {
+    const momDampen = 0.85;
+    for (let i = 0; i < n; i++) { if (adjRet[i] > 18) adjRet[i] *= momDampen; }
   }
 
   // ── Pre-compute factor-aware returns (Black-Litterman blend if factor scores available) ──
@@ -1807,6 +1862,18 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     }
     if (hadStockViolation) continue; // skip this iteration entirely
 
+    // ── SECTOR CONCENTRATION: hard reject if any macro-sector exceeds 60% ──
+    const sectorWts = {};
+    let maxSectorWt = 0;
+    for (let i = 0; i < n; i++) {
+      const wt = alloc[i] / (deployAmt || 1);
+      if (wt < 0.01) continue;
+      const sec = macroSectors[i];
+      sectorWts[sec] = (sectorWts[sec] || 0) + wt;
+      if (sectorWts[sec] > maxSectorWt) maxSectorWt = sectorWts[sec];
+    }
+    if (maxSectorWt > 0.60) continue; // reject over-concentrated portfolios
+
     // Position count scoring: reward 4-7 sweet spot
     let divScore;
     if (activeCount === 3) divScore = -0.02;      // borderline — slight penalty
@@ -1822,6 +1889,26 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const divAdj = divScore + concPenalty;
     // ── Max drawdown estimate: VaR95 × √2 approximates annual max drawdown ──
     const estMaxDD = var95 * 1.41;
+
+    // ── CVaR / Expected Shortfall: tail-risk-aware scoring ──
+    let wtdSkew = 0;
+    for (let i = 0; i < n; i++) wtdSkew += (alloc[i] / (deployAmt || 1)) * skewArr[i];
+    const cvar = computeCVaR(vol, wtdSkew);
+    const cvarPenalty = -0.03 * Math.max(0, cvar - 25); // penalize CVaR > 25%
+
+    // ── Tail risk penalty: leverage + EM + high-vol concentration ──
+    let emWeight = 0, highVolWeight = 0;
+    for (let i = 0; i < n; i++) {
+      const wt = alloc[i] / (deployAmt || 1);
+      if (macroSectors[i] === "intl-em") emWeight += wt;
+      if (candidates[i].v > 25) highVolWeight += wt;
+    }
+    const tailRisk = levExposure * 0.15 + (emWeight > 0.20 ? (emWeight - 0.20) * 0.3 : 0) + highVolWeight * 0.08;
+    const tailRiskPenalty = -tailRisk * 0.08;
+
+    // ── Sector concentration soft penalty: progressive above 40% ──
+    const sectorConcPenalty = maxSectorWt > 0.40 ? -0.05 * (maxSectorWt - 0.40) : 0;
+
     // ── SPY overlap penalty: if portfolio is >85% correlated with SPY, you should just buy SPY ──
     let wtdSpyCorr = 0;
     for (let i = 0; i < n; i++) wtdSpyCorr += (alloc[i] / (deployAmt || 1)) * spyCorr[i];
@@ -1839,6 +1926,9 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // ── Dynamic vol targeting: scale expected return by vol scale factor ──
     const dynRet = ret * dynVolScale;
 
+    // Combined new penalties
+    const newPenalties = cvarPenalty + tailRiskPenalty + sectorConcPenalty;
+
     if (target === "risk_parity" && rpWeights) {
       // Risk parity objective: minimize distance from equal-risk-contribution weights
       let rpDist = 0;
@@ -1846,14 +1936,14 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
         const actual = alloc[i] / (deployAmt || 1);
         rpDist += (actual - rpWeights[i]) ** 2;
       }
-      sc = -rpDist * 100 + sh * 0.1 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty;
-    } else if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
-    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
+      sc = -rpDist * 100 + sh * 0.1 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + newPenalties;
+    } else if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
+    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
     else if (target === "max_return") {
       const ddPenalty = srMode === "var" ? -0.08 * estMaxDD : srMode === "vol2" ? -0.04 * vol : -0.01 * vol;
-      sc = dynRet * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
+      sc = dynRet * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
     }
-    else sc = sh * .5 + dynRet * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
+    else sc = sh * .5 + dynRet * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
@@ -1934,13 +2024,13 @@ function genFrontier(existing, cash, totalVal, candidates) {
 
 // ═══ UI COMPONENTS ═══
 const mono2 = "'IBM Plex Mono','SF Mono',monospace"; const sans2 = "'IBM Plex Sans','Inter',sans-serif";
-const cs = { bg: "#161616", card: "#262626", border: "#393939", muted: "#6f6f6f", dim: "#8d8d8d", text: "#f4f4f4", green: "#42be65", blue: "#78a9ff", pink: "#ff7eb6", yellow: "#ffab91", purple: "#be95ff", red: "#ff8389" };
-const inpS = { background: "#262626", border: "1px solid #393939", borderRadius: 0, color: cs.text, padding: "7px 9px", fontSize: 11, fontFamily: mono2, outline: "none", width: "100%", boxSizing: "border-box" };
-const cardS = { background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 0, padding: 16, marginBottom: 14 };
+const cs = { bg: "#161616", card: "#1e1e1e", card2: "#262626", border: "#333333", muted: "#6f6f6f", dim: "#8d8d8d", text: "#f4f4f4", subtle: "rgba(255,255,255,.03)", green: "#42be65", blue: "#78a9ff", pink: "#ff7eb6", yellow: "#ffab91", gold: "#f1c21b", purple: "#be95ff", red: "#ff8389" };
+const inpS = { background: "#1e1e1e", border: "1px solid #333333", borderRadius: 2, color: cs.text, padding: "8px 10px", fontSize: 11, fontFamily: mono2, outline: "none", width: "100%", boxSizing: "border-box", transition: "border-color .15s ease" };
+const cardS = { background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 3, padding: 16, marginBottom: 14, boxShadow: "0 1px 3px rgba(0,0,0,.25)" };
 
-function MC({ label, value, sub, accent, sm }) { return (<div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 0, padding: sm ? "10px 12px" : "14px 16px", flex: 1, minWidth: sm ? 100 : 130 }}><div style={{ fontSize: 9, color: cs.dim, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 4, fontFamily: mono2 }}>{label}</div><div style={{ fontSize: sm ? 16 : 21, fontWeight: 700, color: accent || cs.text, fontFamily: mono2, lineHeight: 1 }}>{value}</div>{sub && <div style={{ fontSize: 9, color: cs.muted, marginTop: 3 }}>{sub}</div>}</div>) }
-function Badge({ children, color = cs.green }) { return <span style={{ display: "inline-block", padding: "2px 6px", borderRadius: 0, fontSize: 8, fontWeight: 700, background: `${color}20`, color, letterSpacing: ".03em", fontFamily: mono2 }}>{children}</span> }
-function GR({ value, max, label, color, sz = 78 }) { const pct = Math.min(Math.max(value, 0) / max, 1), r2 = (sz - 8) / 2, ci = 2 * Math.PI * r2; return (<div style={{ textAlign: "center" }}><svg width={sz} height={sz}><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke="#393939" strokeWidth={5} /><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke={color} strokeWidth={5} strokeDasharray={`${pct * ci} ${ci}`} strokeLinecap="butt" transform={`rotate(-90 ${sz / 2} ${sz / 2})`} style={{ transition: "stroke-dasharray .8s" }} /><text x={sz / 2} y={sz / 2 + 1} textAnchor="middle" dominantBaseline="middle" fill={cs.text} fontSize={12} fontWeight="700" fontFamily={mono2}>{typeof value === 'number' ? value.toFixed(2) : value}</text></svg><div style={{ fontSize: 9, color: cs.dim, marginTop: 2, fontFamily: mono2 }}>{label}</div></div>) }
+function MC({ label, value, sub, accent, sm }) { return (<div className="metric-card" style={{ background: cs.card, border: `1px solid ${cs.border}`, borderTop: `2px solid ${accent || cs.border}`, borderRadius: 3, padding: sm ? "10px 12px" : "14px 16px", flex: 1, minWidth: sm ? 100 : 130, boxShadow: "0 1px 4px rgba(0,0,0,.2)" }}><div style={{ fontSize: 9, color: cs.dim, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 5, fontFamily: mono2 }}>{label}</div><div style={{ fontSize: sm ? 16 : 22, fontWeight: 700, color: accent || cs.text, fontFamily: mono2, lineHeight: 1 }}>{value}</div>{sub && <div style={{ fontSize: 9, color: cs.muted, marginTop: 4 }}>{sub}</div>}</div>) }
+function Badge({ children, color = cs.green }) { return <span style={{ display: "inline-block", padding: "2px 7px", borderRadius: 2, fontSize: 8, fontWeight: 700, background: `${color}18`, color, letterSpacing: ".04em", fontFamily: mono2, border: `1px solid ${color}25` }}>{children}</span> }
+function GR({ value, max, label, color, sz = 82 }) { const pct = Math.min(Math.max(value, 0) / max, 1), r2 = (sz - 8) / 2, ci = 2 * Math.PI * r2; return (<div style={{ textAlign: "center" }}><svg width={sz} height={sz}><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke="#2a2a2a" strokeWidth={5} /><circle cx={sz / 2} cy={sz / 2} r={r2} fill="none" stroke={color} strokeWidth={5} strokeDasharray={`${pct * ci} ${ci}`} strokeLinecap="round" transform={`rotate(-90 ${sz / 2} ${sz / 2})`} style={{ transition: "stroke-dasharray .8s ease-out", filter: `drop-shadow(0 0 3px ${color}40)` }} /><text x={sz / 2} y={sz / 2 + 1} textAnchor="middle" dominantBaseline="middle" fill={cs.text} fontSize={12} fontWeight="700" fontFamily={mono2}>{typeof value === 'number' ? value.toFixed(2) : value}</text></svg><div style={{ fontSize: 9, color: cs.dim, marginTop: 3, fontFamily: mono2 }}>{label}</div></div>) }
 
 /**
  * RegimeLineChart — Multi-line SVG time series with hover interaction.
@@ -2307,6 +2397,399 @@ function EquityCurve({ curves, sc2 }) {
         style={{ position: "absolute", right: 4, top: 4, padding: "2px 6px", borderRadius: 0,
           border: `1px solid ${cs.border}`, background: cs.card, color: cs.dim,
           fontSize: 8, fontWeight: 600, cursor: "pointer", fontFamily: mono2 }}>Reset Zoom</button>
+    </div>}
+  </div>;
+}
+
+// ─── Annual Returns Bar Chart ───
+function AnnualReturnBars({ annual }) {
+  const [hoveredYear, setHoveredYear] = React.useState(null);
+  if (!annual || annual.length === 0) return null;
+
+  const W = 560, H = 240;
+  const pad = { t: 30, r: 20, b: 50, l: 60 };
+  const chartW = W - pad.l - pad.r, chartH = H - pad.t - pad.b;
+
+  const minRet = Math.min(...annual.flatMap(y => [y.optRet || 0, y.spyRet || 0, y.bal60Ret || 0]));
+  const maxRet = Math.max(...annual.flatMap(y => [y.optRet || 0, y.spyRet || 0, y.bal60Ret || 0]));
+  const retRange = Math.max(Math.abs(minRet), Math.abs(maxRet)) * 1.1;
+
+  const barW = chartW / (annual.length * 4);
+  const barGap = barW * 0.3;
+
+  const sx = (i) => pad.l + (i / annual.length) * chartW;
+  const sy = (ret) => pad.t + chartH / 2 - (ret / retRange) * (chartH / 2);
+
+  return <div style={cardS}>
+    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 12 }}>Annual Returns Comparison</div>
+
+    <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 12, height: 12, background: cs.green, display: "inline-block" }} />Optimized</span>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 12, height: 12, background: cs.blue, display: "inline-block" }} />SPY</span>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 12, height: 12, background: cs.purple, display: "inline-block" }} />60/40</span>
+    </div>
+
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ maxWidth: "100%", overflow: "visible" }}>
+      {/* Gridlines */}
+      {[0, 25, 50, -25, -50].map(val => {
+        const yy = sy(val);
+        return <g key={val}>
+          <line x1={pad.l} x2={W - pad.r} y1={yy} y2={yy} stroke={cs.border} strokeWidth={val === 0 ? 1 : 0.5} opacity={val === 0 ? 1 : 0.5} />
+          <text x={pad.l - 8} y={yy + 3} fill={cs.dim} fontSize={8} textAnchor="end" fontFamily={mono2}>{val}%</text>
+        </g>;
+      })}
+
+      {/* Zero line */}
+      <line x1={pad.l} x2={W - pad.r} y1={sy(0)} y2={sy(0)} stroke={cs.text} strokeWidth={1.5} />
+
+      {/* Year labels */}
+      {annual.map((yr, i) => (
+        <text key={`yr-${i}`} x={sx(i + 0.5)} y={H - 15} fill={cs.dim} fontSize={8} textAnchor="middle" fontFamily={mono2}>{yr.year}</text>
+      ))}
+
+      {/* Bars */}
+      {annual.map((yr, i) => {
+        const x0 = sx(i) + barGap;
+        const h1 = chartH / 2;
+        const zeroY = sy(0);
+        const barY = (ret) => ret >= 0 ? sy(ret) : zeroY;
+        const barH = (ret) => Math.abs((ret || 0) / retRange) * h1;
+        return <g key={`bars-${i}`} onMouseEnter={() => setHoveredYear(i)} onMouseLeave={() => setHoveredYear(null)}>
+          <rect x={x0} y={barY(yr.optRet || 0)} width={barW} height={barH(yr.optRet)} fill={cs.green} opacity={hoveredYear === i ? 1 : 0.7} />
+          <rect x={x0 + barW + barGap} y={barY(yr.spyRet || 0)} width={barW} height={barH(yr.spyRet)} fill={cs.blue} opacity={hoveredYear === i ? 1 : 0.7} />
+          <rect x={x0 + 2 * (barW + barGap)} y={barY(yr.bal60Ret || 0)} width={barW} height={barH(yr.bal60Ret)} fill={cs.purple} opacity={hoveredYear === i ? 1 : 0.7} />
+          {hoveredYear === i && (
+            <g>
+              <rect x={sx(i)} y={pad.t} width={sx(i + 1) - sx(i)} height={chartH} fill={cs.text} opacity={0.03} />
+              <text x={sx(i + 0.5)} y={pad.t - 10} fill={cs.text} fontSize={9} textAnchor="middle" fontFamily={mono2} fontWeight="600">{yr.year}</text>
+              <text x={sx(i + 0.5)} y={pad.t - 1} fill={cs.dim} fontSize={7} textAnchor="middle" fontFamily={mono2}>
+                {(yr.optRet || 0) >= 0 ? "+" : ""}{(yr.optRet || 0).toFixed(1)}% / {(yr.spyRet || 0) >= 0 ? "+" : ""}{(yr.spyRet || 0).toFixed(1)}% / {(yr.bal60Ret || 0) >= 0 ? "+" : ""}{(yr.bal60Ret || 0).toFixed(1)}%
+              </text>
+            </g>
+          )}
+        </g>;
+      })}
+    </svg>
+  </div>;
+}
+
+// ─── Monthly Returns Heatmap ───
+function MonthlyHeatmap({ curves }) {
+  if (!curves || !curves.opt || curves.opt.length === 0) return null;
+
+  // Compute monthly returns
+  const monthlyReturns = {};
+  let prevDate = null, prevValue = null;
+
+  curves.opt.forEach(pt => {
+    const d = pt.date;
+    const ym = d.slice(0, 7); // YYYY-MM
+    if (!monthlyReturns[ym]) monthlyReturns[ym] = [];
+
+    if (prevDate && prevValue) {
+      const prevYM = prevDate.slice(0, 7);
+      if (prevYM !== ym && prevValue > 0) {
+        const monthRet = ((pt.value - prevValue) / prevValue) * 100;
+        monthlyReturns[prevYM] = monthRet;
+      }
+    }
+    prevDate = d;
+    prevValue = pt.value;
+  });
+
+  // Convert to year-month grid
+  const yearMonths = Object.keys(monthlyReturns).sort();
+  const yearMap = {};
+  yearMonths.forEach(ym => {
+    const yr = ym.slice(0, 4);
+    if (!yearMap[yr]) yearMap[yr] = {};
+    const mo = parseInt(ym.slice(5, 7)) - 1;
+    yearMap[yr][mo] = typeof monthlyReturns[ym] === 'number' ? monthlyReturns[ym] : 0;
+  });
+
+  const years = Object.keys(yearMap).sort();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const cellSize = 38;
+
+  const colorForValue = (val) => {
+    if (val < -20) return cs.red;
+    if (val < 0) return `rgba(255, 131, 137, ${0.2 + (Math.abs(val) / 20) * 0.8})`;
+    if (val === 0) return "#444";
+    if (val < 20) return `rgba(66, 190, 101, ${(val / 20) * 0.7})`;
+    return cs.green;
+  };
+
+  return <div style={cardS}>
+    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 12 }}>Monthly Returns Heatmap</div>
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ display: "inline-block", fontFamily: mono2, fontSize: 9 }}>
+        {/* Header row */}
+        <div style={{ display: "flex", gap: 2, marginBottom: 2 }}>
+          <div style={{ width: 50, textAlign: "center", color: cs.dim }}>Year</div>
+          {months.map(m => <div key={m} style={{ width: cellSize, textAlign: "center", color: cs.dim, fontSize: 8 }}>{m}</div>)}
+          <div style={{ width: 60, textAlign: "center", color: cs.dim, fontSize: 8 }}>Annual</div>
+        </div>
+
+        {/* Data rows */}
+        {years.map(yr => {
+          const yearData = yearMap[yr];
+          const annual = Object.values(yearData).reduce((a, b) => a + b, 0);
+          return <div key={yr} style={{ display: "flex", gap: 2, marginBottom: 2 }}>
+            <div style={{ width: 50, textAlign: "center", color: cs.text, fontWeight: 600 }}>{yr}</div>
+            {months.map((m, mi) => {
+              const val = yearData[mi] || 0;
+              return <div key={`${yr}-${m}`} style={{ width: cellSize, height: cellSize, background: colorForValue(val), border: `1px solid ${cs.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, color: Math.abs(val) > 10 ? cs.text : cs.dim, fontWeight: 600 }} title={`${yr}-${String(mi + 1).padStart(2, '0')}: ${val.toFixed(1)}%`}>
+                {val > 0 ? "+" : ""}{val.toFixed(1)}%
+              </div>;
+            })}
+            <div style={{ width: 60, height: cellSize, display: "flex", alignItems: "center", justifyContent: "center", color: annual > 0 ? cs.green : cs.red, fontWeight: 600, fontSize: 8 }}>
+              {annual > 0 ? "+" : ""}{annual.toFixed(1)}%
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  </div>;
+}
+
+// ─── Drawdown Chart ───
+function DrawdownChart({ curves }) {
+  const [hoverIdx, setHoverIdx] = React.useState(null);
+  if (!curves || !curves.opt || curves.opt.length < 2) return null;
+
+  const W = 560, H = 200;
+  const pad = { t: 30, r: 20, b: 40, l: 60 };
+  const chartW = W - pad.l - pad.r, chartH = H - pad.t - pad.b;
+
+  // Compute drawdowns
+  const computeDD = (curve) => {
+    let peak = curve[0].value;
+    return curve.map(pt => {
+      peak = Math.max(peak, pt.value);
+      return { date: pt.date, dd: ((pt.value - peak) / peak) * 100 };
+    });
+  };
+
+  const optDD = computeDD(curves.opt);
+  const spyDD = computeDD(curves.spy || []);
+  const balDD = computeDD(curves.bal60 || []);
+
+  const maxDD = Math.min(...[optDD, spyDD, balDD].flatMap(d => d.map(x => x.dd)));
+  const ddRange = Math.abs(maxDD) * 1.1;
+
+  const sx = (i) => pad.l + (i / optDD.length) * chartW;
+  const sy = (dd) => pad.t + (Math.abs(dd) / ddRange) * chartH;
+
+  // Sample year markers
+  const yearMarkers = [];
+  let lastYear = null;
+  optDD.forEach((pt, i) => {
+    const yr = pt.date.slice(0, 4);
+    if (yr !== lastYear) {
+      yearMarkers.push({ i, year: yr });
+      lastYear = yr;
+    }
+  });
+  const showEvery = optDD.length < 96 ? 1 : optDD.length < 192 ? 2 : 3;
+  const filteredMarkers = yearMarkers.filter((_, idx) => idx % showEvery === 0);
+
+  const drawLine = (ddArray) => ddArray.map((pt, i) => `${sx(i)},${sy(pt.dd)}`).join(" ");
+
+  return <div style={cardS}>
+    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 12 }}>Drawdown (Underwater)</div>
+
+    <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 12, height: 12, background: cs.green, display: "inline-block" }} />Optimized</span>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 12, height: 12, background: cs.blue, display: "inline-block" }} />SPY</span>
+      <span style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 12, height: 12, background: cs.purple, display: "inline-block" }} />60/40</span>
+    </div>
+
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ maxWidth: "100%", overflow: "visible" }}
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const idx = Math.floor((x - pad.l) / chartW * optDD.length);
+        setHoverIdx(Math.max(0, Math.min(optDD.length - 1, idx)));
+      }}
+      onMouseLeave={() => setHoverIdx(null)}>
+
+      {/* Gridlines */}
+      {[0, -10, -20, -30].map(val => {
+        const yy = sy(val);
+        if (yy < pad.t || yy > pad.t + chartH) return null;
+        return <g key={val}>
+          <line x1={pad.l} x2={W - pad.r} y1={yy} y2={yy} stroke={cs.border} strokeWidth={0.5} opacity={0.5} />
+          <text x={pad.l - 8} y={yy + 3} fill={cs.dim} fontSize={8} textAnchor="end" fontFamily={mono2}>{val}%</text>
+        </g>;
+      })}
+
+      {/* Year labels */}
+      {filteredMarkers.map(({ i, year }) => (
+        <g key={year}><line x1={sx(i)} x2={sx(i)} y1={pad.t} y2={pad.t + chartH} stroke="#1e1e1e" strokeDasharray="2,3" />
+          <text x={sx(i)} y={H - 18} fill={cs.muted} fontSize={8} textAnchor="middle" fontFamily={mono2}>{year}</text></g>
+      ))}
+
+      {/* Area fills */}
+      {optDD.length > 0 && <path d={`M${sx(0)},${pad.t + chartH} ` + optDD.map((pt, i) => `L${sx(i)},${sy(pt.dd)}`).join(" ") + ` L${sx(optDD.length - 1)},${pad.t + chartH} Z`} fill={cs.green} opacity={0.1} />}
+
+      {/* Lines */}
+      {optDD.length > 1 && <polyline points={drawLine(optDD)} fill="none" stroke={cs.green} strokeWidth={2} />}
+      {spyDD.length > 1 && <polyline points={drawLine(spyDD)} fill="none" stroke={cs.blue} strokeWidth={1.5} opacity={0.7} />}
+      {balDD.length > 1 && <polyline points={drawLine(balDD)} fill="none" stroke={cs.purple} strokeWidth={1.5} opacity={0.6} />}
+
+      {/* Hover crosshair */}
+      {hoverIdx !== null && optDD[hoverIdx] && (
+        <g>
+          <line x1={sx(hoverIdx)} x2={sx(hoverIdx)} y1={pad.t} y2={pad.t + chartH} stroke={cs.dim} strokeWidth={0.5} strokeDasharray="3,2" opacity={0.6} />
+          <circle cx={sx(hoverIdx)} cy={sy(optDD[hoverIdx].dd)} r={3.5} fill={cs.green} stroke={cs.bg} strokeWidth={1.5} />
+          {spyDD[hoverIdx] && <circle cx={sx(hoverIdx)} cy={sy(spyDD[hoverIdx].dd)} r={3} fill={cs.blue} stroke={cs.bg} strokeWidth={1.5} />}
+          {balDD[hoverIdx] && <circle cx={sx(hoverIdx)} cy={sy(balDD[hoverIdx].dd)} r={3} fill={cs.purple} stroke={cs.bg} strokeWidth={1.5} />}
+        </g>
+      )}
+    </svg>
+
+    {hoverIdx !== null && optDD[hoverIdx] && <div style={{ marginTop: 8, padding: "8px 12px", background: "#1e1e1e", borderRadius: 0, display: "flex", gap: 16, justifyContent: "center", fontSize: 9, fontFamily: mono2 }}>
+      <span style={{ color: cs.green }}>Opt: {optDD[hoverIdx].dd.toFixed(1)}%</span>
+      {spyDD[hoverIdx] && <span style={{ color: cs.blue }}>SPY: {spyDD[hoverIdx].dd.toFixed(1)}%</span>}
+      {balDD[hoverIdx] && <span style={{ color: cs.purple }}>60/40: {balDD[hoverIdx].dd.toFixed(1)}%</span>}
+      <span style={{ color: cs.dim }}>{optDD[hoverIdx].date}</span>
+    </div>}
+  </div>;
+}
+
+// ─── Enhanced Frontier with ETF Scatter, CML, Stats ───
+function EnhancedFrontier({ frontier, metrics, etfDB, cashBalance, allPos, holdingsVal }) {
+  const [hoveredETF, setHoveredETF] = React.useState(null);
+
+  if (!etfDB || etfDB.length === 0) return null;
+
+  // Prepare current portfolio metrics
+  const currentVol = metrics.vol || 0;
+  const currentRet = metrics.er || 0;
+
+  // Compute max Sharpe portfolio from frontier
+  const maxSharpePort = frontier?.fr?.length > 0 ? frontier.fr.reduce((best, p) => p.sh > best.sh ? p : best, frontier.fr[0]) : null;
+  const minVolPort = frontier?.fr?.length > 0 ? frontier.fr.reduce((best, p) => (!best || p.vol < best.vol) ? p : best, null) : null;
+
+  // Category colors
+  const catColors = {
+    "US Large Cap": "#42be65",
+    "US Total Mkt": "#78a9ff",
+    "US Growth": "#ff7eb6",
+    "US Value": "#ffab91",
+    "US Dividend": "#be95ff",
+    "US Mid Cap": "#82cfff",
+    "US Small Cap": "#08bdba",
+    "International": "#ff8389",
+    "Intl Developed": "#33b1ff",
+    "Emerging Mkts": "#d4bbff",
+    "Sector Tech": "#42be65",
+    "Sector Health": "#78a9ff",
+    "Sector Finance": "#ff7eb6",
+    "Sector Energy": "#ffab91",
+    "Sector Indust": "#be95ff",
+    "Sector Consumer": "#82cfff",
+    "Sector Utilities": "#08bdba",
+    "Sector Materials": "#ff8389",
+    "Sector Comms": "#33b1ff",
+    "Sector RE": "#d4bbff",
+  };
+
+  const getCatColor = (cat) => catColors[cat] || "#8d8d8d";
+
+  // ETF scatter plot (vol vs return)
+  const W = 560, H = 320;
+  const pad = { t: 28, r: 28, b: 38, l: 52 };
+  const w = W - pad.l - pad.r, h2 = H - pad.t - pad.b;
+
+  const volVals = etfDB.map(e => e.v);
+  const retVals = etfDB.map(e => e.r);
+  const x0 = Math.min(...volVals) - 0.5, x1 = Math.max(...volVals) + 0.5;
+  const y0 = Math.min(...retVals) - 0.5, y1 = Math.max(...retVals) + 0.5;
+
+  const sx = (v) => pad.l + ((v - x0) / (x1 - x0)) * w;
+  const sy = (v) => pad.t + h2 - ((v - y0) / (y1 - y0)) * h2;
+
+  // Capital Market Line: from risk-free (0% vol, ~2% ret) through max Sharpe
+  const riskFree = 2;
+  const cmlSlope = maxSharpePort ? (maxSharpePort.ret - riskFree) / maxSharpePort.vol : 0;
+
+  return <div>
+    {/* ETF Scatter + Frontier */}
+    <div style={cardS}>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 12 }}>ETF Risk-Return Universe</div>
+
+      <svg width={W} height={H} style={{ maxWidth: "100%", overflow: "visible" }}>
+        {/* Grid */}
+        {[0, 0.25, 0.5, 0.75, 1].map(f => {
+          const yy = pad.t + h2 * (1 - f), val = y0 + f * (y1 - y0);
+          return <g key={f}><line x1={pad.l} x2={W - pad.r} y1={yy} y2={yy} stroke="#262626" />
+            <text x={pad.l - 6} y={yy + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{val.toFixed(1)}%</text></g>;
+        })}
+        {[0, 0.25, 0.5, 0.75, 1].map(f => {
+          const x = pad.l + w * f, val = x0 + f * (x1 - x0);
+          return <text key={f} x={x} y={H - 6} fill={cs.muted} fontSize={8} textAnchor="middle" fontFamily={mono2}>{val.toFixed(1)}%</text>;
+        })}
+
+        {/* Capital Market Line */}
+        {maxSharpePort && (
+          <line x1={sx(0.01)} x2={sx(Math.max(...volVals) + 2)} y1={sy(riskFree)} y2={sy(riskFree + cmlSlope * (Math.max(...volVals) + 2))} stroke={cs.yellow} strokeWidth={1.5} strokeDasharray="4,2" opacity={0.6} />
+        )}
+
+        {/* Efficient Frontier */}
+        {frontier.fr?.length > 0 && <polyline points={frontier.fr.map(p => `${sx(p.vol)},${sy(p.ret)}`).join(" ")} fill="none" stroke={cs.green} strokeWidth={2} />}
+
+        {/* ETF dots */}
+        {etfDB.map((e, i) => (
+          <circle key={i} cx={sx(e.v)} cy={sy(e.r)} r={hoveredETF === i ? 4 : 2.5} fill={getCatColor(e.c)} opacity={hoveredETF === i ? 1 : 0.6} style={{ cursor: "pointer" }}
+            onMouseEnter={() => setHoveredETF(i)} onMouseLeave={() => setHoveredETF(null)} title={`${e.t}: ${e.r.toFixed(1)}% return, ${e.v.toFixed(1)}% vol`} />
+        ))}
+
+        {/* Current portfolio */}
+        {currentVol > 0 && <circle cx={sx(currentVol)} cy={sy(currentRet)} r={7} fill="none" stroke={cs.pink} strokeWidth={2} />}
+        {currentVol > 0 && <text x={sx(currentVol) + 12} y={sy(currentRet) - 5} fill={cs.pink} fontSize={9} fontWeight="600" fontFamily={mono2}>Current</text>}
+
+        {/* Max Sharpe marker */}
+        {maxSharpePort && <circle cx={sx(maxSharpePort.vol)} cy={sy(maxSharpePort.ret)} r={6} fill="none" stroke={cs.yellow} strokeWidth={2} />}
+        {maxSharpePort && <text x={sx(maxSharpePort.vol) + 9} y={sy(maxSharpePort.ret) - 5} fill={cs.yellow} fontSize={9} fontFamily={mono2}>Max Sharpe ({maxSharpePort.sh.toFixed(2)})</text>}
+      </svg>
+
+      {hoveredETF !== null && <div style={{ marginTop: 8, padding: "8px 12px", background: "#1e1e1e", borderRadius: 0, fontSize: 9, color: cs.text, fontFamily: mono2 }}>
+        {etfDB[hoveredETF].t} ({etfDB[hoveredETF].n}): {etfDB[hoveredETF].r.toFixed(1)}% return, {etfDB[hoveredETF].v.toFixed(1)}% vol, {etfDB[hoveredETF].d.toFixed(1)}% dividend
+      </div>}
+    </div>
+
+    {/* Stats Panel */}
+    {(maxSharpePort || minVolPort || currentVol > 0) && <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 14 }}>
+      {/* Max Sharpe Portfolio */}
+      {maxSharpePort && <div style={cardS}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: cs.yellow, marginBottom: 8 }}>Max Sharpe Portfolio</div>
+        <div style={{ fontSize: 10, fontFamily: mono2 }}>
+          <div><span style={{ color: cs.dim, fontSize: 8 }}>Sharpe</span><div style={{ fontSize: 12, fontWeight: 700, color: cs.yellow }}>{maxSharpePort.sh.toFixed(2)}</div></div>
+          <div style={{ marginTop: 6 }}><span style={{ color: cs.dim, fontSize: 8 }}>Return</span><div style={{ fontSize: 11, fontWeight: 600 }}>{maxSharpePort.ret.toFixed(1)}%</div></div>
+          <div style={{ marginTop: 4 }}><span style={{ color: cs.dim, fontSize: 8 }}>Vol</span><div style={{ fontSize: 11, fontWeight: 600 }}>{maxSharpePort.vol.toFixed(1)}%</div></div>
+        </div>
+      </div>}
+
+      {/* Min Vol Portfolio */}
+      {minVolPort && <div style={cardS}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: cs.blue, marginBottom: 8 }}>Min Vol Portfolio</div>
+        <div style={{ fontSize: 10, fontFamily: mono2 }}>
+          <div><span style={{ color: cs.dim, fontSize: 8 }}>Vol</span><div style={{ fontSize: 12, fontWeight: 700, color: cs.blue }}>{minVolPort.vol.toFixed(1)}%</div></div>
+          <div style={{ marginTop: 6 }}><span style={{ color: cs.dim, fontSize: 8 }}>Return</span><div style={{ fontSize: 11, fontWeight: 600 }}>{minVolPort.ret.toFixed(1)}%</div></div>
+          <div style={{ marginTop: 4 }}><span style={{ color: cs.dim, fontSize: 8 }}>Sharpe</span><div style={{ fontSize: 11, fontWeight: 600 }}>{minVolPort.sh.toFixed(2)}</div></div>
+        </div>
+      </div>}
+
+      {/* Current Portfolio */}
+      {currentVol > 0 && <div style={cardS}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: cs.pink, marginBottom: 8 }}>Current Portfolio</div>
+        <div style={{ fontSize: 10, fontFamily: mono2 }}>
+          <div><span style={{ color: cs.dim, fontSize: 8 }}>Value</span><div style={{ fontSize: 12, fontWeight: 700, color: cs.pink }}>{fmt$(holdingsVal)}</div></div>
+          <div style={{ marginTop: 6 }}><span style={{ color: cs.dim, fontSize: 8 }}>Vol</span><div style={{ fontSize: 11, fontWeight: 600 }}>{currentVol.toFixed(1)}%</div></div>
+          <div style={{ marginTop: 4 }}><span style={{ color: cs.dim, fontSize: 8 }}>Return (est)</span><div style={{ fontSize: 11, fontWeight: 600 }}>{currentRet.toFixed(1)}%</div></div>
+        </div>
+      </div>}
     </div>}
   </div>;
 }
@@ -2703,6 +3186,14 @@ export default function App() {
   const [hmmResult, setHmmResult] = useState(null);
   const [hmmLoading, setHmmLoading] = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+  // ── Mobile Responsiveness ──
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" && window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
 
   const fetchRegime = useCallback(async () => {
     setRegimeLoading(true); setRegimeError("");
@@ -4555,14 +5046,16 @@ useEffect(() => {
   return (
     <div style={{ minHeight: "100vh", background: cs.bg, color: cs.text, fontFamily: sans2 }}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}} input[type=number]::-webkit-inner-spin-button{opacity:1}`}</style>
+
+      {/* Gradient accent line */}
+      <div className="header-accent" />
 
       {/* HEADER */}
-      <div style={{ borderBottom: `1px solid ${cs.border}`, padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1a1a1a", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 0, background: cs.blue, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: cs.bg }}>P</div>
-          <div><div style={{ fontSize: 13, fontWeight: 700 }}>Portfolio Architect</div>
-            <div style={{ fontSize: 8, color: cs.muted, letterSpacing: ".07em", textTransform: "uppercase", fontFamily: mono2 }}>Holdings → Cash → Recommendations</div></div>
+      <div className="header-glass" style={{ borderBottom: `1px solid ${cs.border}`, padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(22,22,22,.92)", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 8px rgba(0,0,0,.4)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 4, background: `linear-gradient(135deg, ${cs.blue}, ${cs.purple})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", boxShadow: `0 0 12px ${cs.blue}30` }}>P</div>
+          <div><div style={{ fontSize: 14, fontWeight: 700, letterSpacing: ".01em" }}>Portfolio Architect</div>
+            <div style={{ fontSize: 8, color: cs.muted, letterSpacing: ".08em", textTransform: "uppercase", fontFamily: mono2 }}>Intelligent Portfolio Optimization</div></div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {totalVal > 0 && <span style={{ fontSize: 11, fontFamily: mono2, color: cs.text, fontWeight: 700 }}>{fmt$(totalVal)}
@@ -4573,23 +5066,23 @@ useEffect(() => {
               Day {totalDayChange.dollar >= 0 ? "+" : ""}{fmt$(totalDayChange.dollar)}
             </span>}
           </span>}
-          <button onClick={() => setSrMode(m => m === "std" ? "var" : m === "var" ? "vol2" : "std")} style={{ padding: "4px 8px", borderRadius: 0, border: `1px solid ${srMode !== "std" ? "rgba(190,149,255,.3)" : "#393939"}`, background: srMode !== "std" ? "rgba(190,149,255,.1)" : "transparent", color: srMode !== "std" ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{srMode === "var" ? "VaR" : srMode === "vol2" ? "σ²" : "Std"} SR</button>
-          {lastF && <span style={{ fontSize: 7, color: cs.muted, fontFamily: mono2 }}>{lastF.toLocaleTimeString()} · {Object.keys(live).length}/{etfs.length + stocks.length} live</span>}
-          <button onClick={fetchLive} disabled={liveL} style={{ padding: "4px 9px", borderRadius: 0, border: `1px solid ${lastF ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.12)"}`, background: liveL ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.12)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>{liveL ? "Refreshing..." : lastF ? "⟳ Refresh" : "⟳ Get Prices"}</button>
+          <button onClick={() => setSrMode(m => m === "std" ? "var" : m === "var" ? "vol2" : "std")} style={{ padding: "4px 8px", border: `1px solid ${srMode !== "std" ? "rgba(190,149,255,.3)" : "#393939"}`, background: srMode !== "std" ? "rgba(190,149,255,.1)" : "transparent", color: srMode !== "std" ? cs.pink : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{srMode === "var" ? "VaR" : srMode === "vol2" ? "σ²" : "Std"} SR</button>
+          {lastF && <span className="live-badge" style={{ fontSize: 7, color: cs.muted, fontFamily: mono2, paddingLeft: 10 }}>{lastF.toLocaleTimeString()} · {Object.keys(live).length}/{etfs.length + stocks.length} live</span>}
+          <button onClick={fetchLive} disabled={liveL} style={{ padding: "5px 10px", border: `1px solid ${lastF ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.12)"}`, background: liveL ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.15)", color: cs.green, fontSize: 9, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, boxShadow: lastF ? `0 0 8px rgba(66,190,101,.1)` : "none" }}>{liveL ? "Refreshing..." : lastF ? "⟳ Refresh" : "⟳ Get Prices"}</button>
         </div>
       </div>
 
       {/* TABS */}
-      <div style={{ borderBottom: `1px solid ${cs.border}`, padding: "0 16px", background: "#1a1a1a", position: "sticky", top: 50, zIndex: 99, display: "flex", overflowX: "auto" }}>
+      <div style={{ borderBottom: `1px solid ${cs.border}`, padding: "0 16px", background: "rgba(22,22,22,.95)", position: "sticky", top: 52, zIndex: 99, display: "flex", overflowX: "auto", gap: 1 }}>
         {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: "9px 13px", border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, fontFamily: "inherit", background: "transparent", color: tab === t ? cs.blue : cs.muted, borderBottom: tab === t ? `2px solid ${cs.blue}` : "2px solid transparent", whiteSpace: "nowrap" }}>{t}{t === "AI Advisor" ? " ✦" : ""}</button>
+          <button key={t} className={`tab-btn${tab === t ? " active" : ""}`} onClick={() => setTab(t)} style={{ padding: "10px 16px", border: "none", cursor: "pointer", fontSize: 10, fontWeight: tab === t ? 700 : 500, fontFamily: "inherit", background: tab === t ? "rgba(120,169,255,.06)" : "transparent", color: tab === t ? cs.blue : cs.muted, borderBottom: tab === t ? `2px solid ${cs.blue}` : "2px solid transparent", whiteSpace: "nowrap", letterSpacing: ".02em" }}>{t}{t === "AI Advisor" ? " ✦" : ""}</button>
         ))}
       </div>
 
       <div style={{ maxWidth: 920, margin: "0 auto", padding: "14px 14px 50px" }}>
 
         {/* ════ MY HOLDINGS ════ */}
-        {tab === "My Portfolio" && <div>
+        {tab === "My Portfolio" && <div className="tab-content">
           {/* Summary cards */}
           <div style={{ display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" }}>
             <MC label="Holdings Value" value={fmt$(holdingsVal)} accent={cs.green} sub="Auto-calculated from shares × price" />
@@ -4601,7 +5094,7 @@ useEffect(() => {
           {/* Allocation bar */}
           {catBreak.length > 0 && <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 9, color: cs.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: ".06em", fontFamily: mono2 }}>Allocation by Market Value</div>
-            <div style={{ display: "flex", borderRadius: 0, overflow: "hidden", height: 7, background: "#222222" }}>{catBreak.map((it, i) => (<div key={i} style={{ width: `${(it.v / Math.max(catBreak.reduce((s, x) => s + x.v, 0), .01)) * 100}%`, background: it.c }} title={`${it.l}: ${fmt$(it.v)}`} />))}</div>
+            <div style={{ display: "flex", borderRadius: 3, overflow: "hidden", height: 8, background: "#1a1a1a", boxShadow: "inset 0 1px 3px rgba(0,0,0,.3)" }}>{catBreak.map((it, i) => (<div key={i} className="alloc-segment" style={{ width: `${(it.v / Math.max(catBreak.reduce((s, x) => s + x.v, 0), .01)) * 100}%`, background: it.c, cursor: "pointer" }} title={`${it.l}: ${fmt$(it.v)}`} />))}</div>
             <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
               {catBreak.map((it, i) => <span key={i} style={{ fontSize: 8, color: cs.dim, display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 6, height: 6, borderRadius: 2, background: it.c, display: "inline-block" }} />{it.l} {fmt$(it.v)}</span>)}
             </div>
@@ -4700,7 +5193,7 @@ useEffect(() => {
               const lp = live[s.ticker];
               const dayChg = lp?.change || 0;
               return (
-              <div key={s.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: s.locked ? "rgba(255,171,145,.02)" : "#1c1c1c", border: `1px solid ${s.locked ? "rgba(255,171,145,.08)" : "#262626"}` }}>
+              <div key={s.ticker} className="holding-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 3, background: s.locked ? "rgba(255,171,145,.02)" : cs.card, border: `1px solid ${s.locked ? "rgba(255,171,145,.08)" : cs.border}` }}>
                 <button onClick={() => setStocks(p => p.map(st => st.ticker === s.ticker ? { ...st, locked: !st.locked } : st))}
                   title={s.locked ? "Locked — optimizer works around this stock. Click to unlock." : "Unlocked — optimizer may suggest selling. Click to lock."}
                   style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: "2px", opacity: s.locked ? 1 : 0.4 }}>
@@ -4743,7 +5236,7 @@ useEffect(() => {
               const lp = live[e.ticker];
               const dayChg = lp?.change || 0;
               return (
-              <div key={e.ticker} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 0, background: "#1c1c1c", border: "1px solid #262626" }}>
+              <div key={e.ticker} className="holding-row" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", borderRadius: 3, background: cs.card, border: `1px solid ${cs.border}` }}>
                 <div style={{ width: 4, height: 40, background: PAL[idx % PAL.length] }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginBottom: 2 }}>
@@ -4782,15 +5275,20 @@ useEffect(() => {
             })}
           </div>}
 
-          {!etfV.length && !stockV.length && <div style={{ textAlign: "center", padding: "40px 18px", border: "1px dashed rgba(255,255,255,.07)", borderRadius: 0 }}>
-            <div style={{ fontSize: 26, marginBottom: 5 }}>📊</div>
-            <div style={{ fontSize: 12, fontWeight: 600 }}>Add Your Existing Holdings</div>
-            <div style={{ fontSize: 10, color: cs.muted, maxWidth: 340, margin: "5px auto 0" }}>Add your stocks and ETFs above. Stocks can be locked (optimizer works around them) or unlocked. ETFs require a 10-day minimum hold. Set your purchase date for accurate tax tracking.</div>
+          {!etfV.length && !stockV.length && <div style={{ textAlign: "center", padding: "48px 24px", border: "1px dashed rgba(120,169,255,.12)", borderRadius: 4, background: "rgba(120,169,255,.02)" }}>
+            <div style={{ fontSize: 32, marginBottom: 8, opacity: .8 }}>📊</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginBottom: 4 }}>Add Your Existing Holdings</div>
+            <div style={{ fontSize: 10, color: cs.dim, maxWidth: 380, margin: "0 auto", lineHeight: 1.6 }}>Add your stocks and ETFs above. Stocks can be locked (optimizer works around them) or unlocked. ETFs require a 10-day minimum hold. Set your purchase date for accurate tax tracking.</div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 16 }}>
+              <div style={{ fontSize: 9, color: cs.blue, fontFamily: mono2 }}>1. Search ticker</div>
+              <div style={{ fontSize: 9, color: cs.green, fontFamily: mono2 }}>2. Enter shares & cost</div>
+              <div style={{ fontSize: 9, color: cs.purple, fontFamily: mono2 }}>3. Deploy cash</div>
+            </div>
           </div>}
         </div>}
 
         {/* ════ DEPLOY CASH ════ */}
-        {tab === "Deploy Cash" && <div>
+        {tab === "Deploy Cash" && <div className="tab-content">
           <div style={{ ...cardS, background: "rgba(120,169,255,.05)", borderColor: "rgba(96,165,250,.12)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
@@ -4960,7 +5458,7 @@ useEffect(() => {
         </div>}
 
         {/* ════ PORTFOLIO ANALYSIS ════ */}
-        {tab === "Portfolio Analysis" && <div>
+        {tab === "Portfolio Analysis" && <div className="tab-content">
           {!metrics ? <div style={{ textAlign: "center", padding: 45, color: cs.muted }}><div style={{ fontSize: 24, marginBottom: 5 }}>📈</div><div style={{ fontSize: 11 }}>Add holdings first</div></div>
             : <>
               <div style={{ display: "flex", justifyContent: "center", gap: 18, flexWrap: "wrap", padding: "14px 0 18px", borderBottom: "1px solid #262626", marginBottom: 14 }}>
@@ -6151,12 +6649,22 @@ useEffect(() => {
 
         {/* ════ FRONTIER ════ */}
         {tab === "Frontier" && <div>
-          {cashBalance <= 0 ? <div style={{ textAlign: "center", padding: 45, color: cs.muted }}><div style={{ fontSize: 24, marginBottom: 5 }}>🔬</div><div style={{ fontSize: 11 }}>Add cash to deploy first</div></div>
-            : <div style={cardS}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Efficient Frontier — Cash Deployment</div>
-              <div style={{ fontSize: 9, color: cs.muted, marginBottom: 12 }}>2,000 simulations. Each point = a different way to deploy ${cashBalance.toLocaleString()} across ETFs, keeping existing holdings locked.</div>
-              <div style={{ display: "flex", justifyContent: "center", overflowX: "auto" }}><Scatter data={frontier} cp={metrics} /></div>
-            </div>}
+          <div style={cardS}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Efficient Frontier Analysis</div>
+            <div style={{ fontSize: 9, color: cs.muted, marginBottom: 12 }}>
+              {cashBalance > 0 ? `Cash deployment optimizer: 2,000 simulations showing ways to deploy $${cashBalance.toLocaleString()} across ETFs.` : "Portfolio frontier analysis across risk-return universe. Current portfolio shown in pink."}
+            </div>
+          </div>
+
+          {/* Original Frontier Scatter (if cash available) */}
+          {cashBalance > 0 && <div style={{ ...cardS, marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "center", overflowX: "auto" }}>
+              <Scatter data={frontier} cp={metrics} />
+            </div>
+          </div>}
+
+          {/* Enhanced Analysis */}
+          <EnhancedFrontier frontier={frontier} metrics={metrics} etfDB={ETF_DB} cashBalance={cashBalance} allPos={allPos} holdingsVal={holdingsVal} />
         </div>}
 
         {/* ════ AI ADVISOR ════ */}
@@ -6225,6 +6733,15 @@ useEffect(() => {
               </div>}
               {/* Interactive Equity Curve */}
               <EquityCurve curves={curves} sc2={sc2} />
+
+              {/* Annual Returns Bar Chart */}
+              <AnnualReturnBars annual={annual} />
+
+              {/* Drawdown Chart */}
+              <DrawdownChart curves={curves} />
+
+              {/* Monthly Returns Heatmap */}
+              <MonthlyHeatmap curves={curves} />
 
               {/* Summary Metrics */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 14 }}>
