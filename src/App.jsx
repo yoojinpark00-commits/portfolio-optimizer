@@ -1629,6 +1629,13 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     else regimeTilt[i] = entryBonus > 0 ? entryBonus * 0.3 : 0;
   }
 
+  // ── Pre-compute factor-aware returns (Black-Litterman blend if factor scores available) ──
+  const hasFactors = candidates.some(c => c.factorScore != null);
+  let blReturns = null;
+  if (hasFactors) {
+    blReturns = blackLittermanReturns(candidates);
+  }
+
   // Pre-compute adjusted returns, vols as typed arrays
   const adjRet = new Float64Array(n), volArr = new Float64Array(n), isLev = new Uint8Array(n);
   // Pre-compute each candidate's correlation with SPY (US Large Cap category)
@@ -1657,13 +1664,6 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   if (extremeMomCount / n > 0.4) {
     const momDampen = 0.85;
     for (let i = 0; i < n; i++) { if (adjRet[i] > 18) adjRet[i] *= momDampen; }
-  }
-
-  // ── Pre-compute factor-aware returns (Black-Litterman blend if factor scores available) ──
-  const hasFactors = candidates.some(c => c.factorScore != null);
-  let blReturns = null;
-  if (hasFactors) {
-    blReturns = blackLittermanReturns(candidates);
   }
 
   // ── Pre-compute relative value signals if available ──
@@ -1862,7 +1862,9 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     }
     if (hadStockViolation) continue; // skip this iteration entirely
 
-    // ── SECTOR CONCENTRATION: hard reject if any macro-sector exceeds 60% ──
+    // ── SECTOR CONCENTRATION: hard reject if any macro-sector exceeds limit ──
+    // Use relaxed limit (75%) for small candidate pools (backtest) to avoid rejecting everything
+    const sectorHardLimit = n <= 40 ? 0.75 : 0.60;
     const sectorWts = {};
     let maxSectorWt = 0;
     for (let i = 0; i < n; i++) {
@@ -1872,7 +1874,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
       sectorWts[sec] = (sectorWts[sec] || 0) + wt;
       if (sectorWts[sec] > maxSectorWt) maxSectorWt = sectorWts[sec];
     }
-    if (maxSectorWt > 0.60) continue; // reject over-concentrated portfolios
+    if (maxSectorWt > sectorHardLimit) continue; // reject over-concentrated portfolios
 
     // Position count scoring: reward 4-7 sweet spot
     let divScore;
