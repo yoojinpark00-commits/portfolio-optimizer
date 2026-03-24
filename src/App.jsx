@@ -3191,8 +3191,73 @@ function AiMarkdown({ text }) {
 }
 
 const TABS = ["My Portfolio", "Deploy Cash", "Portfolio Analysis", "Regime Analysis", "Frontier", "AI Advisor", "Backtest"];
+
+// ═══ PASSWORD GATE ═══
+// Simple client-side password protection. Change the hash below to set your password.
+// To generate a new hash: in browser console, run:
+//   crypto.subtle.digest('SHA-256', new TextEncoder().encode('YOUR_PASSWORD')).then(b => console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
+const AUTH_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // default: "1234"
+const AUTH_KEY = "portfolio_auth_v1";
+
+async function hashPassword(pwd) {
+  const data = new TextEncoder().encode(pwd);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf)).map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+function PasswordGate({ onAuth }) {
+  const [pwd, setPwd] = React.useState("");
+  const [error, setError] = React.useState(false);
+  const [checking, setChecking] = React.useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setChecking(true); setError(false);
+    const hash = await hashPassword(pwd);
+    if (hash === AUTH_HASH) {
+      localStorage.setItem(AUTH_KEY, hash);
+      onAuth();
+    } else {
+      setError(true); setPwd("");
+    }
+    setChecking(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#161616", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'IBM Plex Sans','Inter',sans-serif" }}>
+      <div style={{ width: 340, padding: 32, background: "#1e1e1e", border: "1px solid #333", borderRadius: 4, boxShadow: "0 4px 24px rgba(0,0,0,.5)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 4, background: "linear-gradient(135deg, #78a9ff, #be95ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: "#fff" }}>P</div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#f4f4f4" }}>Portfolio Architect</div>
+            <div style={{ fontSize: 9, color: "#6f6f6f", letterSpacing: ".08em", textTransform: "uppercase" }}>Authenticated Access</div>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 9, color: "#8d8d8d", display: "block", marginBottom: 4, fontFamily: "'IBM Plex Mono',monospace", letterSpacing: ".05em" }}>PASSWORD</label>
+            <input type="password" value={pwd} onChange={e => { setPwd(e.target.value); setError(false); }} autoFocus
+              style={{ width: "100%", padding: "10px 12px", background: "#262626", border: `1px solid ${error ? "#ff8389" : "#393939"}`, borderRadius: 2, color: "#f4f4f4", fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", outline: "none", boxSizing: "border-box", transition: "border-color .15s" }}
+              placeholder="Enter password" />
+          </div>
+          {error && <div style={{ fontSize: 10, color: "#ff8389", marginBottom: 10 }}>Incorrect password</div>}
+          <button type="submit" disabled={checking || !pwd}
+            style={{ width: "100%", padding: "10px", background: checking ? "#333" : "linear-gradient(135deg, #78a9ff, #be95ff)", border: "none", borderRadius: 2, color: "#fff", fontSize: 12, fontWeight: 700, cursor: checking ? "wait" : "pointer", fontFamily: "inherit" }}>
+            {checking ? "Verifying..." : "Unlock"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ═══ MAIN APP ═══
 export default function App() {
+  // ── Auth state ──
+  const [authed, setAuthed] = useState(() => {
+    try { return localStorage.getItem(AUTH_KEY) === AUTH_HASH; } catch { return false; }
+  });
+
   const [etfs, setEtfs] = useState([]);       // {ticker, data, shares, costBasis, mktValue}
   const [stocks, setStocks] = useState([]);    // {ticker, name, shares, costBasis, mktValue, sector, locked:true}
   const [cashBalance, setCashBalance] = useState(0); // $ to deploy
@@ -5436,6 +5501,8 @@ useEffect(() => {
   const taxRates = useMemo(() => getTaxRates(taxState), [taxState]);
 
   // ═══ RENDER ═══
+  if (!authed) return <PasswordGate onAuth={() => setAuthed(true)} />;
+
   return (
     <div style={{ minHeight: "100vh", background: cs.bg, color: cs.text, fontFamily: sans2 }}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
