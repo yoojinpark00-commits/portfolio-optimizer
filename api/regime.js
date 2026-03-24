@@ -372,7 +372,9 @@ function computeRegimeV2(data) {
 // ═══ MONTHLY REGIMES (for backtest compatibility) ═══
 function computeMonthlyRegimesV2(data) {
   const results = [];
-  for (let year = 2015; year <= 2025; year++) {
+  // Start from 2005 to cover full backtest range (2006-2025)
+  // Earlier years may have fewer FRED series but core signals (VIX, HY OAS, yield curves) are available
+  for (let year = 2005; year <= 2025; year++) {
     for (let month = 1; month <= 12; month++) {
       const dateStr = `${year}-${String(month).padStart(2, "0")}-28`;
       const { composite, scores } = computeScoreAtDate(data, dateStr);
