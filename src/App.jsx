@@ -3334,11 +3334,22 @@ export default function App() {
       if (lastCP > 0.2) alerts.push({ source: "Change-Point", message: `CP probability ${(lastCP*100).toFixed(0)}% — regime transition may be underway`, severity: lastCP > 0.5 ? "high" : "medium" });
       if (hmmRegimeIdx !== ensRegimeIdx) alerts.push({ source: "Ensemble", message: `HMM → ${HMM_REGIMES[hmmRegimeIdx].name} vs Ensemble → ${HMM_REGIMES[ensRegimeIdx].name}`, severity: "medium" });
 
+      // Normalize SPY prices for overlay on stress chart
+      const spyPrices2 = months.map(m => m.spyPrice).filter(v => v != null);
+      const spy2Min = spyPrices2.length > 0 ? Math.min(...spyPrices2) : 0;
+      const spy2Max = spyPrices2.length > 0 ? Math.max(...spyPrices2) : 1;
+      const spy2Range = spy2Max - spy2Min || 1;
+      const comp2Min = Math.min(...composite) - 0.5;
+      const comp2Max = Math.max(...composite) + 0.5;
+      const comp2Range = comp2Max - comp2Min || 1;
+
       // Build timeline for display (downsample if needed)
       const step = Math.max(1, Math.floor(dates.length / 120));
       const timeline = [];
       for (let i = 0; i < dates.length; i += step) {
-        const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i] };
+        const spy = months[i]?.spyPrice;
+        const spyNorm = spy != null ? comp2Min + ((spy - spy2Min) / spy2Range) * comp2Range : null;
+        const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i], spyNorm };
         HMM_REGIMES.forEach((r, ri) => { entry[`p_${r.name}`] = filtered[i][ri]; entry[`e_${r.name}`] = ensembleProbs[i][ri]; });
         timeline.push(entry);
       }
@@ -3408,10 +3419,21 @@ export default function App() {
                   const lastCP = cpProb[cpProb.length - 1];
                   if (lastCP > 0.2) alerts.push({ source: "Change-Point", message: `CP probability ${(lastCP*100).toFixed(0)}% — regime transition may be underway`, severity: lastCP > 0.5 ? "high" : "medium" });
                   if (hmmRegimeIdx !== ensRegimeIdx) alerts.push({ source: "Ensemble", message: `HMM → ${HMM_REGIMES[hmmRegimeIdx].name} vs Ensemble → ${HMM_REGIMES[ensRegimeIdx].name}`, severity: "medium" });
+                  // Normalize SPY prices to composite stress scale for overlay
+                  const spyPrices = months.map(m => m.spyPrice).filter(v => v != null);
+                  const spyMin = spyPrices.length > 0 ? Math.min(...spyPrices) : 0;
+                  const spyMax = spyPrices.length > 0 ? Math.max(...spyPrices) : 1;
+                  const spyRange = spyMax - spyMin || 1;
+                  const compMin = Math.min(...composite) - 0.5;
+                  const compMax = Math.max(...composite) + 0.5;
+                  const compRange = compMax - compMin || 1;
+
                   const step = Math.max(1, Math.floor(dates.length / 120));
                   const timeline = [];
                   for (let i = 0; i < dates.length; i += step) {
-                    const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i] };
+                    const spy = months[i]?.spyPrice;
+                    const spyNorm = spy != null ? compMin + ((spy - spyMin) / spyRange) * compRange : null;
+                    const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i], spyNorm };
                     HMM_REGIMES.forEach((r, ri) => { entry[`p_${r.name}`] = filtered[i][ri]; entry[`e_${r.name}`] = ensembleProbs[i][ri]; });
                     timeline.push(entry);
                   }
@@ -3477,10 +3499,19 @@ export default function App() {
               if (lastCP > 0.2) alerts.push({ source: "Change-Point", message: `CP probability ${(lastCP*100).toFixed(0)}% — regime transition may be underway`, severity: lastCP > 0.5 ? "high" : "medium" });
               if (hmmRegimeIdx !== ensRegimeIdx) alerts.push({ source: "Ensemble", message: `HMM → ${HMM_REGIMES[hmmRegimeIdx].name} vs Ensemble → ${HMM_REGIMES[ensRegimeIdx].name}`, severity: "medium" });
 
+              // Normalize SPY for overlay
+              const spyP3 = months.map(m => m.spyPrice).filter(v => v != null);
+              const s3Min = spyP3.length > 0 ? Math.min(...spyP3) : 0;
+              const s3Max = spyP3.length > 0 ? Math.max(...spyP3) : 1;
+              const s3R = s3Max - s3Min || 1;
+              const c3Min = Math.min(...composite) - 0.5, c3Max = Math.max(...composite) + 0.5, c3R = c3Max - c3Min || 1;
+
               const step = Math.max(1, Math.floor(dates.length / 120));
               const timeline = [];
               for (let i = 0; i < dates.length; i += step) {
-                const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i] };
+                const spy = months[i]?.spyPrice;
+                const spyNorm = spy != null ? c3Min + ((spy - s3Min) / s3R) * c3R : null;
+                const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i], spyNorm };
                 HMM_REGIMES.forEach((r, ri) => { entry[`p_${r.name}`] = filtered[i][ri]; entry[`e_${r.name}`] = ensembleProbs[i][ri]; });
                 timeline.push(entry);
               }
@@ -6513,15 +6544,21 @@ useEffect(() => {
                 </div>
               </div>}
 
-              {/* ── Charts: 2×2 grid layout ── */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {/* ── Chart 1: Composite Stress Score (regime-colored line) ── */}
-                <RegimeLineChart
+              {/* ── Charts: full-width, one per row ── */}
+
+              {/* ── Chart 1: Composite Stress Score (regime-colored) + SPY overlay ── */}
+              {(() => {
+                // Normalize SPY to z-score scale so it overlays cleanly on the stress chart
+                // SPY uses a secondary axis: normalized to 0-1 range mapped to the stress y-domain
+                const spyPrices = tl.map(d => d.spyNorm).filter(v => v != null);
+                const hasSpyData = spyPrices.length > tl.length * 0.5;
+                return <RegimeLineChart
                   data={tl}
-                  title="📈 Stress Score (Regime-Colored)"
-                  subtitle="FRED composite z-score with BOCPD change-point overlay. Line color = detected regime."
+                  title="📈 Composite Stress Score & S&P 500 (Regime-Colored)"
+                  subtitle="FRED composite z-score with BOCPD change-point overlay. Stress line colored by detected regime. Gray line = normalized S&P 500."
                   series={[
                     { key: "composite", label: "Stress Score", color: cs.yellow, width: 2.5 },
+                    ...(hasSpyData ? [{ key: "spyNorm", label: "S&P 500 (norm)", color: "rgba(255,255,255,.35)", width: 1.5 }] : []),
                     { key: "cpProb", label: "CP Probability", color: cs.red, width: 1.5, dash: "4,2" },
                   ]}
                   regimeColoredLine={{ regimeKey: "regime" }}
@@ -6529,72 +6566,72 @@ useEffect(() => {
                   thresholds={[
                     { value: 0, color: cs.dim, label: "0", dash: "2,4" },
                   ]}
-                  height={200}
-                />
+                  height={240}
+                />;
+              })()}
 
-                {/* ── Chart 2: HMM Filtered Probabilities (stacked) ── */}
-                <RegimeLineChart
-                  data={tl.map(d => ({
-                    date: d.date,
-                    Bull: (d.p_Bull || 0) * 100,
-                    Euphoria: (d.p_Euphoria || 0) * 100,
-                    Correction: (d.p_Correction || 0) * 100,
-                    Crisis: (d.p_Crisis || 0) * 100,
-                    Recovery: (d.p_Recovery || 0) * 100,
-                  }))}
-                  title="🎯 HMM Filtered Probabilities"
-                  subtitle="Real-time probability of each regime. Stacked areas sum to 100%."
-                  series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
-                  stacked
-                  yDomain={[0, 100]}
-                  yFormat={v => `${v.toFixed(0)}%`}
-                  height={200}
-                />
+              {/* ── Chart 2: HMM Filtered Probabilities (stacked) ── */}
+              <RegimeLineChart
+                data={tl.map(d => ({
+                  date: d.date,
+                  Bull: (d.p_Bull || 0) * 100,
+                  Euphoria: (d.p_Euphoria || 0) * 100,
+                  Correction: (d.p_Correction || 0) * 100,
+                  Crisis: (d.p_Crisis || 0) * 100,
+                  Recovery: (d.p_Recovery || 0) * 100,
+                }))}
+                title="🎯 HMM Filtered Probabilities"
+                subtitle="Real-time (causal) probability of each regime. Stacked areas sum to 100%. Shows how regime confidence evolves over time."
+                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
+                stacked
+                yDomain={[0, 100]}
+                yFormat={v => `${v.toFixed(0)}%`}
+                height={220}
+              />
 
-                {/* ── Chart 3: Ensemble Probabilities (stacked) ── */}
-                <RegimeLineChart
-                  data={tl.map(d => ({
-                    date: d.date,
-                    Bull: (d.e_Bull || 0) * 100,
-                    Euphoria: (d.e_Euphoria || 0) * 100,
-                    Correction: (d.e_Correction || 0) * 100,
-                    Crisis: (d.e_Crisis || 0) * 100,
-                    Recovery: (d.e_Recovery || 0) * 100,
-                  }))}
-                  title="🔀 Ensemble (HMM + BOCPD)"
-                  subtitle="Fused probabilities. BOCPD shifts mass from Bull/Euphoria → Correction/Crisis."
-                  series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
-                  stacked
-                  yDomain={[0, 100]}
-                  yFormat={v => `${v.toFixed(0)}%`}
-                  height={200}
-                />
+              {/* ── Chart 3: Ensemble Probabilities (stacked) ── */}
+              <RegimeLineChart
+                data={tl.map(d => ({
+                  date: d.date,
+                  Bull: (d.e_Bull || 0) * 100,
+                  Euphoria: (d.e_Euphoria || 0) * 100,
+                  Correction: (d.e_Correction || 0) * 100,
+                  Crisis: (d.e_Crisis || 0) * 100,
+                  Recovery: (d.e_Recovery || 0) * 100,
+                }))}
+                title="🔀 Ensemble Probabilities (HMM + BOCPD Fused)"
+                subtitle="After fusing HMM with Bayesian change-point detection. When BOCPD fires, mass shifts from Bull/Euphoria → Correction/Crisis."
+                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
+                stacked
+                yDomain={[0, 100]}
+                yFormat={v => `${v.toFixed(0)}%`}
+                height={220}
+              />
 
-                {/* ── Chart 4: Individual Regime Lines (non-stacked overlay) ── */}
-                <RegimeLineChart
-                  data={tl.map(d => ({
-                    date: d.date, regime: d.regime,
-                    Bull: (d.e_Bull || 0) * 100,
-                    Crisis: (d.e_Crisis || 0) * 100,
-                    Correction: (d.e_Correction || 0) * 100,
-                    Recovery: (d.e_Recovery || 0) * 100,
-                    Euphoria: (d.e_Euphoria || 0) * 100,
-                  }))}
-                  title="📊 Regime Probability Lines"
-                  subtitle="Crossovers indicate transitions. Hover to compare values."
-                  series={[
-                    { key: "Bull", label: "Bull", color: "#42be65", width: 2 },
-                    { key: "Crisis", label: "Crisis", color: "#ff8389", width: 2 },
-                    { key: "Correction", label: "Correction", color: "#fb923c", width: 1.5 },
-                    { key: "Recovery", label: "Recovery", color: "#60a5fa", width: 1.5 },
-                    { key: "Euphoria", label: "Euphoria", color: "#fbbf24", width: 1, dash: "3,2" },
-                  ]}
-                  yDomain={[0, 100]}
-                  yFormat={v => `${v.toFixed(0)}%`}
-                  regimeBands={{ key: "regime" }}
-                  height={200}
-                />
-              </div>
+              {/* ── Chart 4: Individual Regime Lines (non-stacked overlay) ── */}
+              <RegimeLineChart
+                data={tl.map(d => ({
+                  date: d.date, regime: d.regime,
+                  Bull: (d.e_Bull || 0) * 100,
+                  Crisis: (d.e_Crisis || 0) * 100,
+                  Correction: (d.e_Correction || 0) * 100,
+                  Recovery: (d.e_Recovery || 0) * 100,
+                  Euphoria: (d.e_Euphoria || 0) * 100,
+                }))}
+                title="📊 Regime Probability Lines (Ensemble)"
+                subtitle="Individual regime probability traces. Crossovers indicate regime transitions. Hover to compare exact values."
+                series={[
+                  { key: "Bull", label: "Bull", color: "#42be65", width: 2 },
+                  { key: "Crisis", label: "Crisis", color: "#ff8389", width: 2 },
+                  { key: "Correction", label: "Correction", color: "#fb923c", width: 1.5 },
+                  { key: "Recovery", label: "Recovery", color: "#60a5fa", width: 1.5 },
+                  { key: "Euphoria", label: "Euphoria", color: "#fbbf24", width: 1, dash: "3,2" },
+                ]}
+                yDomain={[0, 100]}
+                yFormat={v => `${v.toFixed(0)}%`}
+                regimeBands={{ key: "regime" }}
+                height={240}
+              />
 
               {/* ── Regime Timeline (compact bar) ── */}
               <div style={cardS}>

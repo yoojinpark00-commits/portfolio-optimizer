@@ -459,6 +459,13 @@ function computeMonthlyRegimesV2(data) {
         }
       }
 
+      // SPY price at this date (for chart overlay)
+      let spyPrice = null;
+      if (data.sp500?.length > 0) {
+        const spIdx = binarySearchLastLE(data.sp500, dateStr);
+        if (spIdx >= 0) spyPrice = data.sp500[spIdx].value;
+      }
+
       results.push({
         date: `${year}-${String(month).padStart(2, "0")}`,
         score: Math.round(composite * 100) / 100,
@@ -466,6 +473,7 @@ function computeMonthlyRegimesV2(data) {
         regime,
         state5,
         acceleration: Math.round(acceleration * 100) / 100,
+        spyPrice: spyPrice != null ? Math.round(spyPrice * 100) / 100 : null,
         zScores: Object.fromEntries(Object.entries(scores).map(([k, s]) => [k, Math.round(s.z * 100) / 100])),
         // New regime acceleration fields
         stressVelocity: Math.round(stressVelocity * 1000) / 1000,
