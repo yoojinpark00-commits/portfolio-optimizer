@@ -3229,9 +3229,19 @@ export default function App() {
   const runHmmAnalysis = useCallback(async () => {
     setHmmLoading(true);
     try {
-      const resp = await fetch("/api/regime?history=true");
-      const json = await resp.json();
-      if (!json.monthlyRegimes?.length) { setHmmLoading(false); return; }
+      // Retry up to 2 times on failure (FRED API can be slow/flaky)
+      let json = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const resp = await fetch("/api/regime?history=true");
+          if (!resp.ok) { console.warn(`HMM fetch attempt ${attempt + 1} failed: ${resp.status}`); continue; }
+          json = await resp.json();
+          if (json.monthlyRegimes?.length) break;
+          console.warn(`HMM fetch attempt ${attempt + 1}: no monthly regimes in response`, json.errors || "");
+        } catch (e) { console.warn(`HMM fetch attempt ${attempt + 1} error:`, e.message); }
+        if (attempt < 1) await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry
+      }
+      if (!json?.monthlyRegimes?.length) { console.warn("HMM: no historical regime data after retries"); setHmmLoading(false); return; }
 
       const months = json.monthlyRegimes.sort((a, b) => a.date.localeCompare(b.date));
       // Extract composite scores from FRED data (use the pre-computed score field)

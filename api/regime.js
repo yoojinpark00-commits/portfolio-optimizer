@@ -44,20 +44,32 @@ export default async function handler(req, res) {
   const data = {};
   const errors = [];
 
-  for (const [key, seriesId] of Object.entries(series)) {
-    try {
-      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&observation_start=${startDate}&api_key=${apiKey}&file_type=json&sort_order=asc`;
-      const resp = await fetch(url);
-      const json = await resp.json();
-      if (json.observations) {
-        data[key] = json.observations.filter(o => o.value !== ".").map(o => ({ date: o.date, value: parseFloat(o.value) }));
+  // Fetch all FRED series in parallel (3 concurrent batches to respect rate limits)
+  const entries = Object.entries(series);
+  const BATCH_SIZE = 4;
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const batch = entries.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async ([key, seriesId]) => {
+        const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&observation_start=${startDate}&api_key=${apiKey}&file_type=json&sort_order=asc`;
+        const resp = await fetch(url);
+        const json = await resp.json();
+        if (json.observations) {
+          return { key, data: json.observations.filter(o => o.value !== ".").map(o => ({ date: o.date, value: parseFloat(o.value) })) };
+        } else {
+          throw new Error(json.error_message || "No data");
+        }
+      })
+    );
+    results.forEach((result, idx) => {
+      if (result.status === "fulfilled") {
+        data[result.value.key] = result.value.data;
       } else {
-        errors.push({ series: key, message: json.error_message || "No data" });
+        errors.push({ series: batch[idx][0], message: result.reason?.message || "Failed" });
       }
-      await new Promise(r => setTimeout(r, 150));
-    } catch (err) {
-      errors.push({ series: key, message: err.message });
-    }
+    });
+    // Small delay between batches to respect FRED rate limits
+    if (i + BATCH_SIZE < entries.length) await new Promise(r => setTimeout(r, 100));
   }
 
   // Compute regime
