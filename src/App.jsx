@@ -5937,7 +5937,7 @@ useEffect(() => {
         </div>}
 
         {/* ════ REGIME ANALYSIS ════ */}
-        {tab === "Regime Analysis" && <div>
+        {tab === "Regime Analysis" && <div className="tab-content">
 
           {/* ── Regime History Charts (HMM-based) ── */}
           {hmmResult && (() => {
@@ -5949,14 +5949,125 @@ useEffect(() => {
             const state5Colors = { strong_risk_on: "#42be65", mild_risk_on: "#6fdc8c", neutral: "#ffab91", mild_risk_off: "#ff832b", strong_risk_off: "#ff8389" };
             const hmmColors = ["#42be65", "#fbbf24", "#fb923c", "#ff8389", "#60a5fa"];
 
+            // Compute stress thermometer from available data
+            const lastComposite = tl.length > 0 ? tl[tl.length - 1].composite || 0 : 0;
+            const lastCpProb = h.cpProb?.[h.cpProb.length - 1] || 0;
+            // Estimate turbulence percentile from ensemble stress (approximate since raw turb isn't in hmmResult)
+            const stressFromEns = (ensR.probs[2] || 0) + (ensR.probs[3] || 0); // correction + crisis prob as proxy
+            const estTurbPctl = Math.min(1, stressFromEns * 1.5);
+            const estArShift = lastComposite * 0.8; // approximate
+            const stressThermo = (() => {
+              const compNorm = Math.min(100, Math.max(0, 50 + lastComposite * 20));
+              const turbNorm = estTurbPctl * 100;
+              const arNorm = Math.min(100, Math.max(0, 50 + estArShift * 20));
+              const cpNorm = lastCpProb * 100;
+              const score = Math.min(100, Math.max(0, compNorm * 0.35 + turbNorm * 0.25 + arNorm * 0.20 + cpNorm * 0.20));
+              const rounded = Math.round(score * 10) / 10;
+              let level, color;
+              if (rounded < 25) { level = 'calm'; color = '#42be65'; }
+              else if (rounded < 50) { level = 'elevated'; color = '#f1c21b'; }
+              else if (rounded < 75) { level = 'stressed'; color = '#ff832b'; }
+              else { level = 'extreme'; color = '#ff8389'; }
+              return { score: rounded, level, color };
+            })();
+
+            // Compute watchlist signals
+            const watchlist = (() => {
+              const signals = [];
+              const regimeNames = ['Bull', 'Euphoria', 'Correction', 'Crisis', 'Recovery'];
+              const forecast = h.forecast || [];
+              const regimeProbs = ensR.probs;
+              const currentRegime = ensR.idx;
+              if (!forecast.length || !regimeProbs) return signals;
+              const crisisNow = regimeProbs[3] || 0;
+              for (let step = 0; step < Math.min(forecast.length, 12); step++) {
+                const crisisFwd = forecast[step][3] || 0;
+                if (crisisFwd > crisisNow + 0.10 && crisisFwd > 0.15) {
+                  signals.push({ signal: `Crisis probability rising to ${(crisisFwd * 100).toFixed(0)}% in ${step + 1} months`, urgency: crisisFwd > 0.30 ? 'high' : 'medium', horizon: `${step + 1}m` });
+                  break;
+                }
+              }
+              const corrNow = regimeProbs[2] || 0;
+              for (let step = 0; step < Math.min(forecast.length, 6); step++) {
+                const corrFwd = forecast[step][2] || 0;
+                if (corrFwd > corrNow + 0.15 && corrFwd > 0.25) {
+                  signals.push({ signal: `Correction probability rising to ${(corrFwd * 100).toFixed(0)}% in ${step + 1} months`, urgency: corrFwd > 0.40 ? 'high' : 'medium', horizon: `${step + 1}m` });
+                  break;
+                }
+              }
+              if (currentRegime === 3 || currentRegime === 2) {
+                for (let step = 0; step < Math.min(forecast.length, 6); step++) {
+                  const recovFwd = forecast[step][4] || 0;
+                  const bullFwd = forecast[step][0] || 0;
+                  if (recovFwd > 0.25 || bullFwd > 0.30) {
+                    signals.push({ signal: `Recovery/Bull probability reaching ${((recovFwd + bullFwd) * 100).toFixed(0)}% in ${step + 1} months`, urgency: 'medium', horizon: `${step + 1}m` });
+                    break;
+                  }
+                }
+              }
+              if (currentRegime === 0) {
+                const euphNow = regimeProbs[1] || 0;
+                for (let step = 0; step < Math.min(forecast.length, 6); step++) {
+                  const euphFwd = forecast[step][1] || 0;
+                  if (euphFwd > euphNow + 0.10 && euphFwd > 0.20) {
+                    signals.push({ signal: `Euphoria risk rising to ${(euphFwd * 100).toFixed(0)}% in ${step + 1} months`, urgency: 'low', horizon: `${step + 1}m` });
+                    break;
+                  }
+                }
+              }
+              const dominantProb = regimeProbs[currentRegime] || 0;
+              if (dominantProb < 0.50) {
+                let maxGain = 0, gainRegime = -1;
+                for (let i = 0; i < 5; i++) {
+                  if (i === currentRegime) continue;
+                  const fwd3 = forecast[Math.min(2, forecast.length - 1)]?.[i] || 0;
+                  const gain = fwd3 - (regimeProbs[i] || 0);
+                  if (gain > maxGain) { maxGain = gain; gainRegime = i; }
+                }
+                if (gainRegime >= 0 && maxGain > 0.05) {
+                  signals.push({ signal: `${regimeNames[currentRegime]} confidence only ${(dominantProb * 100).toFixed(0)}% — ${regimeNames[gainRegime]} gaining (+${(maxGain * 100).toFixed(0)}pp over 3m)`, urgency: maxGain > 0.15 ? 'high' : 'medium', horizon: '3m' });
+                }
+              }
+              return signals;
+            })();
+
             return <>
-              {/* Current Regime Banner */}
+              {/* ── Stress Thermometer Widget ── */}
+              <div style={{ ...cardS, marginBottom: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700 }}>Market Stress Thermometer</div>
+                  <Badge color={stressThermo.color}>{stressThermo.level.toUpperCase()} ({stressThermo.score})</Badge>
+                </div>
+                {/* Thermometer gauge */}
+                <div style={{ position: "relative", height: 28, background: "#1a1a1a", borderRadius: 3, overflow: "hidden", marginBottom: 6 }}>
+                  {/* Gradient background */}
+                  <div className="stress-thermometer-bar" style={{ position: "absolute", top: 0, left: 0, height: "100%", width: "100%", opacity: 0.18, borderRadius: 3 }} />
+                  {/* Active fill */}
+                  <div className="stress-thermometer-bar" style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${stressThermo.score}%`, opacity: 0.5, borderRadius: 3 }} />
+                  {/* Needle indicator */}
+                  <div className="stress-thermometer-needle" style={{ position: "absolute", top: 0, left: `${stressThermo.score}%`, width: 2, height: "100%", background: stressThermo.color, boxShadow: `0 0 8px ${stressThermo.color}` }} />
+                  {/* Score label */}
+                  <div style={{ position: "absolute", top: "50%", left: `${Math.min(Math.max(stressThermo.score, 8), 92)}%`, transform: "translate(-50%, -50%)", fontSize: 12, fontWeight: 800, fontFamily: mono2, color: "#fff", textShadow: "0 1px 4px rgba(0,0,0,.8)" }}>{stressThermo.score}</div>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 7, color: cs.muted }}>
+                  <span>0 — Calm</span><span>25 — Elevated</span><span>50 — Stressed</span><span>75 — Extreme — 100</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 8, color: cs.dim }}>
+                  <span>Composite: <span style={{ fontFamily: mono2, color: cs.text }}>{lastComposite.toFixed(2)}</span></span>
+                  <span>CP Prob: <span style={{ fontFamily: mono2, color: lastCpProb > 0.2 ? cs.red : cs.text }}>{(lastCpProb * 100).toFixed(0)}%</span></span>
+                  <span>Stress Probs: <span style={{ fontFamily: mono2, color: stressFromEns > 0.4 ? cs.red : cs.text }}>{(stressFromEns * 100).toFixed(0)}%</span></span>
+                </div>
+              </div>
+
+              {/* Current Regime Banner (enhanced with glow) */}
               <div style={{ ...cardS, background: `${ensR.color}08`, borderColor: `${ensR.color}25`, marginBottom: 0 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 16, alignItems: "center" }}>
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 2, textTransform: "uppercase" }}>HMM Classification</div>
-                    <div style={{ fontSize: 26, fontWeight: 800, color: hmmR.color, marginTop: 4 }}>{hmmR.name}</div>
-                    <div style={{ fontSize: 11, color: cs.dim, fontFamily: mono2 }}>{(hmmR.probs[hmmR.idx] * 100).toFixed(1)}% confidence</div>
+                    <div className="regime-glow" style={{ display: "inline-block", padding: "6px 16px", borderRadius: 4, marginTop: 4, "--regime-color": `${hmmR.color}40` }}>
+                      <div style={{ fontSize: 26, fontWeight: 800, color: hmmR.color }}>{hmmR.name}</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: cs.dim, fontFamily: mono2, marginTop: 4 }}>{(hmmR.probs[hmmR.idx] * 100).toFixed(1)}% confidence</div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
                     <div style={{ width: 48, height: 48, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: agree ? "rgba(66,190,101,.1)" : "rgba(248,113,113,.1)", border: `2px solid ${agree ? cs.green : cs.red}40` }}>
@@ -5966,23 +6077,29 @@ useEffect(() => {
                   </div>
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontSize: 8, color: cs.dim, letterSpacing: 2, textTransform: "uppercase" }}>Ensemble Consensus</div>
-                    <div style={{ fontSize: 26, fontWeight: 800, color: ensR.color, marginTop: 4 }}>{ensR.name}</div>
-                    <div style={{ fontSize: 11, color: cs.dim, fontFamily: mono2 }}>{(ensR.probs[ensR.idx] * 100).toFixed(1)}% confidence</div>
+                    <div className="regime-glow" style={{ display: "inline-block", padding: "6px 16px", borderRadius: 4, marginTop: 4, "--regime-color": `${ensR.color}40` }}>
+                      <div style={{ fontSize: 26, fontWeight: 800, color: ensR.color }}>{ensR.name}</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: cs.dim, fontFamily: mono2, marginTop: 4 }}>{(ensR.probs[ensR.idx] * 100).toFixed(1)}% confidence</div>
                   </div>
                 </div>
-                {/* 5-regime probability bars */}
+                {/* 5-regime probability bars (enhanced with ranking) */}
                 <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
-                  {HMM_REGIMES.map((r, i) => (
-                    <div key={i} style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                        <span style={{ fontSize: 7, color: r.color, fontWeight: 600, letterSpacing: 0.5 }}>{r.name}</span>
-                        <span style={{ fontSize: 8, fontFamily: mono2, color: i === ensR.idx ? r.color : cs.dim }}>{(ensR.probs[i] * 100).toFixed(1)}%</span>
+                  {HMM_REGIMES.map((r, i) => {
+                    const pct = ensR.probs[i] * 100;
+                    const isDominant = i === ensR.idx;
+                    return (
+                      <div key={i} style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                          <span style={{ fontSize: 7, color: r.color, fontWeight: isDominant ? 800 : 600, letterSpacing: 0.5 }}>{r.name}</span>
+                          <span style={{ fontSize: isDominant ? 9 : 8, fontFamily: mono2, color: isDominant ? r.color : cs.dim, fontWeight: isDominant ? 700 : 400 }}>{pct.toFixed(1)}%</span>
+                        </div>
+                        <div style={{ height: isDominant ? 6 : 4, background: "#262626", borderRadius: 2, overflow: "hidden", transition: "height .3s" }}>
+                          <div style={{ height: "100%", width: `${pct}%`, background: isDominant ? r.color : `${r.color}90`, borderRadius: 2, transition: "width .5s", boxShadow: isDominant ? `0 0 6px ${r.color}40` : "none" }} />
+                        </div>
                       </div>
-                      <div style={{ height: 4, background: "#262626", borderRadius: 2, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${ensR.probs[i] * 100}%`, background: r.color, borderRadius: 2, transition: "width .5s" }} />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {/* Optimizer fusion note */}
                 <div style={{ marginTop: 10, padding: "6px 10px", borderRadius: 0, background: "#1a1a1a", fontSize: 9 }}>
@@ -6001,6 +6118,47 @@ useEffect(() => {
                     <span style={{ fontSize: 9, color: cs.dim }}>{alert.message}</span>
                   </div>
                 ))}
+              </div>}
+
+              {/* ── What to Watch ── */}
+              {watchlist.length > 0 && <div style={{ ...cardS, padding: "10px 14px", marginBottom: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 8 }}>What to Watch</div>
+                {watchlist.map((w, i) => (
+                  <div key={i} style={{ padding: "6px 10px", borderRadius: 0, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, background: w.urgency === "high" ? "rgba(248,113,113,.06)" : w.urgency === "medium" ? "rgba(251,191,36,.06)" : "rgba(66,190,101,.06)", borderLeft: `3px solid ${w.urgency === "high" ? cs.red : w.urgency === "medium" ? cs.yellow : cs.green}` }}>
+                    <Badge color={w.urgency === "high" ? cs.red : w.urgency === "medium" ? cs.yellow : cs.green}>{w.horizon}</Badge>
+                    <span style={{ fontSize: 9, color: cs.dim }}>{w.signal}</span>
+                  </div>
+                ))}
+              </div>}
+
+              {/* ── Regime History Summary Table ── */}
+              {h.condStats && h.condStats.length > 0 && <div style={{ ...cardS, marginBottom: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 8 }}>Regime History Summary</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                    <thead><tr>
+                      <th style={{ padding: "5px 8px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Regime</th>
+                      <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Time %</th>
+                      <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Episodes</th>
+                      <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Avg Duration</th>
+                      <th style={{ padding: "5px 8px", textAlign: "center", color: cs.dim, fontSize: 8 }}>Avg Score</th>
+                    </tr></thead>
+                    <tbody>
+                      {h.condStats.map((st, i) => (
+                        <tr key={i} style={{ borderTop: "1px solid #222" }}>
+                          <td style={{ padding: "5px 8px" }}>
+                            <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: st.color, marginRight: 6, verticalAlign: "middle" }} />
+                            <span style={{ color: st.color, fontWeight: 600 }}>{st.name}</span>
+                          </td>
+                          <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2 }}>{(st.pctTime * 100).toFixed(1)}%</td>
+                          <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2 }}>{st.count}</td>
+                          <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2 }}>{h.expDurations[i]?.toFixed(1) || "—"}m</td>
+                          <td style={{ padding: "5px 8px", textAlign: "center", fontFamily: mono2, color: st.meanScore > 0.5 ? cs.red : st.meanScore < -0.5 ? cs.green : cs.dim }}>{st.meanScore?.toFixed(2) || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>}
 
               {/* ── Chart 1: Composite Stress Score + Change-Point Detection ── */}
@@ -6112,14 +6270,23 @@ useEffect(() => {
                   <div style={{ display: "grid", gridTemplateColumns: `52px repeat(5, 1fr)`, gap: 2, fontSize: 8 }}>
                     <div />
                     {HMM_REGIMES.map(r => <div key={r.id} style={{ textAlign: "center", color: r.color, fontWeight: 600, padding: 2 }}>{r.name.slice(0, 4)}</div>)}
-                    {h.transMatrix.map((row, i) => (
-                      <React.Fragment key={i}>
-                        <div style={{ color: HMM_REGIMES[i].color, fontWeight: 600, display: "flex", alignItems: "center", fontSize: 7 }}>{HMM_REGIMES[i].name.slice(0, 4)}</div>
-                        {row.map((p, j) => (
-                          <div key={j} style={{ textAlign: "center", padding: 3, fontFamily: mono2, fontSize: 8, background: i === j ? `${HMM_REGIMES[i].color}15` : `rgba(255,255,255,${Math.min(p / 0.3, 1) * 0.08})`, color: i === j ? HMM_REGIMES[i].color : cs.dim, fontWeight: i === j ? 700 : 400, borderRadius: 2 }}>{(p * 100).toFixed(1)}</div>
-                        ))}
-                      </React.Fragment>
-                    ))}
+                    {h.transMatrix.map((row, i) => {
+                      const maxOffDiag = Math.max(...row.filter((_, j) => j !== i));
+                      return (
+                        <React.Fragment key={i}>
+                          <div style={{ color: HMM_REGIMES[i].color, fontWeight: 600, display: "flex", alignItems: "center", fontSize: 7 }}>{HMM_REGIMES[i].name.slice(0, 4)}</div>
+                          {row.map((p, j) => {
+                            const intensity = i === j ? p : (p / (maxOffDiag || 1));
+                            const heatColor = i === j
+                              ? `${HMM_REGIMES[i].color}${Math.round(Math.min(intensity * 0.4, 0.35) * 255).toString(16).padStart(2, '0')}`
+                              : p > 0.10 ? `rgba(120,169,255,${Math.min(intensity * 0.25, 0.2)})` : p > 0.03 ? `rgba(255,255,255,${Math.min(intensity * 0.08, 0.06)})` : "transparent";
+                            return (
+                              <div key={j} style={{ textAlign: "center", padding: 3, fontFamily: mono2, fontSize: 8, background: heatColor, color: i === j ? HMM_REGIMES[i].color : p > 0.10 ? cs.text : cs.dim, fontWeight: i === j ? 700 : p > 0.10 ? 600 : 400, borderRadius: 2, border: p === maxOffDiag && i !== j && p > 0.05 ? `1px solid ${HMM_REGIMES[j].color}30` : "1px solid transparent" }}>{(p * 100).toFixed(1)}</div>
+                            );
+                          })}
+                        </React.Fragment>
+                      );
+                    })}
                   </div>
                 </div>
                 <div style={cardS}>
@@ -6236,7 +6403,26 @@ useEffect(() => {
                           </div>
                           <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: sigColor }}>{f.fmt(d.value)}</div>
                           <div style={{ fontSize: 7, color: cs.muted, marginTop: 2 }}>{f.label}</div>
-                          <div style={{ fontSize: 7, color: cs.dim, fontFamily: mono2 }}>z: {d.zScore?.toFixed(2) || "—"} · w: {(d.weight * 100).toFixed(0)}%</div>
+                          <div style={{ fontSize: 7, color: cs.dim, fontFamily: mono2, display: "flex", alignItems: "center", gap: 4 }}>
+                            <span>z: {d.zScore?.toFixed(2) || "—"}</span>
+                            {d.zScore != null && <div style={{ flex: 1, height: 4, background: "#262626", borderRadius: 2, overflow: "hidden", position: "relative", minWidth: 30 }}>
+                              {/* Center line at z=0 */}
+                              <div style={{ position: "absolute", left: "50%", top: 0, width: 1, height: "100%", background: "#444" }} />
+                              {/* Z-score bar */}
+                              <div style={{
+                                position: "absolute",
+                                top: 0,
+                                height: "100%",
+                                borderRadius: 2,
+                                background: sigColor,
+                                ...(d.zScore >= 0
+                                  ? { left: "50%", width: `${Math.min(Math.abs(d.zScore) / 3 * 50, 50)}%` }
+                                  : { right: "50%", width: `${Math.min(Math.abs(d.zScore) / 3 * 50, 50)}%` }
+                                ),
+                              }} />
+                            </div>}
+                            <span>w: {(d.weight * 100).toFixed(0)}%</span>
+                          </div>
                         </div>;
                       }).filter(Boolean)}
                     </div>

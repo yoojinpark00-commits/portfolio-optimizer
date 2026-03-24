@@ -1919,6 +1919,15 @@ function _analyzeRegimeDurations(path) {
   }
   durations[current].push(len); // last segment
 
+  // Count total transitions (regime changes)
+  let totalTransitions = 0;
+  for (let t = 1; t < path.length; t++) {
+    if (path[t] !== path[t - 1]) totalTransitions++;
+  }
+  const transitionSpeed = totalTransitions > 0
+    ? path.length / totalTransitions
+    : path.length; // avg periods between regime changes
+
   // Compute summary stats
   const summary = {};
   for (let i = 0; i < NUM_STATES; i++) {
@@ -1938,7 +1947,161 @@ function _analyzeRegimeDurations(path) {
       };
     }
   }
+  summary._transitionSpeed = transitionSpeed;
+  summary._totalTransitions = totalTransitions;
   return summary;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SECTION 10: STRESS THERMOMETER & WATCHLIST
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute a single 0-100 composite "market stress" score that fuses
+ * all regime signals into one easy-to-read number.
+ *
+ * @param {number} compositeScore - Latest composite z-score (higher = more stress)
+ * @param {number} turbulencePctl - Turbulence percentile (0-1)
+ * @param {number} arShift - Absorption Ratio standardized shift
+ * @param {number} cpProb - BOCPD change-point probability (0-1)
+ * @returns {{ score: number, level: string, color: string }}
+ */
+export function computeStressThermometer(compositeScore = 0, turbulencePctl = 0.5, arShift = 0, cpProb = 0) {
+  // Normalize each component to 0-100
+  // compositeScore: typical range -2 to +3, map via sigmoid-like scaling
+  const compNorm = Math.min(100, Math.max(0, 50 + compositeScore * 20));
+
+  // turbulencePctl: already 0-1, scale to 0-100
+  const turbNorm = turbulencePctl * 100;
+
+  // arShift: typical range -2 to +3, normalize
+  const arNorm = Math.min(100, Math.max(0, 50 + arShift * 20));
+
+  // cpProb: 0-1, scale to 0-100
+  const cpNorm = cpProb * 100;
+
+  // Weighted fusion
+  const score = Math.min(100, Math.max(0,
+    compNorm * 0.35 +
+    turbNorm * 0.25 +
+    arNorm * 0.20 +
+    cpNorm * 0.20
+  ));
+
+  let level, color;
+  if (score < 25) {
+    level = 'calm';
+    color = '#42be65';
+  } else if (score < 50) {
+    level = 'elevated';
+    color = '#f1c21b';
+  } else if (score < 75) {
+    level = 'stressed';
+    color = '#ff832b';
+  } else {
+    level = 'extreme';
+    color = '#ff8389';
+  }
+
+  return { score: Math.round(score * 10) / 10, level, color };
+}
+
+/**
+ * Generate a "What to Watch" list of upcoming risk events and signals
+ * based on forecast regime probabilities and current conditions.
+ *
+ * @param {number} currentRegime - Current regime id (0-4)
+ * @param {number[]} regimeProbs - Current regime probability vector [5]
+ * @param {number[][]} forecast - Array of forecast probability vectors (from HMM.forecast)
+ * @returns {{ signal: string, urgency: 'low'|'medium'|'high', horizon: string }[]}
+ */
+export function getWatchlistSignals(currentRegime, regimeProbs, forecast) {
+  const signals = [];
+  const regimeNames = ['Bull', 'Euphoria', 'Correction', 'Crisis', 'Recovery'];
+
+  if (!forecast || forecast.length === 0 || !regimeProbs) return signals;
+
+  // Check for rising crisis probability
+  const crisisNow = regimeProbs[3] || 0;
+  for (let step = 0; step < Math.min(forecast.length, 12); step++) {
+    const crisisFwd = forecast[step][3] || 0;
+    if (crisisFwd > crisisNow + 0.10 && crisisFwd > 0.15) {
+      signals.push({
+        signal: `Crisis probability rising to ${(crisisFwd * 100).toFixed(0)}% in ${step + 1} months`,
+        urgency: crisisFwd > 0.30 ? 'high' : 'medium',
+        horizon: `${step + 1}m`,
+      });
+      break;
+    }
+  }
+
+  // Check for correction escalation
+  const corrNow = regimeProbs[2] || 0;
+  for (let step = 0; step < Math.min(forecast.length, 6); step++) {
+    const corrFwd = forecast[step][2] || 0;
+    if (corrFwd > corrNow + 0.15 && corrFwd > 0.25) {
+      signals.push({
+        signal: `Correction probability rising to ${(corrFwd * 100).toFixed(0)}% in ${step + 1} months`,
+        urgency: corrFwd > 0.40 ? 'high' : 'medium',
+        horizon: `${step + 1}m`,
+      });
+      break;
+    }
+  }
+
+  // Check for recovery opportunity
+  if (currentRegime === 3 || currentRegime === 2) { // Crisis or Correction
+    for (let step = 0; step < Math.min(forecast.length, 6); step++) {
+      const recovFwd = forecast[step][4] || 0;
+      const bullFwd = forecast[step][0] || 0;
+      if (recovFwd > 0.25 || bullFwd > 0.30) {
+        signals.push({
+          signal: `Recovery/Bull probability reaching ${((recovFwd + bullFwd) * 100).toFixed(0)}% in ${step + 1} months — potential entry window`,
+          urgency: 'medium',
+          horizon: `${step + 1}m`,
+        });
+        break;
+      }
+    }
+  }
+
+  // Check for euphoria warning (overheating)
+  if (currentRegime === 0) { // Bull
+    const euphNow = regimeProbs[1] || 0;
+    for (let step = 0; step < Math.min(forecast.length, 6); step++) {
+      const euphFwd = forecast[step][1] || 0;
+      if (euphFwd > euphNow + 0.10 && euphFwd > 0.20) {
+        signals.push({
+          signal: `Euphoria risk rising to ${(euphFwd * 100).toFixed(0)}% in ${step + 1} months — watch for overheating`,
+          urgency: 'low',
+          horizon: `${step + 1}m`,
+        });
+        break;
+      }
+    }
+  }
+
+  // Regime stability check — if dominant regime is losing confidence
+  const dominantProb = regimeProbs[currentRegime] || 0;
+  if (dominantProb < 0.50) {
+    // Find which regime is gaining
+    let maxGain = 0, gainRegime = -1;
+    for (let i = 0; i < 5; i++) {
+      if (i === currentRegime) continue;
+      const fwd3 = forecast[Math.min(2, forecast.length - 1)]?.[i] || 0;
+      const gain = fwd3 - (regimeProbs[i] || 0);
+      if (gain > maxGain) { maxGain = gain; gainRegime = i; }
+    }
+    if (gainRegime >= 0 && maxGain > 0.05) {
+      signals.push({
+        signal: `${regimeNames[currentRegime]} confidence only ${(dominantProb * 100).toFixed(0)}% — ${regimeNames[gainRegime]} gaining (+${(maxGain * 100).toFixed(0)}pp over 3m)`,
+        urgency: maxGain > 0.15 ? 'high' : 'medium',
+        horizon: '3m',
+      });
+    }
+  }
+
+  return signals;
 }
 
 export default {
@@ -1957,4 +2120,6 @@ export default {
   regimeCorrelations,
   applyRegimeTilts,
   runRegimeAnalysis,
+  computeStressThermometer,
+  getWatchlistSignals,
 };

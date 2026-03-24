@@ -158,6 +158,26 @@ input[type=number]::-webkit-inner-spin-button { opacity: 1; }
   filter: brightness(1.2);
 }
 
+/* Regime indicator pulsing glow */
+@keyframes regimeGlow {
+  0%, 100% { box-shadow: 0 0 8px var(--regime-color, rgba(120,169,255,.3)); }
+  50% { box-shadow: 0 0 20px var(--regime-color, rgba(120,169,255,.5)), 0 0 40px var(--regime-color, rgba(120,169,255,.15)); }
+}
+.regime-glow {
+  animation: regimeGlow 2.5s ease-in-out infinite;
+}
+
+/* Stress thermometer gradient bar */
+.stress-thermometer-bar {
+  background: linear-gradient(90deg, #42be65 0%, #f1c21b 33%, #ff832b 66%, #ff8389 100%);
+  transition: width 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Stress thermometer needle */
+.stress-thermometer-needle {
+  transition: left 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .metric-card {
