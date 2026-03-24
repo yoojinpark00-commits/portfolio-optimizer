@@ -1628,12 +1628,13 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) entryBonus = 0.04;
   }
 
-  // Vol regime modifier: compression amplifies risk-on, expansion amplifies risk-off
-  const volMod = volSignal > 0 ? 1.2 : volSignal < 0 ? 0.7 : 1.0;
-  // VIX inversion override: strong defensive signal
-  const vixMod = vixInversion ? 0.5 : 1.0;
+  // Vol regime modifier: gentler tilts to avoid over-trading alpha decay
+  // Compression is NOT amplified (contrarian trap — often precedes crashes)
+  // Expansion dampens risk-on modestly; VIX inversion is a tilt modifier only (not a rebalance trigger)
+  const volMod = volSignal < 0 ? 0.85 : 1.0; // only dampen during expansion, never amplify
+  const vixMod = vixInversion ? 0.7 : 1.0; // gentler than before (was 0.5)
 
-  const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1 / volMod : 1.0);
+  const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1.15 : 1.0);
   // Entry bonus reaches aggressive categories in ANY state (including neutral after bear→neutral recovery)
   const aggBonus = (baseAggBonus * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
   const kellyMult = baseKellyMult;
@@ -3558,36 +3559,51 @@ export default function App() {
           }
         }
       }
-      // ── Signal-driven rebalance triggers (replaces rigid quarterly) ──
+      // ── Signal-driven rebalance triggers with confirmation requirement ──
+      // Require 2+ signals OR a regime change to trigger rebalance (reduces whipsaw)
       let shouldEvaluate = isFirstAllocation;
 
       if (!shouldEvaluate && useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
 
-        // Trigger 1: Regime change (existing)
+        // Regime change is strong enough to trigger alone
         if (regimeChanged) shouldEvaluate = true;
 
-        // Trigger 2: Stress acceleration crossover (±0.3 threshold)
-        if (regData?.accelTrigger) shouldEvaluate = true;
+        // For other signals, count confirmations — need 2+ to trigger
+        if (!shouldEvaluate) {
+          let signalCount = 0;
 
-        // Trigger 3: VIX term structure inversion (leading signal)
-        if (regData?.vixInversion) shouldEvaluate = true;
+          // Signal 1: Stress acceleration crossover (raised threshold from 0.3 to 0.5)
+          if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.5) signalCount++;
 
-        // Trigger 4: Volatility regime shift
-        if (mi > 0) {
-          const prevReg = historicalRegimes[simDates[mi - 1]];
-          if (prevReg && regData?.volRegime !== prevReg.volRegime) shouldEvaluate = true;
+          // Signal 2: Volatility regime shift (not just any change — only meaningful ones)
+          if (mi > 0) {
+            const prevReg = historicalRegimes[simDates[mi - 1]];
+            const volShift = regData?.volRegime !== prevReg?.volRegime;
+            const meaningfulShift = volShift && (
+              (prevReg?.volRegime === "compression" && regData?.volRegime === "expansion") ||
+              (prevReg?.volRegime === "normal" && regData?.volRegime === "elevated") ||
+              (prevReg?.volRegime === "elevated" && regData?.volRegime === "normal")
+            );
+            if (meaningfulShift) signalCount++;
+          }
+
+          // Signal 3: VIX inversion (tilt modifier only, counts toward confirmation but doesn't trigger alone)
+          if (regData?.vixInversion) signalCount++;
+
+          // Need 2+ confirming signals to trigger a non-quarterly rebalance
+          if (signalCount >= 2) shouldEvaluate = true;
         }
 
-        // Trigger 5: Quarterly fallback (but only if no signal-driven trigger in last 2 months)
+        // Quarterly fallback (only if no signal-driven trigger recently)
         if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= 2) shouldEvaluate = true;
       } else if (!shouldEvaluate) {
         // No regime data: fall back to quarterly
         if (mMonth % 3 === 0) shouldEvaluate = true;
       }
 
-      // Minimum cooldown: 1 month between rebalances (was 3)
-      if (!isFirstAllocation && monthsSinceRebal < 1) shouldEvaluate = false;
+      // Minimum cooldown: 2 months between rebalances (balance patience vs responsiveness)
+      if (!isFirstAllocation && monthsSinceRebal < 2) shouldEvaluate = false;
 
       if (!shouldEvaluate) continue;
       // Yield to UI every evaluation to prevent freeze

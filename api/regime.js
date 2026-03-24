@@ -414,8 +414,8 @@ function computeMonthlyRegimesV2(data) {
           ? (results[results.length - 4].score - results[results.length - 3].score + v0 + v1) / 3
           : v0;
         stressAcceleration = stressVelocity - prevVelocity;
-        // Trigger when acceleration crosses ±0.3 threshold
-        accelTrigger = Math.abs(stressAcceleration) >= 0.3;
+        // Trigger when acceleration crosses ±0.5 threshold (raised from 0.3 to reduce noise)
+        accelTrigger = Math.abs(stressAcceleration) >= 0.5;
       } else if (results.length >= 1) {
         stressVelocity = acceleration;
       }
