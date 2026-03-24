@@ -1212,9 +1212,18 @@ function runEnsemble(hmmProbs, cpProbs) {
 
 // Map HMM 5-state probabilities → existing state5 string for optimizer compatibility
 function hmmToState5(probs) {
-  const maxIdx = probs.indexOf(Math.max(...probs));
-  // Direct map from HMM regime to state5
-  return HMM_REGIMES[maxIdx].state5;
+  // Compute a probability-weighted stress level instead of using a static lookup table.
+  // This ensures HMM and FRED agree on the same risk scale.
+  // Each regime has an intrinsic stress level: Bull=-1, Recovery=-0.5, Euphoria=0.3, Correction=0.8, Crisis=1.5
+  const stressLevels = [-1.0, 0.3, 0.8, 1.5, -0.5]; // indexed by HMM regime id: Bull, Euphoria, Correction, Crisis, Recovery
+  let weightedStress = 0;
+  for (let i = 0; i < probs.length; i++) weightedStress += probs[i] * stressLevels[i];
+  // Use the same thresholds as FRED's classify5State for consistency
+  if (weightedStress < -0.6) return "strong_risk_on";
+  if (weightedStress < -0.15) return "mild_risk_on";
+  if (weightedStress <= 0.15) return "neutral";
+  if (weightedStress <= 0.6) return "mild_risk_off";
+  return "strong_risk_off";
 }
 
 // ═══════════════════════════════════════════════════════════════════
