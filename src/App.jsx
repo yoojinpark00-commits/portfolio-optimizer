@@ -3304,6 +3304,8 @@ export default function App() {
   const [hmmResult, setHmmResult] = useState(null);
   const [hmmLoading, setHmmLoading] = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [uHover, setUHover] = useState(null);
+  const uSvgRef = useRef(null);
 
   // ── Mobile Responsiveness ──
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" && window.innerWidth < 768);
@@ -6694,9 +6696,6 @@ useEffect(() => {
                 if (tl[tlLen - 1]?.date && (dateLabels.length === 0 || dateLabels[dateLabels.length - 1].i < tlLen - 3))
                   dateLabels.push({ i: tlLen - 1, label: tl[tlLen - 1].date.slice(0, 7) });
 
-                // Hover state
-                const [uHover, setUHover] = React.useState(null);
-                const uSvgRef = React.useRef(null);
                 const getUIdx = (e) => {
                   if (!uSvgRef.current) return null;
                   const rect = uSvgRef.current.getBoundingClientRect();
