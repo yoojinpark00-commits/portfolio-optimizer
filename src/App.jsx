@@ -2071,7 +2071,7 @@ function GR({ value, max, label, color, sz = 82 }) { const pct = Math.min(Math.m
  *   title: string?
  *   subtitle: string?
  */
-function RegimeLineChart({ data, series, regimeBands, thresholds, yDomain, yFormat, height: H = 200, stacked, title, subtitle }) {
+function RegimeLineChart({ data, series, regimeBands, regimeColoredLine, thresholds, yDomain, yFormat, height: H = 200, stacked, title, subtitle }) {
   const [hoverIdx, setHoverIdx] = React.useState(null);
   const svgRef = React.useRef(null);
   if (!data?.length || !series?.length) return null;
@@ -2201,7 +2201,28 @@ function RegimeLineChart({ data, series, regimeBands, thresholds, yDomain, yForm
       {/* Stacked areas or lines */}
       {stacked ? stackedPaths.map(s => (
         <path key={s.key} d={s.pathD} fill={s.color} opacity={s.opacity || 0.55} stroke={s.color} strokeWidth={0.5} />
-      )) : lines.map(s => (
+      )) : regimeColoredLine ? (() => {
+        // Draw the first series as regime-colored segments instead of a single-color line
+        const rcSeries = series[0];
+        const rcKey = regimeColoredLine.regimeKey; // e.g., "regime" — index into data[i]
+        const segments = [];
+        for (let i = 0; i < data.length - 1; i++) {
+          const rIdx = data[i][rcKey];
+          const color = hmmColors[rIdx] || rcSeries.color;
+          segments.push(
+            <line key={`rc-${i}`} x1={sx(i)} y1={sy(data[i][rcSeries.key] ?? 0)} x2={sx(i + 1)} y2={sy(data[i + 1][rcSeries.key] ?? 0)}
+              stroke={color} strokeWidth={rcSeries.width || 2.5} strokeLinecap="round" opacity={0.9} />
+          );
+        }
+        return <>
+          {segments}
+          {/* Draw remaining series normally */}
+          {series.slice(1).map(s => (
+            <polyline key={s.key} points={data.map((d, i) => `${sx(i)},${sy(d[s.key] ?? 0)}`).join(" ")} fill="none" stroke={s.color}
+              strokeWidth={s.width || 1.5} strokeDasharray={s.dash || "none"} opacity={s.opacity || 0.85} />
+          ))}
+        </>;
+      })() : lines.map(s => (
         <polyline key={s.key} points={s.points} fill="none" stroke={s.color}
           strokeWidth={s.width || 1.5} strokeDasharray={s.dash || "none"} opacity={s.opacity || 0.85} />
       ))}
@@ -6492,85 +6513,88 @@ useEffect(() => {
                 </div>
               </div>}
 
-              {/* ── Chart 1: Composite Stress Score + Change-Point Detection ── */}
-              <RegimeLineChart
-                data={tl}
-                title="📈 Composite Stress Score & Change-Point Detection"
-                subtitle="FRED composite z-score (stress level) with BOCPD change-point probability overlay. Background bands show detected regime."
-                series={[
-                  { key: "composite", label: "Stress Score", color: cs.yellow, width: 2 },
-                  { key: "cpProb", label: "CP Probability", color: cs.red, width: 1.5, dash: "4,2" },
-                ]}
-                regimeBands={{ key: "regime" }}
-                thresholds={[
-                  { value: 0, color: cs.dim, label: "0", dash: "2,4" },
-                  { value: 0.2, color: cs.red, label: "20% CP alert", dash: "4,3" },
-                ]}
-                height={220}
-              />
+              {/* ── Charts: 2×2 grid layout ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {/* ── Chart 1: Composite Stress Score (regime-colored line) ── */}
+                <RegimeLineChart
+                  data={tl}
+                  title="📈 Stress Score (Regime-Colored)"
+                  subtitle="FRED composite z-score with BOCPD change-point overlay. Line color = detected regime."
+                  series={[
+                    { key: "composite", label: "Stress Score", color: cs.yellow, width: 2.5 },
+                    { key: "cpProb", label: "CP Probability", color: cs.red, width: 1.5, dash: "4,2" },
+                  ]}
+                  regimeColoredLine={{ regimeKey: "regime" }}
+                  regimeBands={{ key: "regime" }}
+                  thresholds={[
+                    { value: 0, color: cs.dim, label: "0", dash: "2,4" },
+                  ]}
+                  height={200}
+                />
 
-              {/* ── Chart 2: HMM Filtered Probabilities (stacked) ── */}
-              <RegimeLineChart
-                data={tl.map(d => ({
-                  date: d.date,
-                  Bull: (d.p_Bull || 0) * 100,
-                  Euphoria: (d.p_Euphoria || 0) * 100,
-                  Correction: (d.p_Correction || 0) * 100,
-                  Crisis: (d.p_Crisis || 0) * 100,
-                  Recovery: (d.p_Recovery || 0) * 100,
-                }))}
-                title="🎯 HMM Filtered Probabilities"
-                subtitle="Real-time (causal) probability of each regime. Stacked areas sum to 100%. Shows how regime confidence evolves over time."
-                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
-                stacked
-                yDomain={[0, 100]}
-                yFormat={v => `${v.toFixed(0)}%`}
-                height={220}
-              />
+                {/* ── Chart 2: HMM Filtered Probabilities (stacked) ── */}
+                <RegimeLineChart
+                  data={tl.map(d => ({
+                    date: d.date,
+                    Bull: (d.p_Bull || 0) * 100,
+                    Euphoria: (d.p_Euphoria || 0) * 100,
+                    Correction: (d.p_Correction || 0) * 100,
+                    Crisis: (d.p_Crisis || 0) * 100,
+                    Recovery: (d.p_Recovery || 0) * 100,
+                  }))}
+                  title="🎯 HMM Filtered Probabilities"
+                  subtitle="Real-time probability of each regime. Stacked areas sum to 100%."
+                  series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
+                  stacked
+                  yDomain={[0, 100]}
+                  yFormat={v => `${v.toFixed(0)}%`}
+                  height={200}
+                />
 
-              {/* ── Chart 3: Ensemble Probabilities (stacked) ── */}
-              <RegimeLineChart
-                data={tl.map(d => ({
-                  date: d.date,
-                  Bull: (d.e_Bull || 0) * 100,
-                  Euphoria: (d.e_Euphoria || 0) * 100,
-                  Correction: (d.e_Correction || 0) * 100,
-                  Crisis: (d.e_Crisis || 0) * 100,
-                  Recovery: (d.e_Recovery || 0) * 100,
-                }))}
-                title="🔀 Ensemble Probabilities (HMM + BOCPD Fused)"
-                subtitle="After fusing HMM with Bayesian change-point detection. When BOCPD fires, mass shifts from Bull/Euphoria → Correction/Crisis."
-                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
-                stacked
-                yDomain={[0, 100]}
-                yFormat={v => `${v.toFixed(0)}%`}
-                height={220}
-              />
+                {/* ── Chart 3: Ensemble Probabilities (stacked) ── */}
+                <RegimeLineChart
+                  data={tl.map(d => ({
+                    date: d.date,
+                    Bull: (d.e_Bull || 0) * 100,
+                    Euphoria: (d.e_Euphoria || 0) * 100,
+                    Correction: (d.e_Correction || 0) * 100,
+                    Crisis: (d.e_Crisis || 0) * 100,
+                    Recovery: (d.e_Recovery || 0) * 100,
+                  }))}
+                  title="🔀 Ensemble (HMM + BOCPD)"
+                  subtitle="Fused probabilities. BOCPD shifts mass from Bull/Euphoria → Correction/Crisis."
+                  series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
+                  stacked
+                  yDomain={[0, 100]}
+                  yFormat={v => `${v.toFixed(0)}%`}
+                  height={200}
+                />
 
-              {/* ── Chart 4: Individual Regime Lines (non-stacked overlay) ── */}
-              <RegimeLineChart
-                data={tl.map(d => ({
-                  date: d.date, regime: d.regime,
-                  Bull: (d.e_Bull || 0) * 100,
-                  Crisis: (d.e_Crisis || 0) * 100,
-                  Correction: (d.e_Correction || 0) * 100,
-                  Recovery: (d.e_Recovery || 0) * 100,
-                  Euphoria: (d.e_Euphoria || 0) * 100,
-                }))}
-                title="📊 Regime Probability Lines (Ensemble)"
-                subtitle="Individual regime probability traces. Crossovers indicate regime transitions. Hover to compare exact values."
-                series={[
-                  { key: "Bull", label: "Bull", color: "#42be65", width: 2 },
-                  { key: "Crisis", label: "Crisis", color: "#ff8389", width: 2 },
-                  { key: "Correction", label: "Correction", color: "#fb923c", width: 1.5 },
-                  { key: "Recovery", label: "Recovery", color: "#60a5fa", width: 1.5 },
-                  { key: "Euphoria", label: "Euphoria", color: "#fbbf24", width: 1, dash: "3,2" },
-                ]}
-                yDomain={[0, 100]}
-                yFormat={v => `${v.toFixed(0)}%`}
-                regimeBands={{ key: "regime" }}
-                height={240}
-              />
+                {/* ── Chart 4: Individual Regime Lines (non-stacked overlay) ── */}
+                <RegimeLineChart
+                  data={tl.map(d => ({
+                    date: d.date, regime: d.regime,
+                    Bull: (d.e_Bull || 0) * 100,
+                    Crisis: (d.e_Crisis || 0) * 100,
+                    Correction: (d.e_Correction || 0) * 100,
+                    Recovery: (d.e_Recovery || 0) * 100,
+                    Euphoria: (d.e_Euphoria || 0) * 100,
+                  }))}
+                  title="📊 Regime Probability Lines"
+                  subtitle="Crossovers indicate transitions. Hover to compare values."
+                  series={[
+                    { key: "Bull", label: "Bull", color: "#42be65", width: 2 },
+                    { key: "Crisis", label: "Crisis", color: "#ff8389", width: 2 },
+                    { key: "Correction", label: "Correction", color: "#fb923c", width: 1.5 },
+                    { key: "Recovery", label: "Recovery", color: "#60a5fa", width: 1.5 },
+                    { key: "Euphoria", label: "Euphoria", color: "#fbbf24", width: 1, dash: "3,2" },
+                  ]}
+                  yDomain={[0, 100]}
+                  yFormat={v => `${v.toFixed(0)}%`}
+                  regimeBands={{ key: "regime" }}
+                  height={200}
+                />
+              </div>
 
               {/* ── Regime Timeline (compact bar) ── */}
               <div style={cardS}>
