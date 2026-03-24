@@ -1563,6 +1563,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
   // Parse regimeCtx
   let state5 = "neutral", acceleration = 0, duration = 1, transition = null, durationModel = null, threeStage = null;
+  let volSignal = 0, vixInversion = false;
   if (typeof regimeCtx === "string") {
     if (regimeCtx === "bull") state5 = "mild_risk_on";
     else if (regimeCtx === "bear") state5 = "mild_risk_off";
@@ -1574,6 +1575,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     transition = regimeCtx.transition || null;
     durationModel = regimeCtx.durationModel || null;
     threeStage = regimeCtx.threeStage || null;
+    volSignal = regimeCtx.volSignal || 0;
+    vixInversion = regimeCtx.vixInversion || false;
   }
 
   // If three-stage context available, use effectiveDuration instead of raw duration
@@ -1625,9 +1628,14 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) entryBonus = 0.04;
   }
 
-  const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod;
+  // Vol regime modifier: compression amplifies risk-on, expansion amplifies risk-off
+  const volMod = volSignal > 0 ? 1.2 : volSignal < 0 ? 0.7 : 1.0;
+  // VIX inversion override: strong defensive signal
+  const vixMod = vixInversion ? 0.5 : 1.0;
+
+  const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1 / volMod : 1.0);
   // Entry bonus reaches aggressive categories in ANY state (including neutral after bear→neutral recovery)
-  const aggBonus = baseAggBonus * durationScale * accelMod * durationFwdMod + entryBonus;
+  const aggBonus = (baseAggBonus * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
   const kellyMult = baseKellyMult;
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
@@ -3522,7 +3530,9 @@ export default function App() {
             if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
           }
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
-            threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) };
+            threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx),
+            volSignal: regData?.volSignal || 0,
+            vixInversion: regData?.vixInversion || false };
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
 
           // ── HMM ensemble overlay (conservative fusion, same logic as live optimizer) ──
@@ -3548,8 +3558,38 @@ export default function App() {
           }
         }
       }
-      if (!(isFirstAllocation || regimeChanged || mMonth % 3 === 0)) { continue; } // Quarterly (Jan/Apr/Jul/Oct) + regime changes
-      if (!isFirstAllocation && monthsSinceRebal < 3) { continue; } // Minimum 3 months between rebalances
+      // ── Signal-driven rebalance triggers (replaces rigid quarterly) ──
+      let shouldEvaluate = isFirstAllocation;
+
+      if (!shouldEvaluate && useRegime && historicalRegimes) {
+        const regData = historicalRegimes[monthKey];
+
+        // Trigger 1: Regime change (existing)
+        if (regimeChanged) shouldEvaluate = true;
+
+        // Trigger 2: Stress acceleration crossover (±0.3 threshold)
+        if (regData?.accelTrigger) shouldEvaluate = true;
+
+        // Trigger 3: VIX term structure inversion (leading signal)
+        if (regData?.vixInversion) shouldEvaluate = true;
+
+        // Trigger 4: Volatility regime shift
+        if (mi > 0) {
+          const prevReg = historicalRegimes[simDates[mi - 1]];
+          if (prevReg && regData?.volRegime !== prevReg.volRegime) shouldEvaluate = true;
+        }
+
+        // Trigger 5: Quarterly fallback (but only if no signal-driven trigger in last 2 months)
+        if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= 2) shouldEvaluate = true;
+      } else if (!shouldEvaluate) {
+        // No regime data: fall back to quarterly
+        if (mMonth % 3 === 0) shouldEvaluate = true;
+      }
+
+      // Minimum cooldown: 1 month between rebalances (was 3)
+      if (!isFirstAllocation && monthsSinceRebal < 1) shouldEvaluate = false;
+
+      if (!shouldEvaluate) continue;
       // Yield to UI every evaluation to prevent freeze
       setBtProgress(`Evaluating ${monthKey}...`);
       await new Promise(r => setTimeout(r, 0));

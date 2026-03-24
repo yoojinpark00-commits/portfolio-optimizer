@@ -261,7 +261,11 @@ function computeScoreAtDate(data, dateStr) {
   if (totalW > 0) composite /= totalW; // normalize by actual weights present
   composite *= totalW / 1.0; // scale back (all weights sum to 1.0)
 
-  return { composite, scores };
+  // Extract raw VIX data for regime acceleration / vol decomposition
+  const vixLevel = vixObs?.value ?? null;
+  const vixRatio = (vixObs && vix3mObs && vix3mObs.value > 0) ? vixObs.value / vix3mObs.value : null;
+
+  return { composite, scores, vixLevel, vixRatio };
 }
 
 // ═══ COMPUTE LATEST REGIME (v2 — daily, 5-state, with acceleration) ═══
@@ -380,7 +384,7 @@ function computeMonthlyRegimesV2(data) {
     const maxMonth = year === currentYear ? currentMonth : 12;
     for (let month = 1; month <= maxMonth; month++) {
       const dateStr = `${year}-${String(month).padStart(2, "0")}-28`;
-      const { composite, scores } = computeScoreAtDate(data, dateStr);
+      const { composite, scores, vixLevel, vixRatio } = computeScoreAtDate(data, dateStr);
 
       const state5 = classify5State(composite);
       const regime = to3State(state5);
@@ -391,6 +395,58 @@ function computeMonthlyRegimesV2(data) {
       const prevScore = computeScoreAtDate(data, prevDateStr).composite;
       const acceleration = composite - prevScore;
 
+      // ── Stress velocity & acceleration (3-month smoothed) ──
+      // Velocity = rate of change of composite over 3 months
+      // Acceleration = rate of change of velocity (second derivative)
+      let stressVelocity = 0, stressAcceleration = 0, accelTrigger = false;
+      if (results.length >= 3) {
+        const s0 = results[results.length - 3].score;
+        const s1 = results[results.length - 2].score;
+        const s2 = results[results.length - 1].score;
+        const s3 = Math.round(composite * 100) / 100;
+        // Smoothed velocity: average of last 3 monthly deltas
+        const v1 = s2 - s1;
+        const v2 = s3 - s2;
+        const v0 = s1 - s0;
+        stressVelocity = (v0 + v1 + v2) / 3;
+        // Acceleration: change in velocity
+        const prevVelocity = (results.length >= 4)
+          ? (results[results.length - 4].score - results[results.length - 3].score + v0 + v1) / 3
+          : v0;
+        stressAcceleration = stressVelocity - prevVelocity;
+        // Trigger when acceleration crosses ±0.3 threshold
+        accelTrigger = Math.abs(stressAcceleration) >= 0.3;
+      } else if (results.length >= 1) {
+        stressVelocity = acceleration;
+      }
+
+      // ── VIX term structure signals ──
+      const vixTermStructure = vixRatio ?? null; // VIX/VIX3M: >1.0 = inverted, <0.85 = complacent
+      const vixInversion = vixRatio != null ? vixRatio > 1.0 : false;
+
+      // ── Volatility regime decomposition ──
+      let volRegime = "normal";
+      let volSignal = 0; // -1 reduce risk, 0 hold, +1 add risk
+      if (vixLevel != null) {
+        if (vixLevel > 25) {
+          volRegime = "elevated";
+          volSignal = -1;
+        } else if (vixLevel < 15 && vixRatio != null && vixRatio < 0.92) {
+          volRegime = "compression";
+          volSignal = 1;
+        } else if (results.length >= 3) {
+          // Check if VIX is rising >20% from 3-month low
+          const recentVix = results.slice(-3).map(r => r.vixLevel).filter(v => v != null);
+          if (recentVix.length > 0) {
+            const vix3mLow = Math.min(...recentVix);
+            if (vix3mLow > 0 && vixLevel > vix3mLow * 1.20) {
+              volRegime = "expansion";
+              volSignal = -1;
+            }
+          }
+        }
+      }
+
       results.push({
         date: `${year}-${String(month).padStart(2, "0")}`,
         score: Math.round(composite * 100) / 100,
@@ -399,6 +455,18 @@ function computeMonthlyRegimesV2(data) {
         state5,
         acceleration: Math.round(acceleration * 100) / 100,
         zScores: Object.fromEntries(Object.entries(scores).map(([k, s]) => [k, Math.round(s.z * 100) / 100])),
+        // New regime acceleration fields
+        stressVelocity: Math.round(stressVelocity * 1000) / 1000,
+        stressAcceleration: Math.round(stressAcceleration * 1000) / 1000,
+        accelTrigger,
+        // VIX term structure
+        vixLevel: vixLevel != null ? Math.round(vixLevel * 100) / 100 : null,
+        vixRatio: vixRatio != null ? Math.round(vixRatio * 1000) / 1000 : null,
+        vixTermStructure: vixTermStructure != null ? Math.round(vixTermStructure * 1000) / 1000 : null,
+        vixInversion,
+        // Volatility regime decomposition
+        volRegime,
+        volSignal,
       });
     }
   }
