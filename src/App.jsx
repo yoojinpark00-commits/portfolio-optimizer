@@ -1930,11 +1930,15 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const sectorConcPenalty = maxSectorWt > 0.40 ? -0.05 * (maxSectorWt - 0.40) : 0;
 
     // ── SPY overlap penalty: if portfolio is >85% correlated with SPY, you should just buy SPY ──
+    // ETF-only universe is inherently SPY-correlated — minimize penalty to avoid
+    // forcing the optimizer into exotic/niche ETFs just for differentiation
     let wtdSpyCorr = 0;
     for (let i = 0; i < n; i++) wtdSpyCorr += (alloc[i] / (deployAmt || 1)) * spyCorr[i];
     // Also add existing positions' SPY correlation
     for (let i = 0; i < nEx; i++) wtdSpyCorr += exW[i] * gc(itemCats[i], "US Large Cap");
-    const spyPenalty = wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0; // penalize high overlap, reward differentiation
+    const hasStocks = candidates.some(c => c.type === "stock");
+    const spyPenaltyScale = hasStocks ? 1.0 : 0.15; // minimize for ETF-only mode
+    const spyPenalty = (wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0) * spyPenaltyScale;
 
     // ── Factor diversification: reward balanced factor exposure ──
     const factorDiv = hasFactors ? factorDiversificationScore(alloc, candidates, deployAmt) : 0;
