@@ -3405,7 +3405,7 @@ export default function App() {
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
   const [useRegime, setUseRegime] = useState(true); // Regime-adaptive toggle
   const [taxState, setTaxState] = useState("None"); // State for tax calc
-  const [includeStocks, setIncludeStocks] = useState(false); // ETF+Stocks toggle
+  const [includeStocks, setIncludeStocks] = useState("etf"); // "etf" | "stocks" | "both"
   const [optResult, setOptResult] = useState(null);
   const [optRunning, setOptRunning] = useState(false);
   const [recPrices, setRecPrices] = useState({}); // cached live prices for optimizer recommendations
@@ -3815,9 +3815,11 @@ export default function App() {
     ];
     const benchmarks = ["SPY"];
     // For stocks: use historical S&P 500 top 30 by year (no survivorship bias)
-    const btStocks = includeStocks ? SP500_ALL_TICKERS : [];
+    const btStocks = (includeStocks === "stocks" || includeStocks === "both") ? SP500_ALL_TICKERS : [];
+    // In stocks-only mode, skip ETF universe (except benchmarks for comparison)
+    const btETFsFiltered = includeStocks === "stocks" ? [] : btETFs;
 
-    const allSymbols = [...new Set([...btETFs, ...benchmarks, ...btStocks])];
+    const allSymbols = [...new Set([...btETFsFiltered, ...benchmarks, ...btStocks])];
     setBtProgress(`Fetching ${allSymbols.length} symbols (2005-2025)...`);
 
     let histData = {};
@@ -4542,7 +4544,7 @@ export default function App() {
       "XLK","XLF","XLV","XLE","XLU","XLRE","SOXX","ARKK","ICLN",
       "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","HDV","DGRO",
     ];
-    const btStocks = includeStocks ? SP500_ALL_TICKERS : [];
+    const btStocks = (includeStocks === "stocks" || includeStocks === "both") ? SP500_ALL_TICKERS : [];
     const allSymbols = [...new Set([...btETFs, "SPY", ...btStocks])];
 
     setSimProgress(`Fetching ${allSymbols.length} symbols...`);
@@ -4948,7 +4950,10 @@ useEffect(() => {
     if (typeof saved.useKelly === "boolean") setUseKelly(saved.useKelly);
     if (typeof saved.useRegime === "boolean") setUseRegime(saved.useRegime);
     if (typeof saved.taxState === "string") setTaxState(saved.taxState);
-    if (typeof saved.includeStocks === "boolean") setIncludeStocks(saved.includeStocks);
+    // Backward compat: old boolean → new string
+    if (typeof saved.includeStocks === "string") setIncludeStocks(saved.includeStocks);
+    else if (saved.includeStocks === true) setIncludeStocks("both");
+    else if (saved.includeStocks === false) setIncludeStocks("etf");
 
     if (typeof saved.sc === "string") setSc(saved.sc);
     if (typeof saved.so === "boolean") setSo(saved.so);
@@ -5093,7 +5098,7 @@ useEffect(() => {
   }), [sq, sc]);
 
   const frontier = useMemo(() => {
-    try { if (cashBalance <= 0) return null; const fCands = includeStocks ? [...ETF_DB, ...STOCK_OPT].slice(0, 40) : ETF_DB.slice(0, 30); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
+    try { if (cashBalance <= 0) return null; const fCands = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT].slice(0, 40) : includeStocks === "stocks" ? STOCK_OPT.slice(0, 30) : ETF_DB.slice(0, 30); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
   }, [allPos, cashBalance, holdingsVal]);
 
   // ─── Ticker search ───
@@ -5365,7 +5370,7 @@ useEffect(() => {
 
     try {
     // ── Step 1: Fetch trailing 12-month history for all candidates ──
-    const baseCandidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
+    const baseCandidates = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT] : includeStocks === "stocks" ? STOCK_OPT : ETF_DB;
     const tickers = baseCandidates.map(c => c.t);
     // Compute date range: 13 months back (need 12 months of returns = 13 price points)
     const endDate = new Date().toISOString().slice(0, 10);
@@ -5907,7 +5912,7 @@ useEffect(() => {
           <div style={{ ...cardS, background: "rgba(120,169,255,.05)", borderColor: "rgba(96,165,250,.12)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div><div style={{ fontSize: 13, fontWeight: 700 }}>🎯 Deploy ${cashBalance.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Fetches trailing 12-month history for all candidates, computes recency-weighted returns and volatility with return shrinkage, then runs 6,000 Monte Carlo simulations. SPY-overlap penalty rewards differentiation. {includeStocks ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
+                <div style={{ fontSize: 10, color: cs.dim, marginTop: 2 }}>Fetches trailing 12-month history for all candidates, computes recency-weighted returns and volatility with return shrinkage, then runs 6,000 Monte Carlo simulations. SPY-overlap penalty rewards differentiation. {includeStocks !== "etf" ? "Stocks filtered to S&P 500 sector leaders." : ""}</div></div>
               {cashBalance <= 0 && <div style={{ padding: "8px 12px", borderRadius: 0, background: "rgba(255,171,145,.08)", border: "1px solid rgba(251,191,36,.12)", fontSize: 10, color: cs.yellow }}>← Add cash in "My Portfolio" tab first</div>}
             </div>
 
@@ -5944,10 +5949,11 @@ useEffect(() => {
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
                   <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (hmmResult ? `${hmmResult.currentEnsemble.name} (HMM+FRED)` : regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
                 </button>
-                <button onClick={() => setIncludeStocks(v => !v)} style={{ padding: "7px 10px", borderRadius: 0, border: `1px solid ${includeStocks ? "rgba(120,169,255,.2)" : "#393939"}`, background: includeStocks ? "rgba(120,169,255,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
-                  <span style={{ fontSize: 9, color: includeStocks ? cs.blue : cs.dim, fontWeight: 600 }}>📈</span>
-                  <span style={{ fontSize: 8, color: includeStocks ? cs.blue : cs.dim }}>{includeStocks ? "ETF+Stocks" : "ETF Only"}</span>
-                </button>
+                {["etf", "stocks", "both"].map(mode => (
+                  <button key={mode} onClick={() => setIncludeStocks(mode)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${includeStocks === mode ? "rgba(120,169,255,.25)" : "#393939"}`, background: includeStocks === mode ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
+                    <span style={{ fontSize: 9, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF Only" : mode === "stocks" ? "Stocks Only" : "ETF+Stocks"}</span>
+                  </button>
+                ))}
               </div>
 
               {ot === "max_return" && srMode === "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🚀 Max Return + VaR: aggressive growth with a light drawdown brake. Return is weighted 1.5x with a mild VaR penalty. Hard constraints (min 3 positions, 25% stock cap, return shrinkage) still apply.</div>}
@@ -5955,7 +5961,7 @@ useEffect(() => {
               {ot === "risk_parity" && <div style={{ fontSize: 8, color: cs.purple, marginBottom: 4 }}>⚖️ Risk Parity: each position contributes equal portfolio risk. Low-vol assets get higher weight, high-vol assets get lower weight. Iterative risk budgeting with Sharpe tiebreaker. Best in uncertain regimes where you want max diversification without directional bets.</div>}
 
               <button onClick={runOptimizer} disabled={optRunning} style={{ width: "100%", padding: "11px", borderRadius: 0, border: "none", background: optRunning ? "#2a2a2a" : cs.blue, color: optRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: optRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
-                {optRunning ? "Fetching trailing data & optimizing..." : `Run Optimizer — Deploy $${cashBalance.toLocaleString()}${includeStocks ? " (ETF+Stocks)" : ""}${useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}`}
+                {optRunning ? "Fetching trailing data & optimizing..." : `Run Optimizer — Deploy $${cashBalance.toLocaleString()} (${includeStocks === "both" ? "ETF+Stocks" : includeStocks === "stocks" ? "Stocks" : "ETF"})${useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}`}
               </button>
               {useRegime && !regimeData && <div style={{ marginTop: 5, fontSize: 8, color: cs.yellow }}>⚠ Regime data loading — fetches automatically on app launch from 12 FRED macro indicators. If this persists, check FRED_API_KEY in Vercel env vars.</div>}
 
@@ -6127,7 +6133,7 @@ useEffect(() => {
                     setRebalRunning(true);
                     try {
                     // ── Fetch live trailing data (same as Deploy Cash optimizer) ──
-                    const baseCandidates = includeStocks ? [...ETF_DB, ...STOCK_OPT] : ETF_DB;
+                    const baseCandidates = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT] : includeStocks === "stocks" ? STOCK_OPT : ETF_DB;
                     const tickers = baseCandidates.map(c => c.t);
                     const endDate = new Date().toISOString().slice(0, 10);
                     const startDate = new Date(Date.now() - 14 * 30 * 86400000).toISOString().slice(0, 10);
@@ -7624,9 +7630,11 @@ useEffect(() => {
                 <button onClick={() => setUseRegime(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${useRegime ? "rgba(255,171,145,.2)" : "#393939"}`, background: useRegime ? "rgba(255,171,145,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>Regime-Adaptive {useRegime ? "ON" : "OFF"}</span>
                 </button>
-                <button onClick={() => setIncludeStocks(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${includeStocks ? "rgba(120,169,255,.2)" : "#393939"}`, background: includeStocks ? "rgba(120,169,255,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
-                  <span style={{ fontSize: 9, color: includeStocks ? cs.blue : cs.dim, fontWeight: 600 }}>{includeStocks ? "ETF+Stocks" : "ETF Only"}</span>
-                </button>
+                {["etf", "stocks", "both"].map(mode => (
+                  <button key={mode} onClick={() => setIncludeStocks(mode)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${includeStocks === mode ? "rgba(120,169,255,.25)" : "#393939"}`, background: includeStocks === mode ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
+                    <span style={{ fontSize: 8, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF" : mode === "stocks" ? "Stocks" : "ETF+Stocks"}</span>
+                  </button>
+                ))}
                 {[{k:"std",l:"Std SR"},{k:"var",l:"VaR SR"},{k:"vol2",l:"σ² SR"}].map(m => (
                   <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${srMode === m.k ? "rgba(66,190,101,.2)" : "#393939"}`, background: srMode === m.k ? "rgba(66,190,101,.06)" : "transparent", color: srMode === m.k ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
                 ))}
@@ -7647,7 +7655,7 @@ useEffect(() => {
           {btResult && (() => {
             const { curves, summary, annual, startCash: sc2 } = btResult;
             return <>
-              {includeStocks && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
+              {includeStocks !== "etf" && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
                 <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (2006–2025, ~100-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year. Covers 2008 crisis (AIG in Financials pre-crash, removed after), 2010 recovery (V/MA enter), 2017 tech shift (NVDA enters), 2020 COVID (TSLA in Consumer), and 2023 AI boom (SMCI). GE Industrial #1 in 2006, exits by 2018. Return shrinkage (80% cap) + SPY-overlap penalty.</div>
               </div>}
               {/* Interactive Equity Curve */}
@@ -7883,7 +7891,7 @@ useEffect(() => {
               </div>
 
               <div style={{ fontSize: 8, color: cs.muted, textAlign: "center", marginTop: 8 }}>
-                {btResult.etfsUsed} ETFs{includeStocks ? " + Stocks" : ""} · Quarterly + regime-triggered · 1.5% hurdle · SPY-overlap penalty · Return shrinkage · {ot.replace("_"," ")} · {srLabel}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})${btResult.regimeDurationModel ? " + Duration Model" : ""}` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
+                {btResult.etfsUsed} {includeStocks === "stocks" ? "Stocks" : includeStocks === "both" ? "ETFs + Stocks" : "ETFs"} · Quarterly + regime-triggered · 1.5% hurdle · SPY-overlap penalty · Return shrinkage · {ot.replace("_"," ")} · {srLabel}{useKelly ? " · ½Kelly" : ""}{useRegime ? ` · Regime (${btResult.regimeSource || "FRED"})${btResult.regimeDurationModel ? " + Duration Model" : ""}` : ""} · {btResult.tax?.rates?.lt?.toFixed(1)}% LT ({btResult.tax?.state === "None" ? "Federal" : btResult.tax?.state})
               </div>
             </>;
           })()}
