@@ -4203,7 +4203,14 @@ export default function App() {
         optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
         costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
         lossCarryover = newCarryover;
-        rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => ({ ticker: r.ticker, name: r.name, cat: r.cat, weight: +((newAlloc[r.ticker] || 0) * 100).toFixed(1), dollars: Math.round((newAlloc[r.ticker] || 0) * optValue) })).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
+        rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => {
+          const wt = newAlloc[r.ticker] || 0;
+          const posValue = Math.round(wt * optValue);
+          const posCostBasis = Math.round(newCostBasis[r.ticker] || 0);
+          const gl = posValue - posCostBasis;
+          const glPct = posCostBasis > 0 ? ((posValue / posCostBasis) - 1) * 100 : 0;
+          return { ticker: r.ticker, name: r.name, cat: r.cat, weight: +(wt * 100).toFixed(1), dollars: posValue, costBasis: posCostBasis, gl: Math.round(gl), glPct: +glPct.toFixed(1) };
+        }).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
           taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
           grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
           stGains: Math.round(stGains), ltGains: Math.round(ltGains),
@@ -7452,14 +7459,37 @@ useEffect(() => {
                 <span style={{ fontSize: 9, color: cs.dim }}>Starting Capital $</span>
                 <input type="number" value={btStartCash} onChange={e => setBtStartCash(Math.max(1000, +e.target.value || 100000))} style={{ ...inpS, width: 100, fontSize: 12, fontWeight: 600, textAlign: "right", color: cs.blue }} />
               </div>
-              <div style={{ fontSize: 9, color: cs.dim }}>
-                Strategy: <span style={{ color: cs.green, fontWeight: 600 }}>{ot.replace("_", " ")}</span>
-                {srMode !== "std" && <span style={{ color: cs.pink }}> · {srMode === "var" ? "VaR" : "σ²"} SR</span>}
-                {volTarget > 0 && <span style={{ color: cs.blue }}> · Vol {volTarget}%</span>}
-                {useKelly && <span style={{ color: cs.purple }}> · ½Kelly</span>}
-                {useRegime && <span style={{ color: cs.yellow }}> · Regime-Adaptive</span>}
-                {includeStocks && <span style={{ color: cs.blue }}> · ETF+Stocks</span>}
-                <span style={{ color: cs.purple }}> · Tax: {taxRates.lt.toFixed(1)}% LT</span>
+            </div>
+
+            {/* Strategy Selection */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 9, color: cs.dim, marginBottom: 6, fontFamily: mono2, letterSpacing: ".05em" }}>OPTIMIZATION STRATEGY</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
+                {[{ k: "max_sharpe", l: "Max Sharpe", d: "Risk-adjusted" }, { k: "min_vol", l: "Min Volatility", d: "Lowest risk" }, { k: "max_return", l: "Max Return", d: "Full aggressive" }, { k: "risk_parity", l: "Risk Parity", d: "Equal risk" }, { k: "balanced", l: "Balanced", d: "Multi-factor" }].map(o => (
+                  <button key={o.k} onClick={() => setOt(o.k)} style={{ flex: "1 1 90px", padding: "7px 10px", borderRadius: 0, border: "1px solid", borderColor: ot === o.k ? "rgba(66,190,101,.25)" : "#2a2a2a", background: ot === o.k ? "rgba(66,190,101,.08)" : "#1c1c1c", color: ot === o.k ? cs.green : cs.dim, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    <div style={{ fontSize: 10, fontWeight: 600 }}>{o.l}</div><div style={{ fontSize: 7, opacity: .7 }}>{o.d}</div>
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <button onClick={() => setUseKelly(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${useKelly ? "rgba(190,149,255,.2)" : "#393939"}`, background: useKelly ? "rgba(190,149,255,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: useKelly ? cs.purple : cs.dim, fontWeight: 600 }}>½ Kelly {useKelly ? "ON" : "OFF"}</span>
+                </button>
+                <button onClick={() => setUseRegime(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${useRegime ? "rgba(255,171,145,.2)" : "#393939"}`, background: useRegime ? "rgba(255,171,145,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>Regime-Adaptive {useRegime ? "ON" : "OFF"}</span>
+                </button>
+                <button onClick={() => setIncludeStocks(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${includeStocks ? "rgba(120,169,255,.2)" : "#393939"}`, background: includeStocks ? "rgba(120,169,255,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: includeStocks ? cs.blue : cs.dim, fontWeight: 600 }}>{includeStocks ? "ETF+Stocks" : "ETF Only"}</span>
+                </button>
+                {[{k:"std",l:"Std SR"},{k:"var",l:"VaR SR"},{k:"vol2",l:"σ² SR"}].map(m => (
+                  <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${srMode === m.k ? "rgba(66,190,101,.2)" : "#393939"}`, background: srMode === m.k ? "rgba(66,190,101,.06)" : "transparent", color: srMode === m.k ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
+                ))}
+                <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <span style={{ fontSize: 8, color: cs.dim }}>Vol Target</span>
+                  <input type="number" value={volTarget || ""} onChange={e => setVolTarget(Math.max(0, +e.target.value || 0))} placeholder="off" step="1" min="0" max="50" style={{ ...inpS, width: 45, fontSize: 10, textAlign: "center", color: cs.blue, padding: "4px 6px" }} />
+                  <span style={{ fontSize: 8, color: cs.dim }}>%</span>
+                </div>
+                <span style={{ fontSize: 8, color: cs.purple, fontFamily: mono2 }}>Tax: {taxRates.st.toFixed(0)}% ST / {taxRates.lt.toFixed(0)}% LT</span>
               </div>
             </div>
 
@@ -7613,6 +7643,7 @@ useEffect(() => {
                                         <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
                                         <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.weight}%</span>
                                         <span style={{ fontFamily: mono2, fontSize: 8, color: cs.muted, minWidth: 50, textAlign: "right" }}>{fmt$(h.dollars)}</span>
+                                        {h.glPct != null && h.glPct !== 0 && <span style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: h.glPct >= 0 ? cs.green : cs.red, minWidth: 45, textAlign: "right" }}>{h.glPct >= 0 ? "+" : ""}{h.glPct.toFixed(1)}%</span>}
                                       </div>
                                     ))}
                                     <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
