@@ -20,6 +20,7 @@ export default async function handler(req, res) {
 
   const isHistory = req.query.history === "true";
   const isAnalytics = req.query.analytics === "true";
+  const isFull = req.query.full === "true";
 
   // ── 10 FRED series: 6 original + 4 new ──
   const series = {
@@ -39,7 +40,7 @@ export default async function handler(req, res) {
     dgs10: "DGS10",            // 10Y Treasury yield (daily, inverse of bond price)
   };
 
-  const startDate = (isHistory || isAnalytics) ? "2005-01-01" : new Date(Date.now() - 3 * 365.25 * 86400000).toISOString().slice(0, 10);
+  const startDate = (isHistory || isAnalytics || isFull) ? "2005-01-01" : new Date(Date.now() - 3 * 365.25 * 86400000).toISOString().slice(0, 10);
 
   const data = {};
   const errors = [];
@@ -76,20 +77,20 @@ export default async function handler(req, res) {
   const regime = computeRegimeV2(data);
 
   let monthlyRegimes = null;
-  if (isHistory || isAnalytics) {
+  if (isHistory || isAnalytics || isFull) {
     monthlyRegimes = computeMonthlyRegimesV2(data);
   }
 
   let analytics = null;
-  if (isAnalytics && monthlyRegimes) {
+  if ((isAnalytics || isFull) && monthlyRegimes) {
     analytics = computeRegimeAnalytics(monthlyRegimes, data);
   }
 
   return res.status(200).json({
-    data: (isHistory || isAnalytics) ? undefined : data,
+    data: (isHistory || isAnalytics || isFull) ? undefined : data,
     regime,
-    monthlyRegimes: isHistory ? monthlyRegimes : undefined,
-    analytics,
+    monthlyRegimes: (isHistory || isFull) ? monthlyRegimes : undefined,
+    analytics: (isAnalytics || isFull) ? analytics : undefined,
     errors,
     version: 2,
   });
@@ -173,13 +174,24 @@ function to3State(state5) {
   return "neutral";
 }
 
+// ═══ BINARY SEARCH: find last index where arr[i].date <= dateStr (O(log n) vs O(n)) ═══
+function binarySearchLastLE(arr, dateStr) {
+  let lo = 0, hi = arr.length - 1, result = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].date <= dateStr) { result = mid; lo = mid + 1; }
+    else { hi = mid - 1; }
+  }
+  return result;
+}
+
 // ═══ COMPUTE DAILY COMPOSITE SCORE AT A GIVEN DATE ═══
 function computeScoreAtDate(data, dateStr) {
   const scores = {};
 
   // 1. HY OAS z-score (weight: 0.30)
   if (data.hy_oas?.length > 0) {
-    const idx = data.hy_oas.findLastIndex(d => d.date <= dateStr);
+    const idx = binarySearchLastLE(data.hy_oas, dateStr);
     if (idx >= 0) {
       scores.hy_oas = { z: rollingZScore(data.hy_oas.map(d => d.value), idx, 750), val: data.hy_oas[idx].value, w: 0.30 };
     }
@@ -195,7 +207,7 @@ function computeScoreAtDate(data, dateStr) {
 
   // 3. NFCI (weight: 0.15)
   if (data.nfci?.length > 0) {
-    const idx = data.nfci.findLastIndex(d => d.date <= dateStr);
+    const idx = binarySearchLastLE(data.nfci, dateStr);
     if (idx >= 0) {
       scores.nfci = { z: rollingZScore(data.nfci.map(d => d.value), idx, 156), val: data.nfci[idx].value, w: 0.15 };
     }
@@ -203,7 +215,7 @@ function computeScoreAtDate(data, dateStr) {
 
   // 4. 10Y-3M Yield Curve (weight: 0.10) — inversion = stress
   if (data.t10y3m?.length > 0) {
-    const idx = data.t10y3m.findLastIndex(d => d.date <= dateStr);
+    const idx = binarySearchLastLE(data.t10y3m, dateStr);
     if (idx >= 0) {
       // Negate: lower spread = more stress
       scores.t10y3m = { z: -rollingZScore(data.t10y3m.map(d => d.value), idx, 750), val: data.t10y3m[idx].value, w: 0.10 };
@@ -212,7 +224,7 @@ function computeScoreAtDate(data, dateStr) {
 
   // 5. TED Spread (weight: 0.05) — interbank stress
   if (data.ted?.length > 0) {
-    const idx = data.ted.findLastIndex(d => d.date <= dateStr);
+    const idx = binarySearchLastLE(data.ted, dateStr);
     if (idx >= 0) {
       scores.ted = { z: rollingZScore(data.ted.map(d => d.value), idx, 750), val: data.ted[idx].value, w: 0.05 };
     }
@@ -220,7 +232,7 @@ function computeScoreAtDate(data, dateStr) {
 
   // 6. Sahm Rule (weight: 0.10) — recession trigger
   if (data.sahm?.length > 0) {
-    const idx = data.sahm.findLastIndex(d => d.date <= dateStr);
+    const idx = binarySearchLastLE(data.sahm, dateStr);
     if (idx >= 0) {
       // Sahm > 0.5 historically = 100% recession
       const sahmVal = data.sahm[idx].value;
@@ -230,7 +242,7 @@ function computeScoreAtDate(data, dateStr) {
 
   // 7. Initial Claims rate-of-change (weight: 0.05)
   if (data.claims?.length > 0) {
-    const idx = data.claims.findLastIndex(d => d.date <= dateStr);
+    const idx = binarySearchLastLE(data.claims, dateStr);
     if (idx >= 0) {
       scores.claims = { z: rollingZScore(data.claims.map(d => d.value), idx, 156), val: data.claims[idx].value, w: 0.05 };
     }
@@ -239,8 +251,8 @@ function computeScoreAtDate(data, dateStr) {
   // 8. Cross-asset correlation signal (weight: 0.05)
   // Rising equity-gold correlation = flight-to-safety unwinding; negative = stress
   if (data.sp500?.length > 60 && data.gold?.length > 60) {
-    const spIdx = data.sp500.findLastIndex(d => d.date <= dateStr);
-    const goldIdx = data.gold.findLastIndex(d => d.date <= dateStr);
+    const spIdx = binarySearchLastLE(data.sp500, dateStr);
+    const goldIdx = binarySearchLastLE(data.gold, dateStr);
     if (spIdx > 60 && goldIdx > 60) {
       const spRets = toReturns(data.sp500.slice(Math.max(0, spIdx - 60), spIdx + 1).map(d => d.value));
       const goldRets = toReturns(data.gold.slice(Math.max(0, goldIdx - 60), goldIdx + 1).map(d => d.value));

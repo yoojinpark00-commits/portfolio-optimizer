@@ -3343,16 +3343,154 @@ export default function App() {
 
   const didHydrate = useRef(false);
 
+  // ── Combined fetch: single API call replaces 3 separate calls (36 FRED requests → 12) ──
+  const REGIME_CACHE_KEY = "regime_cache_v1";
+  const REGIME_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+  const fetchRegimeFull = useCallback(async () => {
+    setRegimeLoading(true); setRegimeError(""); setHmmLoading(true); setAnalyticsLoading(true);
+    try {
+      // Check localStorage cache first
+      try {
+        const cached = localStorage.getItem(REGIME_CACHE_KEY);
+        if (cached) {
+          const { data: cachedData, timestamp } = JSON.parse(cached);
+          if (Date.now() - timestamp < REGIME_CACHE_TTL && cachedData.regime) {
+            // Use cached data — restore all state
+            if (cachedData.regime) setRegimeData(cachedData);
+            if (cachedData.analytics) setRegimeAnalytics(cachedData.analytics);
+            // Run HMM on cached monthly regimes (client-side computation only)
+            if (cachedData.monthlyRegimes?.length) {
+              try {
+                const months = cachedData.monthlyRegimes.sort((a, b) => a.date.localeCompare(b.date));
+                const composite = months.map(m => m.score ?? 0);
+                const dates = months.map(m => m.date);
+                if (composite.length >= 30) {
+                  const model = hmmTrain(composite, 40);
+                  const filtered = hmmFilter(composite, model);
+                  const cpProb = runBOCPD(composite);
+                  const ensembleProbs = runEnsemble(filtered, cpProb);
+                  const currentFiltered = filtered[filtered.length - 1];
+                  const currentEnsemble = ensembleProbs[ensembleProbs.length - 1];
+                  const hmmRegimeIdx = currentFiltered.indexOf(Math.max(...currentFiltered));
+                  const ensRegimeIdx = currentEnsemble.indexOf(Math.max(...currentEnsemble));
+                  const regimePath = filtered.map(p => p.indexOf(Math.max(...p)));
+                  const forecast = hmmForecast(currentEnsemble, model.A, 12);
+                  const expDurations = model.A.map((row, i) => 1 / (1 - row[i] + 1e-300));
+                  const condStats = HMM_REGIMES.map((r, ri) => {
+                    const vals = composite.filter((_, t) => regimePath[t] === ri);
+                    if (vals.length < 3) return { ...r, meanScore: 0, count: 0, pctTime: 0 };
+                    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+                    return { ...r, meanScore: mean, count: vals.length, pctTime: vals.length / composite.length };
+                  });
+                  const alerts = [];
+                  const lastCP = cpProb[cpProb.length - 1];
+                  if (lastCP > 0.2) alerts.push({ source: "Change-Point", message: `CP probability ${(lastCP*100).toFixed(0)}% — regime transition may be underway`, severity: lastCP > 0.5 ? "high" : "medium" });
+                  if (hmmRegimeIdx !== ensRegimeIdx) alerts.push({ source: "Ensemble", message: `HMM → ${HMM_REGIMES[hmmRegimeIdx].name} vs Ensemble → ${HMM_REGIMES[ensRegimeIdx].name}`, severity: "medium" });
+                  const step = Math.max(1, Math.floor(dates.length / 120));
+                  const timeline = [];
+                  for (let i = 0; i < dates.length; i += step) {
+                    const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i] };
+                    HMM_REGIMES.forEach((r, ri) => { entry[`p_${r.name}`] = filtered[i][ri]; entry[`e_${r.name}`] = ensembleProbs[i][ri]; });
+                    timeline.push(entry);
+                  }
+                  setHmmResult({
+                    model, currentHMM: { idx: hmmRegimeIdx, probs: currentFiltered, name: HMM_REGIMES[hmmRegimeIdx].name, color: HMM_REGIMES[hmmRegimeIdx].color },
+                    currentEnsemble: { idx: ensRegimeIdx, probs: currentEnsemble, name: HMM_REGIMES[ensRegimeIdx].name, color: HMM_REGIMES[ensRegimeIdx].color },
+                    state5: hmmToState5(currentEnsemble), forecast, expDurations, condStats, alerts, timeline, cpProb, transMatrix: model.A, agreement: hmmRegimeIdx === ensRegimeIdx, dates,
+                  });
+                }
+              } catch (e) { console.warn("HMM analysis on cached data failed:", e); }
+            }
+            setRegimeLoading(false); setHmmLoading(false); setAnalyticsLoading(false);
+            return;
+          }
+        }
+      } catch (e) { /* cache miss, proceed with fetch */ }
+
+      const resp = await fetch("/api/regime?full=true");
+      const text = await resp.text();
+      let json;
+      try { json = JSON.parse(text); } catch (e) { throw new Error("Server returned non-JSON: " + text.slice(0, 100)); }
+
+      if (resp.ok) {
+        // Set regime data
+        if (json.regime) setRegimeData(json);
+
+        // Set analytics
+        if (json.analytics) setRegimeAnalytics(json.analytics);
+
+        // Cache the response
+        try { localStorage.setItem(REGIME_CACHE_KEY, JSON.stringify({ data: json, timestamp: Date.now() })); } catch (e) { /* localStorage full, ignore */ }
+
+        // Run HMM on monthly regimes (client-side only — no additional API call)
+        if (json.monthlyRegimes?.length) {
+          try {
+            const months = json.monthlyRegimes.sort((a, b) => a.date.localeCompare(b.date));
+            const composite = months.map(m => m.score ?? 0);
+            const dates = months.map(m => m.date);
+
+            if (composite.length >= 30) {
+              const model = hmmTrain(composite, 40);
+              const filtered = hmmFilter(composite, model);
+              const cpProb = runBOCPD(composite);
+              const ensembleProbs = runEnsemble(filtered, cpProb);
+
+              const currentFiltered = filtered[filtered.length - 1];
+              const currentEnsemble = ensembleProbs[ensembleProbs.length - 1];
+              const hmmRegimeIdx = currentFiltered.indexOf(Math.max(...currentFiltered));
+              const ensRegimeIdx = currentEnsemble.indexOf(Math.max(...currentEnsemble));
+              const regimePath = filtered.map(p => p.indexOf(Math.max(...p)));
+              const forecast = hmmForecast(currentEnsemble, model.A, 12);
+              const expDurations = model.A.map((row, i) => 1 / (1 - row[i] + 1e-300));
+
+              const condStats = HMM_REGIMES.map((r, ri) => {
+                const vals = composite.filter((_, t) => regimePath[t] === ri);
+                if (vals.length < 3) return { ...r, meanScore: 0, count: 0, pctTime: 0 };
+                const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+                return { ...r, meanScore: mean, count: vals.length, pctTime: vals.length / composite.length };
+              });
+
+              const alerts = [];
+              const lastCP = cpProb[cpProb.length - 1];
+              if (lastCP > 0.2) alerts.push({ source: "Change-Point", message: `CP probability ${(lastCP*100).toFixed(0)}% — regime transition may be underway`, severity: lastCP > 0.5 ? "high" : "medium" });
+              if (hmmRegimeIdx !== ensRegimeIdx) alerts.push({ source: "Ensemble", message: `HMM → ${HMM_REGIMES[hmmRegimeIdx].name} vs Ensemble → ${HMM_REGIMES[ensRegimeIdx].name}`, severity: "medium" });
+
+              const step = Math.max(1, Math.floor(dates.length / 120));
+              const timeline = [];
+              for (let i = 0; i < dates.length; i += step) {
+                const entry = { date: dates[i], composite: composite[i], cpProb: cpProb[i], regime: regimePath[i] };
+                HMM_REGIMES.forEach((r, ri) => { entry[`p_${r.name}`] = filtered[i][ri]; entry[`e_${r.name}`] = ensembleProbs[i][ri]; });
+                timeline.push(entry);
+              }
+
+              setHmmResult({
+                model,
+                currentHMM: { idx: hmmRegimeIdx, probs: currentFiltered, name: HMM_REGIMES[hmmRegimeIdx].name, color: HMM_REGIMES[hmmRegimeIdx].color },
+                currentEnsemble: { idx: ensRegimeIdx, probs: currentEnsemble, name: HMM_REGIMES[ensRegimeIdx].name, color: HMM_REGIMES[ensRegimeIdx].color },
+                state5: hmmToState5(currentEnsemble),
+                forecast, expDurations, condStats, alerts, timeline, cpProb,
+                transMatrix: model.A,
+                agreement: hmmRegimeIdx === ensRegimeIdx,
+                dates,
+              });
+            }
+          } catch (e) { console.warn("HMM analysis failed:", e); }
+        }
+      } else {
+        setRegimeError(json.error || "Failed to fetch regime data");
+      }
+    } catch (e) { setRegimeError("Error: " + e.message); }
+    setRegimeLoading(false); setHmmLoading(false); setAnalyticsLoading(false);
+  }, []);
+
   // ── Auto-fetch regime data on mount ──
   const didFetchRegime = useRef(false);
   useEffect(() => {
     if (didFetchRegime.current) return;
     didFetchRegime.current = true;
-    // Fetch both live regime and full analytics in parallel on app launch
-    fetchRegime();
-    fetchRegimeAnalytics();
-    runHmmAnalysis();
-  }, [fetchRegime, fetchRegimeAnalytics, runHmmAnalysis]);
+    fetchRegimeFull();
+  }, [fetchRegimeFull]);
 
   // ── Backtest runner ──
   const runBacktest = useCallback(async () => {
