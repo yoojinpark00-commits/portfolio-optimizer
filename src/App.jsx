@@ -3482,6 +3482,12 @@ export default function App() {
     let lastRebalanceMonth = null;
     let lastBestWeights = null; // for warm-starting optimizer
     const btTaxRates = getTaxRates(taxState);
+    // Tax-aware rebalancing parameters: high-tax states should trade less
+    const isHighTax = btTaxRates.st > 40; // CA, NY, NJ, etc.
+    const isMedTax = btTaxRates.st > 30;
+    const taxCooldownMonths = isHighTax ? 3 : 2; // high-tax: 3-month min, else 2
+    const taxSignalThreshold = isHighTax ? 3 : 2; // high-tax: need 3 confirming signals, else 2
+    const taxHurdleFloor = isHighTax ? 2.5 : isMedTax ? 2.0 : 1.5; // scale floor with tax rate
     const rebalanceEvents = [];
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
     // Only simulate months where SPY data actually exists
@@ -3563,24 +3569,24 @@ export default function App() {
           }
         }
       }
-      // ── Signal-driven rebalance triggers with confirmation requirement ──
-      // Require 2+ signals OR a regime change to trigger rebalance (reduces whipsaw)
+      // ── Tax-aware signal-driven rebalance triggers ──
+      // High-tax states need stronger confirmation to justify the tax drag
       let shouldEvaluate = isFirstAllocation;
 
       if (!shouldEvaluate && useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
 
-        // Regime change is strong enough to trigger alone
+        // Regime change is strong enough to trigger alone (even in high-tax states)
         if (regimeChanged) shouldEvaluate = true;
 
-        // For other signals, count confirmations — need 2+ to trigger
+        // For other signals, count confirmations — threshold scales with tax rate
         if (!shouldEvaluate) {
           let signalCount = 0;
 
-          // Signal 1: Stress acceleration crossover (raised threshold from 0.3 to 0.5)
+          // Signal 1: Stress acceleration crossover
           if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.5) signalCount++;
 
-          // Signal 2: Volatility regime shift (not just any change — only meaningful ones)
+          // Signal 2: Volatility regime shift (only meaningful transitions)
           if (mi > 0) {
             const prevReg = historicalRegimes[simDates[mi - 1]];
             const volShift = regData?.volRegime !== prevReg?.volRegime;
@@ -3592,22 +3598,21 @@ export default function App() {
             if (meaningfulShift) signalCount++;
           }
 
-          // Signal 3: VIX inversion (tilt modifier only, counts toward confirmation but doesn't trigger alone)
+          // Signal 3: VIX inversion
           if (regData?.vixInversion) signalCount++;
 
-          // Need 2+ confirming signals to trigger a non-quarterly rebalance
-          if (signalCount >= 2) shouldEvaluate = true;
+          // Tax-aware threshold: high-tax states need 3 signals, others need 2
+          if (signalCount >= taxSignalThreshold) shouldEvaluate = true;
         }
 
-        // Quarterly fallback (only if no signal-driven trigger recently)
-        if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= 2) shouldEvaluate = true;
+        // Quarterly fallback (cooldown scales with tax rate)
+        if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= taxCooldownMonths) shouldEvaluate = true;
       } else if (!shouldEvaluate) {
-        // No regime data: fall back to quarterly
         if (mMonth % 3 === 0) shouldEvaluate = true;
       }
 
-      // Minimum cooldown: 2 months between rebalances (balance patience vs responsiveness)
-      if (!isFirstAllocation && monthsSinceRebal < 2) shouldEvaluate = false;
+      // Tax-aware minimum cooldown between rebalances
+      if (!isFirstAllocation && monthsSinceRebal < taxCooldownMonths) shouldEvaluate = false;
 
       if (!shouldEvaluate) continue;
       // Yield to UI every evaluation to prevent freeze
@@ -3863,14 +3868,33 @@ export default function App() {
       const txCosts = computeTransactionCosts(prevAlloc, newAlloc, optValue, etfDbMap);
       const txCostPct = txCosts.totalCostPct;
 
-      // Hurdle: tax cost + transaction costs × multiplier, with 1.5% minimum floor
+      // ── Tax-aware hurdle: floor and multiplier scale with tax rate ──
+      // LT holding bias: if many positions are approaching 12-month LT threshold,
+      // raise the hurdle to discourage selling at ST rates when LT is weeks away
+      let ltProximityBonus = 0;
+      for (const ticker of prevTickers) {
+        const estMonth = posEstablishedMap[ticker];
+        if (estMonth) {
+          const holdingMonths = dateToIdx[monthKey] - dateToIdx[estMonth];
+          // If 9-11 months held (close to LT), add significant hurdle penalty for selling
+          if (holdingMonths >= 9 && holdingMonths < 12) {
+            const wt = prevAlloc[ticker] || 0;
+            const monthsToLT = 12 - holdingMonths;
+            // Penalty proportional to position weight and proximity to LT
+            // At 11 months (1 month to LT): penalty = wt * 3% (very expensive to sell now)
+            // At 9 months (3 months to LT): penalty = wt * 1%
+            ltProximityBonus += wt * (4 - monthsToLT) * 0.01;
+          }
+        }
+      }
+
       const taxHurdle = isFirstAllocation ? -999 :
         btTransition && btTransition.startsWith("bear→") && btDuration >= 2 && btDuration <= 8 ? tcPct * 0.5 :
         curAlpha > 3 ? tcPct * 2.0 :
         curAlpha < -2 ? tcPct * 0.8 :
         tcPct * 1.2;
-      const minFloor = isFirstAllocation ? -999 : 1.5;
-      const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01 + txCostPct;
+      const minFloor = isFirstAllocation ? -999 : taxHurdleFloor; // scales with tax rate
+      const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01 + txCostPct + ltProximityBonus;
 
       if (isFirstAllocation || retImp > hurdle) {
         // Deduct tax AND transaction costs BEFORE computing new cost basis
@@ -4209,6 +4233,11 @@ export default function App() {
       let simAnnualOrdOffsetUsed = 0; // Fix #3: track $3k/year limit
       let simLastOffsetYear = 0;
       const simTaxRates = getTaxRates(taxState);
+      // Tax-aware parameters for simulation (same as main backtest)
+      const simHighTax = simTaxRates.st > 40;
+      const simCooldown = simHighTax ? 3 : 2;
+      const simSigThreshold = simHighTax ? 3 : 2;
+      const simHurdleFloor = simHighTax ? 2.5 : simTaxRates.st > 30 ? 2.0 : 1.5;
       let simPeak = startCash, simMaxDD = 0;
       const simMonthlyRets = [];
 
@@ -4234,7 +4263,7 @@ export default function App() {
           simMonthlyRets.push(0);
         }
 
-        // Signal-driven rebalance triggers (matches main backtest)
+        // Tax-aware signal-driven rebalance triggers (matches main backtest)
         const prevTickers = Object.keys(optAlloc);
         const isFirst = prevTickers.length === 0;
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
@@ -4242,12 +4271,10 @@ export default function App() {
         let shouldEval = isFirst;
         if (!shouldEval && simHistRegimes) {
           const rd = simHistRegimes[monthKey];
-          // Regime change triggers alone
           if (mi > 0) {
             const prevRd = simHistRegimes[simDates[mi - 1]];
             if (prevRd && rd && prevRd.regime !== rd.regime) shouldEval = true;
           }
-          // Need 2+ confirming signals for non-regime-change trigger
           if (!shouldEval && rd) {
             let sigCount = 0;
             if (Math.abs(rd.stressAcceleration || 0) >= 0.5) sigCount++;
@@ -4259,15 +4286,13 @@ export default function App() {
                   (prevRd?.volRegime === "normal" && rd.volRegime === "elevated") ||
                   (prevRd?.volRegime === "elevated" && rd.volRegime === "normal"))) sigCount++;
             }
-            if (sigCount >= 2) shouldEval = true;
+            if (sigCount >= simSigThreshold) shouldEval = true;
           }
-          // Quarterly fallback
-          if (!shouldEval && mMonth % 3 === 0 && mSinceRebal >= 2) shouldEval = true;
+          if (!shouldEval && mMonth % 3 === 0 && mSinceRebal >= simCooldown) shouldEval = true;
         } else if (!shouldEval) {
           if (mMonth % 3 === 0) shouldEval = true;
         }
-        // 2-month cooldown
-        if (!isFirst && mSinceRebal < 2) shouldEval = false;
+        if (!isFirst && mSinceRebal < simCooldown) shouldEval = false;
         if (!shouldEval) continue;
 
         // Trailing stats with recency weighting + shrinkage (matches main backtest)
@@ -4371,7 +4396,7 @@ export default function App() {
         const estTax = netGains * (taxRate / 100);
         const tcPct = optValue > 0 ? (estTax / optValue) * 100 : 0;
 
-        // Hurdle: matches main backtest — 1.5% floor + light turnover cost
+        // Tax-aware hurdle: floor scales with tax rate
         const retImp = propExp - currExp;
         const curAlpha = currExp - spyExp;
         let simTurnover = 0;
@@ -4379,7 +4404,7 @@ export default function App() {
         for (const ticker of prevTickers) if (!newAlloc[ticker]) simTurnover += optAlloc[ticker] || 0;
         simTurnover *= 50;
         const simTaxHurdle = isFirst ? -999 : curAlpha > 3 ? tcPct * 2.0 : curAlpha < -2 ? tcPct * 0.8 : tcPct * 1.2;
-        const hurdle = isFirst ? -999 : Math.max(simTaxHurdle, 1.5) + simTurnover * 0.01;
+        const hurdle = isFirst ? -999 : Math.max(simTaxHurdle, simHurdleFloor) + simTurnover * 0.01;
 
         if (isFirst || retImp > hurdle) {
           // Update cost basis map
