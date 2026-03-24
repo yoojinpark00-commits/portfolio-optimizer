@@ -2076,7 +2076,7 @@ function RegimeLineChart({ data, series, regimeBands, regimeColoredLine, thresho
   const svgRef = React.useRef(null);
   if (!data?.length || !series?.length) return null;
 
-  const W = 580;
+  const W = 880;
   const pd = { t: 20, r: 14, b: 44, l: 48 };
   const w = W - pd.l - pd.r, h = H - pd.t - pd.b;
   const hmmColors = ["#42be65", "#fbbf24", "#fb923c", "#ff8389", "#60a5fa"];
@@ -2215,12 +2215,20 @@ function RegimeLineChart({ data, series, regimeBands, regimeColoredLine, thresho
           );
         }
         return <>
+          {/* Draw remaining series — skip null values to avoid broken paths */}
+          {series.slice(1).map(s => {
+            // Build path segments, breaking at null values
+            const pts = [];
+            for (let i = 0; i < data.length; i++) {
+              const val = data[i][s.key];
+              if (val != null && isFinite(val)) pts.push(`${sx(i)},${sy(val)}`);
+            }
+            if (pts.length < 2) return null;
+            return <polyline key={s.key} points={pts.join(" ")} fill="none" stroke={s.color}
+              strokeWidth={s.width || 1.5} strokeDasharray={s.dash || "none"} opacity={s.opacity || 0.85} />;
+          })}
+          {/* Regime-colored stress line on top */}
           {segments}
-          {/* Draw remaining series normally */}
-          {series.slice(1).map(s => (
-            <polyline key={s.key} points={data.map((d, i) => `${sx(i)},${sy(d[s.key] ?? 0)}`).join(" ")} fill="none" stroke={s.color}
-              strokeWidth={s.width || 1.5} strokeDasharray={s.dash || "none"} opacity={s.opacity || 0.85} />
-          ))}
         </>;
       })() : lines.map(s => (
         <polyline key={s.key} points={s.points} fill="none" stroke={s.color}
