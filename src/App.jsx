@@ -4136,13 +4136,22 @@ export default function App() {
     const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
 
-    // Compute SPY final value (same for all sims)
+    // Compute SPY final value and track SPY max drawdown + monthly returns
     let spyFinal = startCash;
+    let spyPeak = startCash, spyMaxDD = 0;
+    const spyMonthlyRets = [];
     for (const mk of simDates) {
       const spyRet = returnsByDateSym[mk]?.["SPY"]?.ret || 0;
+      spyMonthlyRets.push(spyRet);
       spyFinal *= (1 + spyRet);
+      if (spyFinal > spyPeak) spyPeak = spyFinal;
+      const dd = (spyPeak - spyFinal) / spyPeak;
+      if (dd > spyMaxDD) spyMaxDD = dd;
     }
     const spyCAGR = (Math.pow(spyFinal / startCash, 1 / Math.max(1, simDates.length / 12)) - 1) * 100;
+    const spyAvgRet = spyMonthlyRets.reduce((s, r) => s + r, 0) / spyMonthlyRets.length;
+    const spyVol = Math.sqrt(spyMonthlyRets.reduce((s, r) => s + (r - spyAvgRet) ** 2, 0) / spyMonthlyRets.length) * Math.sqrt(12) * 100;
+    const spySharpe = spyVol > 0 ? (spyCAGR - 2) / spyVol : 0;
 
     // Fetch regime data for simulation (matches main backtest)
     let simHistRegimes = null;
@@ -4200,6 +4209,8 @@ export default function App() {
       let simAnnualOrdOffsetUsed = 0; // Fix #3: track $3k/year limit
       let simLastOffsetYear = 0;
       const simTaxRates = getTaxRates(taxState);
+      let simPeak = startCash, simMaxDD = 0;
+      const simMonthlyRets = [];
 
       for (let mi = 0; mi < simDates.length; mi++) {
         const monthKey = simDates[mi];
@@ -4215,14 +4226,49 @@ export default function App() {
             mRet += wt * (monthData[sym]?.ret || 0);
           }
           optValue *= (1 + mRet);
+          simMonthlyRets.push(mRet);
+          if (optValue > simPeak) simPeak = optValue;
+          const dd = (simPeak - optValue) / simPeak;
+          if (dd > simMaxDD) simMaxDD = dd;
+        } else {
+          simMonthlyRets.push(0);
         }
 
-        // Quarterly evaluation (Jan/Apr/Jul/Oct) — matches main backtest
-        if (mMonth % 3 !== 0) continue;
+        // Signal-driven rebalance triggers (matches main backtest)
         const prevTickers = Object.keys(optAlloc);
         const isFirst = prevTickers.length === 0;
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
-        if (!isFirst && mSinceRebal < 3) continue;
+
+        let shouldEval = isFirst;
+        if (!shouldEval && simHistRegimes) {
+          const rd = simHistRegimes[monthKey];
+          // Regime change triggers alone
+          if (mi > 0) {
+            const prevRd = simHistRegimes[simDates[mi - 1]];
+            if (prevRd && rd && prevRd.regime !== rd.regime) shouldEval = true;
+          }
+          // Need 2+ confirming signals for non-regime-change trigger
+          if (!shouldEval && rd) {
+            let sigCount = 0;
+            if (Math.abs(rd.stressAcceleration || 0) >= 0.5) sigCount++;
+            if (rd.vixInversion) sigCount++;
+            if (mi > 0) {
+              const prevRd = simHistRegimes[simDates[mi - 1]];
+              const volShift = rd.volRegime !== prevRd?.volRegime;
+              if (volShift && ((prevRd?.volRegime === "compression" && rd.volRegime === "expansion") ||
+                  (prevRd?.volRegime === "normal" && rd.volRegime === "elevated") ||
+                  (prevRd?.volRegime === "elevated" && rd.volRegime === "normal"))) sigCount++;
+            }
+            if (sigCount >= 2) shouldEval = true;
+          }
+          // Quarterly fallback
+          if (!shouldEval && mMonth % 3 === 0 && mSinceRebal >= 2) shouldEval = true;
+        } else if (!shouldEval) {
+          if (mMonth % 3 === 0) shouldEval = true;
+        }
+        // 2-month cooldown
+        if (!isFirst && mSinceRebal < 2) shouldEval = false;
+        if (!shouldEval) continue;
 
         // Trailing stats with recency weighting + shrinkage (matches main backtest)
         const trailingStats = {};
@@ -4259,8 +4305,9 @@ export default function App() {
         // Factor scoring for simulation candidates (lightweight)
         if (mIdx > 12) computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
 
-        // Randomly sample 20 from top 30 — ensures each sim sees different candidates
-        while (cands.length > 20) cands.splice(Math.floor(Math.random() * cands.length), 1);
+        // Keep all top 30 candidates — Monte Carlo randomness comes from optimizer stochastic search
+        // Add slight noise to return estimates to model forecast uncertainty (±5%)
+        for (const c of cands) c.r *= (1 + (Math.random() - 0.5) * 0.1);
         if (cands.length < 3) continue;
 
         // Lightweight optimizer with regime context (matches main backtest strategy)
@@ -4274,7 +4321,7 @@ export default function App() {
               const prev = simHistRegimes[sortedDates[mIdx - lb]];
               if (prev && prev.regime === sRegime3) sDur++; else break;
             }
-            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null };
+            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null, volSignal: rd.volSignal || 0, vixInversion: rd.vixInversion || false };
             // HMM overlay (conservative fusion, incremental — no look-ahead)
             if (simHmmEnsembleMap[monthKey]) {
               const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
@@ -4284,7 +4331,7 @@ export default function App() {
             }
           }
         }
-        const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, simRegime, 100);
+        const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, simRegime, 200);
         if (!result || result.length === 0) continue;
 
         const newAlloc = {};
@@ -4354,16 +4401,46 @@ export default function App() {
       }
 
       const optCAGR = (Math.pow(Math.max(0, optValue) / startCash, 1 / Math.max(1, simDates.length / 12)) - 1) * 100;
+      // Compute sim volatility from monthly returns
+      const simAvgRet = simMonthlyRets.length > 0 ? simMonthlyRets.reduce((s, r) => s + r, 0) / simMonthlyRets.length : 0;
+      const simVol = simMonthlyRets.length > 1 ? Math.sqrt(simMonthlyRets.reduce((s, r) => s + (r - simAvgRet) ** 2, 0) / simMonthlyRets.length) * Math.sqrt(12) * 100 : 0;
       results.push({
         finalValue: optValue,
         cagr: optCAGR,
         beatsSPY: optValue > spyFinal,
         alpha: optCAGR - spyCAGR,
         taxPaid: simTaxPaid,
+        maxDD: simMaxDD,
+        vol: simVol,
+        sharpe: simVol > 0 ? (optCAGR - 2) / simVol : 0,
+        sharpeBeatsSPY: false, // computed after all sims
+      });
+    }
+
+    // ── Rolling 5-year window analysis ──
+    const rollingPeriods = [];
+    const periodMonths = 5 * 12;
+    for (let startIdx = 0; startIdx + periodMonths <= simDates.length; startIdx += 12) {
+      const endIdx = startIdx + periodMonths;
+      const periodStart = simDates[startIdx];
+      const periodEnd = simDates[endIdx - 1];
+      let spyPeriodVal = 1;
+      for (let m = startIdx; m < endIdx; m++) {
+        spyPeriodVal *= (1 + (returnsByDateSym[simDates[m]]?.["SPY"]?.ret || 0));
+      }
+      rollingPeriods.push({
+        start: periodStart.slice(0, 4),
+        end: periodEnd.slice(0, 4),
+        spyReturn: +((spyPeriodVal - 1) * 100).toFixed(1),
       });
     }
 
     // ── Aggregate results ──
+    // Compute Sharpe wins against SPY
+    results.forEach(r => { r.sharpeBeatsSPY = r.sharpe > spySharpe; });
+    const sharpeWins = results.filter(r => r.sharpeBeatsSPY).length;
+    const ddWins = results.filter(r => r.maxDD < spyMaxDD).length;
+
     const wins = results.filter(r => r.beatsSPY).length;
     const alphas = results.map(r => r.alpha).sort((a, b) => a - b);
     const cagrs = results.map(r => r.cagr).sort((a, b) => a - b);
@@ -4391,9 +4468,21 @@ export default function App() {
       maxFinal: Math.round(finals[finals.length - 1]),
       distribution: results, // for histogram
       avgTaxPaid: Math.round(avg(taxes)),
+      // New metrics: Sharpe, drawdown, volatility
+      sharpeWinRate: +(sharpeWins / NUM_SIMS * 100).toFixed(1),
+      sharpeWins,
+      ddWinRate: +(ddWins / NUM_SIMS * 100).toFixed(1),
+      ddWins,
+      spySharpe: +spySharpe.toFixed(2),
+      spyVol: +spyVol.toFixed(1),
+      spyMaxDD: +(spyMaxDD * 100).toFixed(1),
+      avgMaxDD: +(avg(results.map(r => r.maxDD)) * 100).toFixed(1),
+      avgSharpe: +avg(results.map(r => r.sharpe)).toFixed(2),
+      medianSharpe: +pctl(results.map(r => r.sharpe).sort((a, b) => a - b), 50).toFixed(2),
+      rollingPeriods,
     });
     setSimProgress(""); setSimRunning(false);
-  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks]);
+  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
