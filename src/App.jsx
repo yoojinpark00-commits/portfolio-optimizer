@@ -979,6 +979,141 @@ function getRegimeDurationFwd(model, state5, duration) {
   return { fwd: b.avgFwd || 0, confidence: b.confidence || 0, count: b.count || 0, std: b.stdFwd || 0 };
 }
 
+// ── Three-Stage Pattern Prediction ──
+// Given the two most recent regime states, predicts the likely next state
+// using historical transition frequencies and acceleration data.
+function computeThreeStagePredict(historicalRegimes, sortedDates, mIdx) {
+  if (mIdx < 6) return null;
+
+  // Find current regime and how long it's been running
+  const currentDate = sortedDates[mIdx];
+  const currentReg = historicalRegimes[currentDate];
+  if (!currentReg) return null;
+  const currentRegime = currentReg.regime; // bull/neutral/bear
+
+  let currentDuration = 1;
+  for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
+    const prev = historicalRegimes[sortedDates[mIdx - lb]];
+    if (prev && prev.regime === currentRegime) currentDuration++;
+    else break;
+  }
+
+  // Find previous regime (before the current one started)
+  let prevRegime = null, prevDuration = 0;
+  const prevStart = mIdx - currentDuration;
+  if (prevStart >= 0) {
+    const prevReg = historicalRegimes[sortedDates[prevStart]];
+    if (prevReg) {
+      prevRegime = prevReg.regime;
+      prevDuration = 1;
+      for (let lb = 1; lb <= 36 && prevStart - lb >= 0; lb++) {
+        const p = historicalRegimes[sortedDates[prevStart - lb]];
+        if (p && p.regime === prevRegime) prevDuration++;
+        else break;
+      }
+    }
+  }
+
+  if (!prevRegime || prevRegime === currentRegime) return null;
+
+  // Count historical transitions from this two-stage pattern
+  // Scan all history up to current point (no look-ahead)
+  const transitions = { bull: 0, neutral: 0, bear: 0 };
+  let totalTransitions = 0;
+  let scanRegime = null, scanPrevRegime = null, scanDur = 0;
+
+  for (let i = 1; i < mIdx - 3; i++) { // stop 3 months before current to avoid leakage
+    const r = historicalRegimes[sortedDates[i]];
+    const rPrev = historicalRegimes[sortedDates[i - 1]];
+    if (!r || !rPrev) continue;
+
+    if (rPrev.regime !== r.regime) {
+      // Regime changed
+      scanPrevRegime = scanRegime;
+      scanRegime = r.regime;
+      scanDur = 1;
+
+      // Check if the PREVIOUS two-stage matches our pattern
+      if (scanPrevRegime === prevRegime && rPrev.regime === currentRegime) {
+        // This is the transition OUT of our pattern — what came next?
+        transitions[r.regime]++;
+        totalTransitions++;
+      }
+    } else {
+      scanDur++;
+      if (!scanRegime) scanRegime = r.regime;
+    }
+  }
+
+  if (totalTransitions < 3) return null; // not enough data
+
+  // Find most likely next state
+  let bestNext = null, bestCount = 0;
+  for (const [regime, count] of Object.entries(transitions)) {
+    if (count > bestCount) { bestCount = count; bestNext = regime; }
+  }
+
+  const probability = bestCount / totalTransitions;
+
+  // Compute acceleration confirmation
+  const accel = currentReg.acceleration || 0;
+  const accelConfirms = (
+    (prevRegime === "bear" && currentRegime === "neutral" && accel < -0.05) || // improving after bear
+    (prevRegime === "bull" && currentRegime === "neutral" && accel > 0.05) || // worsening after bull
+    (prevRegime === "neutral" && currentRegime === "bear" && accel > 0.1)    // deteriorating into bear
+  );
+
+  // Confidence: base probability + acceleration confirmation + duration sweet spot
+  let confidence = probability;
+  if (accelConfirms) confidence = Math.min(1, confidence + 0.10);
+  if (currentDuration >= 2 && currentDuration <= 6) confidence = Math.min(1, confidence + 0.05);
+
+  // Determine if this should trigger a rebalance
+  const pattern = `${prevRegime}\u2192${currentRegime}`;
+  const isActionable = (
+    confidence >= 0.55 && // at least 55% confident
+    totalTransitions >= 4 // enough historical observations
+  );
+
+  // Determine the directional signal
+  let reason = "";
+  let shouldTrigger = false;
+
+  if (isActionable) {
+    if (prevRegime === "bear" && currentRegime === "neutral" && bestNext === "bull") {
+      reason = `Bear\u2192Neutral historically leads to Bull ${(probability*100).toFixed(0)}% of the time (${bestCount}/${totalTransitions}). Pre-position for recovery.`;
+      shouldTrigger = true;
+    } else if (prevRegime === "bull" && currentRegime === "neutral" && bestNext === "bear") {
+      reason = `Bull\u2192Neutral historically leads to Bear ${(probability*100).toFixed(0)}% of the time (${bestCount}/${totalTransitions}). Shift defensive.`;
+      shouldTrigger = true;
+    } else if (prevRegime === "bear" && currentRegime === "neutral" && bestNext === "bear") {
+      reason = `Bear\u2192Neutral\u2192Bear pattern (false recovery) at ${(probability*100).toFixed(0)}% probability. Stay defensive.`;
+      shouldTrigger = true;
+    } else if (prevRegime === "neutral" && currentRegime === "bear" && bestNext === "neutral") {
+      reason = `Neutral\u2192Bear historically reverts to Neutral ${(probability*100).toFixed(0)}% of the time. Prepare for recovery.`;
+      shouldTrigger = currentDuration >= 3; // wait a bit before acting on this
+    } else if (confidence >= 0.60) {
+      reason = `${pattern}\u2192${bestNext} at ${(probability*100).toFixed(0)}% confidence (${bestCount}/${totalTransitions}).`;
+      shouldTrigger = true;
+    }
+  }
+
+  return {
+    pattern,
+    prevRegime,
+    currentRegime,
+    currentDuration,
+    predictedNext: bestNext,
+    probability,
+    confidence,
+    transitions,
+    totalTransitions,
+    accelConfirms,
+    shouldTrigger,
+    reason,
+  };
+}
+
 // ── Three-Stage Regime Context ──
 // Tracks the pattern: prevRegime → bridgeRegime → currentRegime
 // This distinguishes: bull→neutral(1m)→bull (brief pause) from bear→neutral(3m)→bull (genuine reversal)
@@ -3844,6 +3979,16 @@ export default function App() {
         // Regime change is strong enough to trigger alone (even in high-tax states)
         if (regimeChanged) shouldEvaluate = true;
 
+        // Three-stage pattern prediction: fires alone if confidence >= 55%
+        if (!shouldEvaluate && !isFirstAllocation) {
+          const threeStagePredict = computeThreeStagePredict(historicalRegimes, sortedDates, mIdx);
+          if (threeStagePredict?.shouldTrigger && monthsSinceRebal >= taxCooldownMonths) {
+            shouldEvaluate = true;
+            // Store for logging in rebalance events
+            if (btRegime) btRegime.threeStagePredict = threeStagePredict;
+          }
+        }
+
         // For other signals, count confirmations — threshold scales with tax rate
         if (!shouldEvaluate) {
           let signalCount = 0;
@@ -4218,6 +4363,7 @@ export default function App() {
           returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: +appRate.toFixed(1), taxType: stGains > ltGains ? "ST-heavy" : ltGains > stGains ? "LT-heavy" : "Blended", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition,
           fwdSignal: regimeDurModel ? getRegimeDurationFwd(regimeDurModel, btState5 || "neutral", btDuration) : null,
           threeStage: btRegime?.threeStage ? { pattern: btRegime.threeStage.pattern, type: btRegime.threeStage.patternType, signal: btRegime.threeStage.patternSignal, bridgeDur: btRegime.threeStage.bridgeDuration, effDur: btRegime.threeStage.effectiveDuration } : null,
+          threeStagePredict: btRegime?.threeStagePredict || null,
           candidateCount: candidates.length, iterations: btIterations });
       }
 
@@ -7664,6 +7810,13 @@ useEffect(() => {
                                           {evt.threeStage && <span style={{ color: evt.threeStage.signal > 0 ? cs.green : evt.threeStage.signal < 0 ? cs.red : cs.dim, fontWeight: 400 }}> · {evt.threeStage.pattern} ({evt.threeStage.type?.replace(/_/g," ")})</span>}
                                           {evt.candidateCount && <span style={{ color: cs.dim, fontWeight: 400 }}> · {evt.candidateCount} candidates/{evt.iterations} iter</span>}
                                         </div>
+                                        {evt.threeStagePredict && <div style={{ padding: "4px 8px", borderRadius: 0, background: "rgba(120,169,255,.05)", border: "1px solid rgba(120,169,255,.1)", marginBottom: 4 }}>
+                                          <span style={{ fontSize: 8, fontWeight: 600, color: cs.blue }}>📊 Pattern Prediction: </span>
+                                          <span style={{ fontSize: 8, color: cs.text, fontFamily: mono2 }}>{evt.threeStagePredict.pattern}→{evt.threeStagePredict.predictedNext}</span>
+                                          <span style={{ fontSize: 8, color: cs.dim }}> · {(evt.threeStagePredict.confidence * 100).toFixed(0)}% confidence · {evt.threeStagePredict.totalTransitions} historical obs</span>
+                                          {evt.threeStagePredict.accelConfirms && <Badge color={cs.green}>ACCEL CONFIRMS</Badge>}
+                                          <div style={{ fontSize: 7, color: cs.muted, marginTop: 2 }}>{evt.threeStagePredict.reason}</div>
+                                        </div>}
                                         <div style={{ fontSize: 8, fontFamily: mono2, color: cs.dim, marginBottom: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
                                           <span>Gains: <span style={{ color: cs.green }}>{fmt$(evt.grossGains || 0)}</span></span>
                                           <span>Losses: <span style={{ color: cs.red }}>{fmt$(evt.grossLosses || 0)}</span></span>
