@@ -6645,68 +6645,157 @@ useEffect(() => {
                 />;
               })()}
 
-              {/* ── Chart 2: HMM Filtered Probabilities (stacked) ── */}
-              <RegimeLineChart
-                data={tl.map(d => ({
-                  date: d.date,
-                  Bull: (d.p_Bull || 0) * 100,
-                  Euphoria: (d.p_Euphoria || 0) * 100,
-                  Correction: (d.p_Correction || 0) * 100,
-                  Crisis: (d.p_Crisis || 0) * 100,
-                  Recovery: (d.p_Recovery || 0) * 100,
-                }))}
-                title="🎯 HMM Filtered Probabilities"
-                subtitle="Real-time (causal) probability of each regime. Stacked areas sum to 100%. Shows how regime confidence evolves over time."
-                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
-                stacked
-                yDomain={[0, 100]}
-                yFormat={v => `${v.toFixed(0)}%`}
-                height={220}
-              />
+              {/* ── Unified Regime Probability Chart ── */}
+              {/* Combines HMM stacked areas + Ensemble dotted lines + regime timeline bar */}
+              {(() => {
+                const W = 880, H = 300;
+                const pd = { t: 22, r: 14, b: 56, l: 48 };
+                const w = W - pd.l - pd.r, ch = H - pd.t - pd.b;
+                const tlLen = tl.length;
+                if (tlLen < 2) return null;
+                const sxU = (i) => pd.l + (i / (tlLen - 1)) * w;
+                const syU = (v) => pd.t + ch - (v / 100) * ch;
 
-              {/* ── Chart 3: Ensemble Probabilities (stacked) ── */}
-              <RegimeLineChart
-                data={tl.map(d => ({
-                  date: d.date,
-                  Bull: (d.e_Bull || 0) * 100,
-                  Euphoria: (d.e_Euphoria || 0) * 100,
-                  Correction: (d.e_Correction || 0) * 100,
-                  Crisis: (d.e_Crisis || 0) * 100,
-                  Recovery: (d.e_Recovery || 0) * 100,
-                }))}
-                title="🔀 Ensemble Probabilities (HMM + BOCPD Fused)"
-                subtitle="After fusing HMM with Bayesian change-point detection. When BOCPD fires, mass shifts from Bull/Euphoria → Correction/Crisis."
-                series={HMM_REGIMES.map(r => ({ key: r.name, label: r.name, color: r.color }))}
-                stacked
-                yDomain={[0, 100]}
-                yFormat={v => `${v.toFixed(0)}%`}
-                height={220}
-              />
+                // Build stacked area paths (Ensemble — the "final answer")
+                const ensOrder = [0, 4, 1, 2, 3]; // Bull, Recovery, Euphoria, Correction, Crisis (bottom to top)
+                const ensKeys = ensOrder.map(ri => `e_${HMM_REGIMES[ri].name}`);
+                const ensColors = ensOrder.map(ri => HMM_REGIMES[ri].color);
+                const ensNames = ensOrder.map(ri => HMM_REGIMES[ri].name);
+                const stackedAreas = [];
+                const cumTop = tl.map(() => 0);
 
-              {/* ── Chart 4: Individual Regime Lines (non-stacked overlay) ── */}
-              <RegimeLineChart
-                data={tl.map(d => ({
-                  date: d.date, regime: d.regime,
-                  Bull: (d.e_Bull || 0) * 100,
-                  Crisis: (d.e_Crisis || 0) * 100,
-                  Correction: (d.e_Correction || 0) * 100,
-                  Recovery: (d.e_Recovery || 0) * 100,
-                  Euphoria: (d.e_Euphoria || 0) * 100,
-                }))}
-                title="📊 Regime Probability Lines (Ensemble)"
-                subtitle="Individual regime probability traces. Crossovers indicate regime transitions. Hover to compare exact values."
-                series={[
-                  { key: "Bull", label: "Bull", color: "#42be65", width: 2 },
-                  { key: "Crisis", label: "Crisis", color: "#ff8389", width: 2 },
-                  { key: "Correction", label: "Correction", color: "#fb923c", width: 1.5 },
-                  { key: "Recovery", label: "Recovery", color: "#60a5fa", width: 1.5 },
-                  { key: "Euphoria", label: "Euphoria", color: "#fbbf24", width: 1, dash: "3,2" },
-                ]}
-                yDomain={[0, 100]}
-                yFormat={v => `${v.toFixed(0)}%`}
-                regimeBands={{ key: "regime" }}
-                height={240}
-              />
+                for (let si = 0; si < ensOrder.length; si++) {
+                  const key = ensKeys[si];
+                  const topPts = tl.map((d, i) => {
+                    cumTop[i] += (d[key] || 0) * 100;
+                    return { x: sxU(i), y: syU(cumTop[i]) };
+                  });
+                  const bottomPts = tl.map((d, i) => {
+                    const bottom = cumTop[i] - (d[key] || 0) * 100;
+                    return { x: sxU(i), y: syU(bottom) };
+                  }).reverse();
+                  const pathD = `M${topPts.map(p => `${p.x},${p.y}`).join("L")} L${bottomPts.map(p => `${p.x},${p.y}`).join("L")} Z`;
+                  stackedAreas.push({ pathD, color: ensColors[si], name: ensNames[si] });
+                }
+
+                // Build HMM dotted lines (raw HMM — before BOCPD adjustment)
+                const hmmLines = HMM_REGIMES.map(r => ({
+                  name: r.name, color: r.color,
+                  points: tl.map((d, i) => `${sxU(i)},${syU((d[`p_${r.name}`] || 0) * 100)}`).join(" "),
+                }));
+
+                // Date labels
+                const dateLabels = [];
+                const labelInterval = Math.max(1, Math.floor(tlLen / 8));
+                for (let i = 0; i < tlLen; i += labelInterval) {
+                  const d = tl[i]?.date;
+                  if (d) dateLabels.push({ i, label: d.length > 7 ? d.slice(0, 7) : d });
+                }
+                if (tl[tlLen - 1]?.date && (dateLabels.length === 0 || dateLabels[dateLabels.length - 1].i < tlLen - 3))
+                  dateLabels.push({ i: tlLen - 1, label: tl[tlLen - 1].date.slice(0, 7) });
+
+                // Hover state
+                const [uHover, setUHover] = React.useState(null);
+                const uSvgRef = React.useRef(null);
+                const getUIdx = (e) => {
+                  if (!uSvgRef.current) return null;
+                  const rect = uSvgRef.current.getBoundingClientRect();
+                  const mx = (e.clientX - rect.left) / rect.width * W;
+                  return Math.max(0, Math.min(tlLen - 1, Math.round(((mx - pd.l) / w) * (tlLen - 1))));
+                };
+                const hPt = uHover != null ? tl[uHover] : null;
+
+                return <div style={cardS}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>🎯 Regime Probabilities — HMM vs Ensemble</div>
+                  <div style={{ fontSize: 9, color: cs.dim, marginBottom: 8 }}>Filled areas = Ensemble (after BOCPD fusion). Dotted lines = raw HMM (before adjustment). Differences show where change-point detection shifted probability mass.</div>
+
+                  {/* Legend */}
+                  <div style={{ display: "flex", gap: 10, marginBottom: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    {HMM_REGIMES.map(r => (
+                      <span key={r.id} style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ width: 12, height: 8, background: r.color, display: "inline-block", opacity: 0.5, borderRadius: 1 }} />
+                        <span style={{ width: 12, height: 0, borderTop: `2px dashed ${r.color}`, display: "inline-block" }} />
+                        <span style={{ color: r.color }}>{r.name}</span>
+                        {hPt && <span style={{ fontFamily: mono2, fontSize: 8, color: cs.dim }}>
+                          E:{((hPt[`e_${r.name}`] || 0) * 100).toFixed(0)}% H:{((hPt[`p_${r.name}`] || 0) * 100).toFixed(0)}%
+                        </span>}
+                      </span>
+                    ))}
+                    <span style={{ fontSize: 8, color: cs.muted, marginLeft: 4 }}>Area=Ensemble · Dash=HMM</span>
+                  </div>
+
+                  <svg ref={uSvgRef} width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ overflow: "visible", maxWidth: "100%", cursor: "crosshair" }}
+                    onMouseMove={(e) => setUHover(getUIdx(e))} onMouseLeave={() => setUHover(null)}>
+
+                    {/* Grid */}
+                    {[0, 25, 50, 75, 100].map(v => (
+                      <g key={v}>
+                        <line x1={pd.l} x2={W - pd.r} y1={syU(v)} y2={syU(v)} stroke="#222" />
+                        <text x={pd.l - 5} y={syU(v) + 3} fill={cs.muted} fontSize={8} textAnchor="end" fontFamily={mono2}>{v}%</text>
+                      </g>
+                    ))}
+
+                    {/* Date labels */}
+                    {dateLabels.map(({ i, label }) => (
+                      <g key={i}>
+                        <line x1={sxU(i)} x2={sxU(i)} y1={pd.t} y2={pd.t + ch} stroke="#1a1a1a" strokeDasharray="2,3" />
+                        <text x={sxU(i)} y={H - 30} fill={cs.muted} fontSize={7} textAnchor="middle" fontFamily={mono2}>{label}</text>
+                      </g>
+                    ))}
+
+                    {/* Stacked areas (Ensemble) */}
+                    {stackedAreas.map((area, i) => (
+                      <path key={i} d={area.pathD} fill={area.color} opacity={0.45} stroke={area.color} strokeWidth={0.5} />
+                    ))}
+
+                    {/* HMM dotted lines */}
+                    {hmmLines.map(line => (
+                      <polyline key={line.name} points={line.points} fill="none" stroke={line.color} strokeWidth={1.5} strokeDasharray="4,3" opacity={0.7} />
+                    ))}
+
+                    {/* Hover crosshair */}
+                    {uHover != null && <>
+                      <line x1={sxU(uHover)} x2={sxU(uHover)} y1={pd.t} y2={pd.t + ch} stroke={cs.dim} strokeWidth={0.5} strokeDasharray="3,2" />
+                    </>}
+
+                    {/* Hover tooltip */}
+                    {hPt && <g>
+                      <rect x={sxU(uHover) + (uHover > tlLen * 0.65 ? -165 : 10)} y={pd.t + 2} width={155} height={80}
+                        rx={3} fill="rgba(22,22,22,0.94)" stroke="#393939" strokeWidth={0.5} />
+                      <text x={sxU(uHover) + (uHover > tlLen * 0.65 ? -158 : 17)} y={pd.t + 14}
+                        fill={cs.dim} fontSize={8} fontFamily={mono2}>{hPt.date}</text>
+                      {HMM_REGIMES.map((r, ri) => {
+                        const ens = ((hPt[`e_${r.name}`] || 0) * 100).toFixed(1);
+                        const hmm = ((hPt[`p_${r.name}`] || 0) * 100).toFixed(1);
+                        const delta = ((hPt[`e_${r.name}`] || 0) - (hPt[`p_${r.name}`] || 0)) * 100;
+                        return <text key={ri} x={sxU(uHover) + (uHover > tlLen * 0.65 ? -158 : 17)} y={pd.t + 27 + ri * 12}
+                          fill={r.color} fontSize={8} fontFamily={mono2}>
+                          {r.name.slice(0, 4)}: {ens}% {delta !== 0 ? `(${delta > 0 ? "+" : ""}${delta.toFixed(0)}%)` : ""}
+                        </text>;
+                      })}
+                    </g>}
+
+                    {/* Regime timeline bar at bottom */}
+                    {tl.map((d, i) => {
+                      const x1 = sxU(i), x2 = i < tlLen - 1 ? sxU(i + 1) : x1 + w / tlLen;
+                      return <rect key={`rtl-${i}`} x={x1} y={H - 22} width={Math.max(1, x2 - x1)} height={10} fill={hmmColors[d.regime] || "#333"} opacity={0.7} />;
+                    })}
+                    <text x={pd.l} y={H - 6} fill={cs.muted} fontSize={7} fontFamily={mono2}>{tl[0]?.date}</text>
+                    <text x={W - pd.r} y={H - 6} fill={cs.muted} fontSize={7} textAnchor="end" fontFamily={mono2}>{tl[tlLen - 1]?.date}</text>
+                  </svg>
+
+                  {/* Regime legend for timeline bar */}
+                  <div style={{ display: "flex", gap: 10, marginTop: 4, justifyContent: "center" }}>
+                    {HMM_REGIMES.map(r => (
+                      <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
+                        <span style={{ fontSize: 7, color: cs.dim }}>{r.name}</span>
+                        <span style={{ fontSize: 7, fontFamily: mono2, color: cs.muted }}>{(tl.filter(d => d.regime === r.id).length / tlLen * 100).toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>;
+              })()}
 
               {/* ── Regime Timeline (compact bar) ── */}
               <div style={cardS}>
