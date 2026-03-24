@@ -315,11 +315,21 @@ function shrinkToForward(trailing, vol) {
 // For stocks: cap at 80% annualized, keep 20% of excess above cap
 // For ETFs: cap at 120% annualized (ETFs are diversified, more sustainable momentum)
 function shrinkReturn(r, isStock) {
-  const cap = isStock ? 80 : 120;
-  const decayFactor = isStock ? 0.20 : 0.30;
-  if (r > cap) return cap + (r - cap) * decayFactor;
-  if (r < -cap) return -cap + (r + cap) * decayFactor; // symmetric for losses
-  return r;
+  // Progressive shrinkage: starts light at threshold, increases with magnitude
+  // ETFs: shrink above 25% annualized, Stocks: shrink above 20%
+  // Formula: beyond threshold, keep diminishing fraction via log-style compression
+  // This prevents the momentum signal from being dominated by recent rockets
+  // while still allowing moderate momentum to express
+  const threshold = isStock ? 20 : 25;    // where shrinkage begins
+  const hardCap = isStock ? 60 : 80;      // absolute max after shrinkage
+  const sign = r >= 0 ? 1 : -1;
+  const absR = Math.abs(r);
+  if (absR <= threshold) return r;
+  // Progressive: keep 60% of the next 25%, then 30% beyond that
+  const tier1 = Math.min(absR - threshold, 25) * 0.60;
+  const tier2 = Math.max(0, absR - threshold - 25) * 0.30;
+  const shrunk = threshold + tier1 + tier2;
+  return sign * Math.min(shrunk, hardCap);
 }
 const PAL=["#42be65","#78a9ff","#ff7eb6","#ffab91","#be95ff","#82cfff","#08bdba","#ff8389","#33b1ff","#d4bbff"];
 
@@ -1166,6 +1176,332 @@ function hmmToState5(probs) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  QUANT STRATEGY MODULE
+//  Factor scoring, 12-1 momentum, carry, risk parity, Black-Litterman,
+//  transaction costs, dynamic vol targeting, pairs/relative value
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute multi-factor scores for all candidates using trailing return data.
+ * Returns enriched candidates with factor scores attached.
+ *
+ * @param {Object} returnsByDate - { date: { sym: { ret, close } } }
+ * @param {string[]} sortedDates - sorted date keys
+ * @param {number} mIdx - current month index in sortedDates
+ * @param {Object} trailingStats - { sym: { t, r, v, d, c, ... } }
+ * @param {Object} etfDbMap - ticker → ETF_DB entry
+ * @returns {Object} { enriched: trailingStats with factor fields, factorRanks: { sym: { mom, rev, val, qual, lowvol, carry, composite } } }
+ */
+function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap) {
+  const syms = Object.keys(trailingStats);
+  if (syms.length < 3 || mIdx < 13) return { enriched: trailingStats, factorRanks: {} };
+
+  const scores = {};
+
+  for (const sym of syms) {
+    const db = etfDbMap[sym] || {};
+    const ts = trailingStats[sym];
+    const monthlyRets = [];
+    for (let ti = Math.max(0, mIdx - 12); ti < mIdx; ti++) {
+      const e = returnsByDate[sortedDates[ti]]?.[sym];
+      if (e) monthlyRets.push(e.ret);
+    }
+    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0 }; continue; }
+
+    // ── 1. Momentum (12-1): skip most recent month to avoid reversal ──
+    const mom12_1raw = monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0) * 100;
+
+    // ── 2. Short-term Reversal (1-month): most recent month, inverted ──
+    const rev1m = -(monthlyRets[monthlyRets.length - 1] || 0) * 100;
+
+    // ── 3. Value: use dividend yield as proxy (higher = more value) ──
+    const val = ts.d || db.d || 0;
+
+    // ── 4. Quality: low expense ratio + low vol + positive returns ──
+    // Higher = better quality
+    const qual = (ts.r > 0 ? 1 : 0) * 2 + (1 / (1 + (ts.er || 0.1))) + (ts.v < 15 ? 1 : ts.v < 25 ? 0.5 : 0);
+
+    // ── 5. Low Volatility: inverted vol (lower vol = higher score) ──
+    const lowvol = ts.v > 0 ? 100 / ts.v : 0;
+
+    // ── 6. Carry: dividend yield for equities, estimated for bonds ──
+    let carry = ts.d || 0;
+    const cat = (ts.c || "").toLowerCase();
+    if (cat.includes("bond") || cat.includes("treasury")) carry = (ts.d || 0) + 1.5; // bond carry premium
+    if (cat.includes("commodity")) carry = Math.max(0, carry - 0.5); // commodity roll cost
+
+    scores[sym] = { mom12_1: mom12_1raw, rev1m, val, qual, lowvol, carry };
+  }
+
+  // ── Cross-sectional percentile ranking (0-1) for each factor ──
+  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry"];
+  const ranks = {};
+
+  for (const f of factors) {
+    const vals = syms.map(s => ({ sym: s, v: scores[s][f] || 0 })).sort((a, b) => a.v - b.v);
+    vals.forEach((item, idx) => {
+      if (!ranks[item.sym]) ranks[item.sym] = {};
+      ranks[item.sym][f] = vals.length > 1 ? idx / (vals.length - 1) : 0.5;
+    });
+  }
+
+  // ── Composite factor score (weighted blend) ──
+  // Weights tuned for robustness: momentum strongest but diversified across all factors
+  const factorWeights = { mom12_1: 0.30, rev1m: 0.10, val: 0.15, qual: 0.15, lowvol: 0.15, carry: 0.15 };
+  for (const sym of syms) {
+    let composite = 0;
+    for (const [f, w] of Object.entries(factorWeights)) {
+      composite += (ranks[sym]?.[f] || 0.5) * w;
+    }
+    ranks[sym].composite = composite;
+    // Attach to trailing stats
+    trailingStats[sym].factorScore = composite;
+    trailingStats[sym].factorRanks = ranks[sym];
+    trailingStats[sym].mom12_1 = scores[sym].mom12_1;
+    trailingStats[sym].rev1m = scores[sym].rev1m;
+  }
+
+  return { enriched: trailingStats, factorRanks: ranks };
+}
+
+/**
+ * Black-Litterman expected return adjustment.
+ * Blends equilibrium (market-cap-implied) returns with factor-based "views".
+ *
+ * @param {Object[]} candidates - array of { r, v, d, factorScore, ... }
+ * @param {number} tau - uncertainty scaling (default 0.05)
+ * @returns {number[]} Adjusted expected returns per candidate
+ */
+function blackLittermanReturns(candidates, tau = 0.05) {
+  const n = candidates.length;
+  if (n === 0) return [];
+
+  // Equilibrium returns: CAPM-style, proportional to vol (higher vol → higher expected return)
+  const avgRet = candidates.reduce((s, c) => s + c.r, 0) / n;
+  const avgVol = candidates.reduce((s, c) => s + c.v, 0) / n;
+  const eqReturns = candidates.map(c => {
+    const beta = c.v / (avgVol || 15);
+    return RF + beta * (avgRet - RF);
+  });
+
+  // Views: factor score implies a view on relative performance
+  // factorScore > 0.5 → bullish view, < 0.5 → bearish view
+  const blReturns = candidates.map((c, i) => {
+    const eq = eqReturns[i];
+    const fs = c.factorScore ?? 0.5;
+    // View: deviation from equilibrium proportional to factor score extremity
+    const viewStrength = (fs - 0.5) * 2; // -1 to +1
+    const view = eq + viewStrength * avgVol * 0.5; // scale view by average vol
+    // Blend: tau controls how much views dominate vs equilibrium
+    // Higher tau → more weight on views
+    const conf = Math.abs(viewStrength) * 0.8 + 0.2; // confidence increases with factor extremity
+    return eq * (1 - tau * conf) + view * tau * conf;
+  });
+
+  return blReturns;
+}
+
+/**
+ * Compute risk parity weights: each position contributes equal portfolio risk.
+ *
+ * @param {Object[]} candidates - array of { v, c }
+ * @param {Function} gc - correlation function gc(cat1, cat2)
+ * @returns {number[]} Risk parity weights (sum to 1)
+ */
+function riskParityWeights(candidates, gc) {
+  const n = candidates.length;
+  if (n <= 1) return candidates.map(() => 1 / n || 1);
+
+  // Iterative risk budgeting: start equal, adjust toward equal risk contribution
+  let w = new Array(n).fill(1 / n);
+  const vol = candidates.map(c => c.v / 100);
+
+  for (let iter = 0; iter < 50; iter++) {
+    // Compute marginal risk contribution for each position
+    const mrc = new Array(n).fill(0);
+    let totalVar = 0;
+
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const cov = vol[i] * vol[j] * gc(candidates[i].c, candidates[j].c);
+        totalVar += w[i] * w[j] * cov;
+        mrc[i] += w[j] * cov;
+      }
+    }
+
+    const portVol = Math.sqrt(Math.max(totalVar, 1e-10));
+    // Risk contribution: RC_i = w_i × MRC_i / portVol
+    const rc = w.map((wi, i) => wi * mrc[i] / portVol);
+    const avgRC = rc.reduce((a, b) => a + b, 0) / n;
+
+    // Adjust weights: positions with above-average RC get reduced, below get increased
+    const newW = w.map((wi, i) => {
+      const ratio = avgRC / (rc[i] + 1e-10);
+      return wi * Math.pow(ratio, 0.3); // gentle adjustment for stability
+    });
+
+    // Renormalize
+    const wSum = newW.reduce((a, b) => a + b, 0);
+    w = newW.map(x => x / wSum);
+  }
+
+  return w;
+}
+
+/**
+ * Compute transaction costs for a set of trades.
+ *
+ * @param {Object} prevAlloc - { ticker: weight }
+ * @param {Object} newAlloc - { ticker: weight }
+ * @param {number} portfolioValue
+ * @param {Object} etfDbMap - ticker metadata
+ * @returns {Object} { totalCostDollars, totalCostPct, perTicker: { ticker: cost } }
+ */
+function computeTransactionCosts(prevAlloc, newAlloc, portfolioValue, etfDbMap) {
+  const allTickers = [...new Set([...Object.keys(prevAlloc || {}), ...Object.keys(newAlloc || {})])];
+  let totalCost = 0;
+  const perTicker = {};
+
+  for (const ticker of allTickers) {
+    const oldWt = prevAlloc?.[ticker] || 0;
+    const newWt = newAlloc?.[ticker] || 0;
+    const tradeWt = Math.abs(newWt - oldWt);
+    if (tradeWt < 0.005) continue;
+
+    const tradeDollars = tradeWt * portfolioValue;
+    const db = etfDbMap[ticker];
+    // Cost model: spread + market impact
+    // Large-cap ETFs: ~3bps, Small-cap/EM ETFs: ~8bps, Stocks: ~10-20bps
+    let spreadBps;
+    const cat = (db?.c || "").toLowerCase();
+    if (db?.type === "stock") spreadBps = cat.includes("mega") || ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA"].includes(ticker) ? 5 : 12;
+    else if (cat.includes("small") || cat.includes("emerg") || cat.includes("commodity")) spreadBps = 8;
+    else spreadBps = 3;
+
+    // Market impact: proportional to trade size (simplified square-root model)
+    const impactBps = Math.sqrt(tradeDollars / 1000000) * 5; // 5bps per $1M^0.5
+
+    const cost = tradeDollars * (spreadBps + impactBps) / 10000;
+    totalCost += cost;
+    perTicker[ticker] = cost;
+  }
+
+  return {
+    totalCostDollars: totalCost,
+    totalCostPct: portfolioValue > 0 ? (totalCost / portfolioValue) * 100 : 0,
+    perTicker,
+  };
+}
+
+/**
+ * Dynamic volatility targeting: scale portfolio exposure to maintain target vol.
+ *
+ * @param {number} realizedVol - trailing realized portfolio vol (annualized %)
+ * @param {number} targetVol - target vol (%)
+ * @param {number} maxLeverage - max scale factor (default 1.5)
+ * @param {number} minExposure - min scale factor (default 0.3)
+ * @returns {number} Scale factor (< 1 = delever, > 1 = lever up, capped)
+ */
+function dynamicVolScale(realizedVol, targetVol, maxLeverage = 1.5, minExposure = 0.3) {
+  if (!targetVol || targetVol <= 0 || !realizedVol || realizedVol <= 0) return 1.0;
+  const raw = targetVol / realizedVol;
+  return Math.max(minExposure, Math.min(maxLeverage, raw));
+}
+
+/**
+ * Pairs/Relative Value signal: detect divergences between correlated assets.
+ * Returns a bonus/penalty per candidate based on mean-reversion opportunity.
+ *
+ * @param {Object} returnsByDate - { date: { sym: { ret } } }
+ * @param {string[]} sortedDates
+ * @param {number} mIdx
+ * @param {Object} trailingStats - { sym: { t, c, r, ... } }
+ * @returns {Object} { sym: relValueSignal } — positive = undervalued vs peers
+ */
+function computeRelativeValue(returnsByDate, sortedDates, mIdx, trailingStats) {
+  const syms = Object.keys(trailingStats);
+  const signals = {};
+  const lookback = Math.min(24, mIdx);
+
+  // Group by category
+  const catGroups = {};
+  for (const sym of syms) {
+    const cat = trailingStats[sym].c || "Other";
+    if (!catGroups[cat]) catGroups[cat] = [];
+    catGroups[cat].push(sym);
+  }
+
+  for (const [cat, members] of Object.entries(catGroups)) {
+    if (members.length < 2) { members.forEach(s => { signals[s] = 0; }); continue; }
+
+    // Compute cumulative return over lookback for each member
+    const cumRets = {};
+    for (const sym of members) {
+      let cum = 0;
+      for (let ti = Math.max(0, mIdx - lookback); ti < mIdx; ti++) {
+        const e = returnsByDate[sortedDates[ti]]?.[sym];
+        if (e) cum += e.ret;
+      }
+      cumRets[sym] = cum;
+    }
+
+    // Category average and std
+    const vals = Object.values(cumRets);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const std = Math.sqrt(vals.reduce((a, v) => a + (v - mean) ** 2, 0) / vals.length) || 0.01;
+
+    // Z-score: negative = underperformed peers = potential mean reversion opportunity
+    for (const sym of members) {
+      const z = (cumRets[sym] - mean) / std;
+      // Signal: inverted z-score, capped. Underperformer gets positive signal.
+      signals[sym] = Math.max(-0.05, Math.min(0.05, -z * 0.02));
+    }
+  }
+
+  return signals;
+}
+
+/**
+ * Factor diversification score: penalize portfolios concentrated in one factor.
+ *
+ * @param {Float64Array} alloc - allocation dollars per candidate
+ * @param {Object[]} candidates - with factorRanks attached
+ * @param {number} deployAmt - total deployment amount
+ * @returns {number} Penalty (negative) for factor concentration, bonus for balance
+ */
+function factorDiversificationScore(alloc, candidates, deployAmt) {
+  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry"];
+  const weightedFactorAvg = {};
+  let totalWt = 0;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const wt = alloc[i] / (deployAmt || 1);
+    if (wt < 0.01) continue;
+    totalWt += wt;
+    const fr = candidates[i].factorRanks;
+    if (!fr) continue;
+    for (const f of factors) {
+      if (!weightedFactorAvg[f]) weightedFactorAvg[f] = 0;
+      weightedFactorAvg[f] += wt * (fr[f] ?? 0.5);
+    }
+  }
+
+  if (totalWt <= 0) return 0;
+  for (const f of factors) weightedFactorAvg[f] = (weightedFactorAvg[f] || 0) / totalWt;
+
+  // Score: reward portfolios near 0.5 (balanced) on each factor
+  // Penalize portfolios above 0.8 or below 0.2 on any single factor
+  let factorPenalty = 0;
+  for (const f of factors) {
+    const deviation = Math.abs(weightedFactorAvg[f] - 0.5);
+    if (deviation > 0.3) factorPenalty -= (deviation - 0.3) * 0.10; // progressive penalty
+    else if (deviation < 0.15) factorPenalty += 0.005; // small bonus for balance
+  }
+
+  return factorPenalty;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 
 // regimeCtx: { state5, acceleration, duration, transition, durationModel } or just a string
 // prevBest: optional previous allocation weights to warm-start from
@@ -1260,9 +1596,37 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
-    adjRet[i] = (c.lev && Math.abs(c.lev) > 1) ? getAdjustedReturn(c.r, c.v, c.lev) : c.r;
+    let baseRet = (c.lev && Math.abs(c.lev) > 1) ? getAdjustedReturn(c.r, c.v, c.lev) : c.r;
+    // Black-Litterman blend: 70% trailing (momentum), 30% BL equilibrium+views
+    if (blReturns) baseRet = baseRet * 0.70 + blReturns[i] * 0.30;
+    adjRet[i] = baseRet;
     volArr[i] = c.v / 100;
     isLev[i] = (c.lev && Math.abs(c.lev) > 1) ? 1 : 0;
+  }
+
+  // ── Pre-compute factor-aware returns (Black-Litterman blend if factor scores available) ──
+  const hasFactors = candidates.some(c => c.factorScore != null);
+  let blReturns = null;
+  if (hasFactors) {
+    blReturns = blackLittermanReturns(candidates);
+  }
+
+  // ── Pre-compute relative value signals if available ──
+  const relValSignals = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    relValSignals[i] = candidates[i].relValue || 0;
+  }
+
+  // ── Pre-compute risk parity reference weights ──
+  let rpWeights = null;
+  if (target === "risk_parity") {
+    rpWeights = riskParityWeights(candidates, gc);
+  }
+
+  // ── Dynamic vol scale (if dynamic vol targeting enabled) ──
+  let dynVolScale = 1.0;
+  if (regimeCtx && typeof regimeCtx === "object" && regimeCtx.realizedVol > 0 && volTarget > 0) {
+    dynVolScale = dynamicVolScale(regimeCtx.realizedVol, volTarget);
   }
 
   // Leverage caps + Kelly caps
@@ -1465,13 +1829,31 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     for (let i = 0; i < nEx; i++) wtdSpyCorr += exW[i] * gc(itemCats[i], "US Large Cap");
     const spyPenalty = wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0; // penalize high overlap, reward differentiation
 
-    if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty;
-    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty;
+    // ── Factor diversification: reward balanced factor exposure ──
+    const factorDiv = hasFactors ? factorDiversificationScore(alloc, candidates, deployAmt) : 0;
+
+    // ── Relative value signal: bonus for undervalued-vs-peers positions ──
+    let relValBonus = 0;
+    for (let i = 0; i < n; i++) relValBonus += (alloc[i] / (deployAmt || 1)) * relValSignals[i];
+
+    // ── Dynamic vol targeting: scale expected return by vol scale factor ──
+    const dynRet = ret * dynVolScale;
+
+    if (target === "risk_parity" && rpWeights) {
+      // Risk parity objective: minimize distance from equal-risk-contribution weights
+      let rpDist = 0;
+      for (let i = 0; i < n; i++) {
+        const actual = alloc[i] / (deployAmt || 1);
+        rpDist += (actual - rpWeights[i]) ** 2;
+      }
+      sc = -rpDist * 100 + sh * 0.1 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty;
+    } else if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
+    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
     else if (target === "max_return") {
       const ddPenalty = srMode === "var" ? -0.08 * estMaxDD : srMode === "vol2" ? -0.04 * vol : -0.01 * vol;
-      sc = ret * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty;
+      sc = dynRet * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
     }
-    else sc = sh * .5 + ret * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty;
+    else sc = sh * .5 + dynRet * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus;
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
@@ -2468,22 +2850,20 @@ export default function App() {
       }
     }
 
-    // ── Train HMM on historical FRED composite scores (backtest-integrated) ──
-    let btHmmModel = null, btHmmFiltered = null, btHmmDates = null, btHmmCPProb = null, btHmmEnsemble = null;
+    // ── Prepare HMM data arrays for INCREMENTAL training during backtest ──
+    // NO full-history training here — that would be look-ahead bias.
+    // Instead, we prepare the raw score arrays and retrain periodically in the loop.
+    let btHmmAllScores = null, btHmmAllDates = null, btHmmDateToIdx = {};
+    let btHmmModel = null, btHmmEnsembleMap = {}; // date → ensemble probs
+    let lastHmmBuildDate = null;
     if (historicalRegimes) {
       try {
         const regEntries = Object.entries(historicalRegimes).sort((a, b) => a[0].localeCompare(b[0]));
-        const scores = regEntries.map(([, r]) => r.score ?? 0);
-        btHmmDates = regEntries.map(([d]) => d);
-        if (scores.length > 30) {
-          setBtProgress("Training 5-state HMM on FRED history...");
-          btHmmModel = hmmTrain(scores, 40);
-          btHmmFiltered = hmmFilter(scores, btHmmModel);
-          btHmmCPProb = runBOCPD(scores);
-          btHmmEnsemble = runEnsemble(btHmmFiltered, btHmmCPProb);
-          setBtProgress(`HMM trained on ${scores.length} months. Fetching ETF prices...`);
-        }
-      } catch (e) { console.warn("Backtest HMM training failed:", e); }
+        btHmmAllScores = regEntries.map(([, r]) => r.score ?? 0);
+        btHmmAllDates = regEntries.map(([d]) => d);
+        btHmmAllDates.forEach((d, i) => { btHmmDateToIdx[d] = i; });
+        setBtProgress(`Prepared ${btHmmAllScores.length} months of FRED scores for incremental HMM. Fetching ETF prices...`);
+      } catch (e) { console.warn("HMM data prep failed:", e); }
     }
 
     // Core ETF universe for backtest — focused on uncorrelated categories for better optimization
@@ -2634,10 +3014,9 @@ export default function App() {
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
 
           // ── HMM ensemble overlay (conservative fusion, same logic as live optimizer) ──
-          if (btHmmEnsemble && btHmmDates) {
-            const hmmIdx = btHmmDates.indexOf(monthKey);
-            if (hmmIdx >= 0 && btHmmEnsemble[hmmIdx]) {
-              const ensProbs = btHmmEnsemble[hmmIdx];
+          // Uses incrementally-trained HMM — only past data, no look-ahead
+          if (btHmmEnsembleMap[monthKey]) {
+              const ensProbs = btHmmEnsembleMap[monthKey];
               const hmmState5 = hmmToState5(ensProbs);
               const fredState5 = btRegime.state5;
               const riskOrder = ["strong_risk_off", "mild_risk_off", "neutral", "mild_risk_on", "strong_risk_on"];
@@ -2649,11 +3028,11 @@ export default function App() {
               btRegime.hmmState5 = hmmState5;
               btRegime.hmmProbs = ensProbs;
               // Detect regime change from HMM perspective too
-              if (hmmIdx > 0 && btHmmEnsemble[hmmIdx - 1]) {
-                const prevHmmState = hmmToState5(btHmmEnsemble[hmmIdx - 1]);
+              const prevMonth = mi > 0 ? simDates[mi - 1] : null;
+              if (prevMonth && btHmmEnsembleMap[prevMonth]) {
+                const prevHmmState = hmmToState5(btHmmEnsembleMap[prevMonth]);
                 if (prevHmmState !== hmmState5) regimeChanged = true;
               }
-            }
           }
         }
       }
@@ -2695,6 +3074,36 @@ export default function App() {
       // In bull markets: exclude assets below -50% (likely broken).
       // In bear/neutral: relax to -80% so crash recovery candidates remain accessible.
       const returnFloor = isBullish ? -50 : -80;
+
+      // ── Compute multi-factor scores ──
+      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
+
+      // ── Compute relative value signals ──
+      const relValSignals = computeRelativeValue(returnsByDateSym, sortedDates, mIdx, trailingStats);
+      for (const sym of Object.keys(trailingStats)) {
+        trailingStats[sym].relValue = relValSignals[sym] || 0;
+      }
+
+      // ── Compute realized portfolio vol for dynamic vol targeting ──
+      if (btRegime && Object.keys(optAlloc).length > 0) {
+        let portVarSum = 0;
+        const recentRets = [];
+        for (let rv = Math.max(0, mIdx - 6); rv < mIdx; rv++) {
+          const md = returnsByDateSym[sortedDates[rv]];
+          if (!md) continue;
+          let mRet = 0;
+          for (const [sym, wt] of Object.entries(optAlloc)) {
+            if (md[sym]) mRet += wt * md[sym].ret;
+          }
+          recentRets.push(mRet);
+        }
+        if (recentRets.length >= 3) {
+          const rm = recentRets.reduce((a, b) => a + b, 0) / recentRets.length;
+          const rv = recentRets.reduce((a, r) => a + (r - rm) ** 2, 0) / recentRets.length;
+          btRegime.realizedVol = Math.sqrt(rv) * Math.sqrt(12) * 100; // annualized
+        }
+      }
+
       const allCandidates = Object.values(trailingStats).filter(s => {
         if (s.t === "SPY" || s.v <= 0 || s.r <= returnFloor) return false;
         // For stocks: only include if it was a sector leader for this year
@@ -2706,14 +3115,20 @@ export default function App() {
         return true;
       });
       // ── Tiered candidate selection ──
-      // Bull markets: top 50 by trailing Sharpe — momentum matters, concentrate on winners
-      // Bear/neutral: ALL candidates — diversification matters most, bonds/gold/intl may lead
+      // Sort by blended score: 60% Sharpe-like + 40% composite factor score
+      // This diversifies the signal away from pure momentum
+      const sortScore = (s) => {
+        const sharpe = (s.r - 4) / (s.v || 1);
+        const factor = s.factorScore ?? 0.5;
+        return sharpe * 0.60 + factor * 3.0 * 0.40; // scale factor to comparable range
+      };
+      // Bull markets: top 50 by blended score — momentum + factor quality
+      // Bear/neutral: ALL candidates — diversification matters most
       let candidates;
       if (isBullish) {
-        candidates = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 50);
+        candidates = allCandidates.sort((a, b) => sortScore(b) - sortScore(a)).slice(0, 50);
       } else {
-        // Full universe in bear/neutral — recovery candidates included via relaxed return floor
-        const sorted = allCandidates.sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v));
+        const sorted = allCandidates.sort((a, b) => sortScore(b) - sortScore(a));
         candidates = [...sorted]; // all candidates
       }
       if (candidates.length < 3) continue;
@@ -2729,6 +3144,30 @@ export default function App() {
         if (cutoffIdx > 24) {
           regimeDurModel = buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym, cutoffIdx);
           lastModelBuildDate = monthKey;
+        }
+      }
+
+      // ── Incremental HMM training: retrain every 12 months on PAST data only ──
+      // At 2008-01, the HMM has only seen data up to 2007-10 (3-month gap).
+      // This prevents any future information from leaking into regime classifications.
+      if (btHmmAllScores && (!lastHmmBuildDate || mIdx - (dateToIdx[lastHmmBuildDate] || 0) >= 12)) {
+        const hmmCutoffIdx = btHmmDateToIdx[monthKey];
+        if (hmmCutoffIdx != null) {
+          const pastCutoff = Math.max(0, hmmCutoffIdx - 3); // 3-month gap to prevent leakage
+          if (pastCutoff > 36) { // need at least 36 months to train meaningfully
+            try {
+              const pastScores = btHmmAllScores.slice(0, pastCutoff);
+              btHmmModel = hmmTrain(pastScores, 30);
+              const pastFiltered = hmmFilter(pastScores, btHmmModel);
+              const pastCP = runBOCPD(pastScores);
+              const pastEnsemble = runEnsemble(pastFiltered, pastCP);
+              // Store ensemble probs for each past date
+              for (let k = 0; k < pastCutoff; k++) {
+                btHmmEnsembleMap[btHmmAllDates[k]] = pastEnsemble[k];
+              }
+              lastHmmBuildDate = monthKey;
+            } catch (e) { /* HMM training failed for this window, continue */ }
+          }
         }
       }
       // Update btRegime with current model
@@ -2848,18 +3287,22 @@ export default function App() {
       }
       turnoverPct *= 50;
 
-      // Hurdle: tax cost × multiplier, with 1.5% minimum floor + light turnover cost
+      // ── Transaction cost model: spread + market impact ──
+      const txCosts = computeTransactionCosts(prevAlloc, newAlloc, optValue, etfDbMap);
+      const txCostPct = txCosts.totalCostPct;
+
+      // Hurdle: tax cost + transaction costs × multiplier, with 1.5% minimum floor
       const taxHurdle = isFirstAllocation ? -999 :
         btTransition && btTransition.startsWith("bear→") && btDuration >= 2 && btDuration <= 8 ? tcPct * 0.5 :
         curAlpha > 3 ? tcPct * 2.0 :
         curAlpha < -2 ? tcPct * 0.8 :
         tcPct * 1.2;
       const minFloor = isFirstAllocation ? -999 : 1.5;
-      const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01;
+      const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01 + txCostPct;
 
       if (isFirstAllocation || retImp > hurdle) {
-        // Deduct tax BEFORE computing new cost basis — actual portfolio value is post-tax
-        const postTaxValue = optValue - estTC;
+        // Deduct tax AND transaction costs BEFORE computing new cost basis
+        const postTaxValue = optValue - estTC - txCosts.totalCostDollars;
 
         // ── Update cost basis, shares, and cost-per-share maps ──
         const newCostBasis = {}, newShares = {}, newCostPerShare = {}, newPosEstablished = {};
@@ -3004,11 +3447,10 @@ export default function App() {
         duration: yearEndDuration,
         transition: yearEndTransition,
         hmmState5: (() => {
-          if (!btHmmEnsemble || !btHmmDates) return null;
+          if (!btHmmEnsembleMap) return null;
           for (let m = 12; m >= 1; m--) {
             const mk = `${year}-${String(m).padStart(2, "0")}`;
-            const hIdx = btHmmDates.indexOf(mk);
-            if (hIdx >= 0 && btHmmEnsemble[hIdx]) return hmmToState5(btHmmEnsemble[hIdx]);
+            if (btHmmEnsembleMap[mk]) return hmmToState5(btHmmEnsembleMap[mk]);
           }
           return null;
         })(),
@@ -3055,7 +3497,7 @@ export default function App() {
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
-      regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (5-state, BOCPD)" : "FRED (12-series, 5-state, daily EMA)") : "Proxy (SPY momentum/vol)",
+      regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (incremental, no look-ahead)" : "FRED (12-series, 5-state, daily EMA)") : "Proxy (SPY momentum/vol)",
       regimeDurationModel: regimeDurModel ? true : false,
       tax: {
         totalPaid: Math.round(totalTaxPaid),
@@ -3143,18 +3585,28 @@ export default function App() {
       } catch (e) { /* proceed without regime */ }
     }
 
-    // Train HMM once for simulation (same model reused across all 100 sims)
-    let simHmmEnsemble = null, simHmmDates = null;
+    // Build incremental HMM ensemble map for simulation (no look-ahead bias)
+    // Retrain every 12 months using only PAST data, same as backtest
+    let simHmmEnsembleMap = {};
     if (simHistRegimes) {
       try {
         const entries = Object.entries(simHistRegimes).sort((a, b) => a[0].localeCompare(b[0]));
-        const scores = entries.map(([, r]) => r.score ?? 0);
-        simHmmDates = entries.map(([d]) => d);
-        if (scores.length > 30) {
-          const model = hmmTrain(scores, 30); // fewer iterations for speed
-          const filtered = hmmFilter(scores, model);
-          const cp = runBOCPD(scores);
-          simHmmEnsemble = runEnsemble(filtered, cp);
+        const allScores = entries.map(([, r]) => r.score ?? 0);
+        const allDates = entries.map(([d]) => d);
+        if (allScores.length > 36) {
+          let lastBuild = -999;
+          for (let i = 36; i < allScores.length; i++) {
+            if (i - lastBuild >= 12) {
+              const pastCutoff = Math.max(0, i - 3);
+              const pastScores = allScores.slice(0, pastCutoff);
+              const model = hmmTrain(pastScores, 25);
+              const filtered = hmmFilter(pastScores, model);
+              const cp = runBOCPD(pastScores);
+              const ensemble = runEnsemble(filtered, cp);
+              for (let k = 0; k < pastCutoff; k++) simHmmEnsembleMap[allDates[k]] = ensemble[k];
+              lastBuild = i;
+            }
+          }
         }
       } catch (e) { /* proceed without HMM */ }
     }
@@ -3231,6 +3683,10 @@ export default function App() {
           }
           return true;
         }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 30);
+
+        // Factor scoring for simulation candidates (lightweight)
+        if (mIdx > 12) computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
+
         // Randomly sample 20 from top 30 — ensures each sim sees different candidates
         while (cands.length > 20) cands.splice(Math.floor(Math.random() * cands.length), 1);
         if (cands.length < 3) continue;
@@ -3247,15 +3703,12 @@ export default function App() {
               if (prev && prev.regime === sRegime3) sDur++; else break;
             }
             simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null };
-            // HMM overlay (conservative fusion)
-            if (simHmmEnsemble && simHmmDates) {
-              const hIdx = simHmmDates.indexOf(monthKey);
-              if (hIdx >= 0 && simHmmEnsemble[hIdx]) {
-                const hmmS5 = hmmToState5(simHmmEnsemble[hIdx]);
-                const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
-                const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
-                if (fR >= 0 && hR >= 0) simRegime.state5 = ro[Math.min(fR, hR)];
-              }
+            // HMM overlay (conservative fusion, incremental — no look-ahead)
+            if (simHmmEnsembleMap[monthKey]) {
+              const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
+              const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
+              const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
+              if (fR >= 0 && hR >= 0) simRegime.state5 = ro[Math.min(fR, hR)];
             }
           }
         }
@@ -3891,6 +4344,15 @@ useEffect(() => {
       }
 
       candidates = liveCandidates.filter(c => c.t !== "SPY" && c.v > 0 && c.r > -80);
+
+      // ── Compute multi-factor scores for live candidates ──
+      if (sortedDates.length > 6) {
+        const liveTrailing = {};
+        candidates.forEach(c => { liveTrailing[c.t] = c; });
+        computeFactorScores(returnsByDate, sortedDates, mIdx, liveTrailing, etfDbMap);
+        const relVal = computeRelativeValue(returnsByDate, sortedDates, mIdx, liveTrailing);
+        candidates.forEach(c => { c.relValue = relVal[c.t] || 0; });
+      }
     } else {
       // Fallback: no history available, use static DB values
       candidates = baseCandidates;
@@ -4338,7 +4800,7 @@ useEffect(() => {
 
             {cashBalance > 0 && <>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
-                {[{ k: "max_sharpe", l: "Max Sharpe", d: "Risk-adjusted" }, { k: "min_vol", l: "Min Volatility", d: "Lowest risk" }, { k: "max_return", l: "Max Return", d: srMode === "var" ? "Aggressive + DD brake" : "Full aggressive" }, { k: "balanced", l: "Balanced", d: "Multi-factor" }].map(o => (
+                {[{ k: "max_sharpe", l: "Max Sharpe", d: "Risk-adjusted" }, { k: "min_vol", l: "Min Volatility", d: "Lowest risk" }, { k: "max_return", l: "Max Return", d: srMode === "var" ? "Aggressive + DD brake" : "Full aggressive" }, { k: "risk_parity", l: "Risk Parity", d: "Equal risk" }, { k: "balanced", l: "Balanced", d: "Multi-factor" }].map(o => (
                   <button key={o.k} onClick={() => setOt(o.k)} style={{ flex: "1 1 100px", padding: "8px 12px", borderRadius: 0, border: "1px solid", borderColor: ot === o.k ? "rgba(66,190,101,.25)" : "#2a2a2a", background: ot === o.k ? "rgba(66,190,101,.08)" : "#1c1c1c", color: ot === o.k ? cs.green : cs.dim, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
                     <div style={{ fontSize: 10, fontWeight: 600 }}>{o.l}</div><div style={{ fontSize: 8, opacity: .7 }}>{o.d}</div>
                   </button>
@@ -4377,6 +4839,7 @@ useEffect(() => {
 
               {ot === "max_return" && srMode === "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🚀 Max Return + VaR: aggressive growth with a light drawdown brake. Return is weighted 1.5x with a mild VaR penalty. Hard constraints (min 3 positions, 25% stock cap, return shrinkage) still apply.</div>}
               {ot === "max_return" && srMode !== "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🚀 Max Return: full aggressive. Return weighted 1.5x with minimal vol penalty. The optimizer will chase the highest-returning assets within the diversification constraints. Switch to VaR mode for a light drawdown brake.</div>}
+              {ot === "risk_parity" && <div style={{ fontSize: 8, color: cs.purple, marginBottom: 4 }}>⚖️ Risk Parity: each position contributes equal portfolio risk. Low-vol assets get higher weight, high-vol assets get lower weight. Iterative risk budgeting with Sharpe tiebreaker. Best in uncertain regimes where you want max diversification without directional bets.</div>}
 
               <button onClick={runOptimizer} disabled={optRunning} style={{ width: "100%", padding: "11px", borderRadius: 0, border: "none", background: optRunning ? "#2a2a2a" : cs.blue, color: optRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: optRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
                 {optRunning ? "Fetching trailing data & optimizing..." : `Run Optimizer — Deploy $${cashBalance.toLocaleString()}${includeStocks ? " (ETF+Stocks)" : ""}${useRegime && regimeData?.regime?.state5 ? ` (${regimeData.regime.state5.replace(/_/g," ")})` : ""}`}
