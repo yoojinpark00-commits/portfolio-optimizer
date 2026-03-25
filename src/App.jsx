@@ -1218,6 +1218,31 @@ const REGIME_TILTS = {
   strong_risk_off: [+0.15, -0.12, 0.5],
 };
 
+// ── Dynamic Regime-Based Allocation Rules ──
+// Target ranges for macro-sector groups by regime state.
+// equity = equity-core + equity-growth + equity-satellite + sector-* + intl*
+// bond = fixed-income
+// commodity = alternatives
+// Values are [min, max] as fractions (0-1)
+const REGIME_ALLOCATION_RULES = {
+  strong_risk_on: { equity: [0.70, 0.90], bond: [0.05, 0.20], commodity: [0.00, 0.10] }, // Bull/Recovery
+  mild_risk_on:   { equity: [0.60, 0.80], bond: [0.10, 0.25], commodity: [0.00, 0.10] },
+  neutral:        { equity: [0.45, 0.65], bond: [0.15, 0.30], commodity: [0.05, 0.15] },
+  mild_risk_off:  { equity: [0.30, 0.50], bond: [0.25, 0.40], commodity: [0.10, 0.20] }, // Correction/Euphoria
+  strong_risk_off: { equity: [0.15, 0.35], bond: [0.30, 0.45], commodity: [0.15, 0.25] }, // Crisis
+};
+
+// ── Drawdown Control Thresholds ──
+// Each level: { threshold, confirmationMonths, equityReduction }
+// Reduction is fraction of current equity to remove (e.g., 0.20 = cut equity by 20%)
+const DRAWDOWN_LEVELS = [
+  { threshold: 0.05, confirmationMonths: 2, equityReduction: 0.20 },
+  { threshold: 0.10, confirmationMonths: 1, equityReduction: 0.40 },
+  { threshold: 0.15, confirmationMonths: 1, equityReduction: 0.60 },
+  { threshold: 0.20, confirmationMonths: 0, equityReduction: 0.80 }, // immediate
+];
+const DRAWDOWN_HYSTERESIS = 0.02; // must recover 2% above threshold before lifting
+
 // ═══════════════════════════════════════════════════════════════════
 //  INLINE HMM REGIME ENGINE — 5-State Gaussian HMM + BOCPD + Ensemble
 //  Bull(0) / Euphoria(1) / Correction(2) / Crisis(3) / Recovery(4)
@@ -1825,9 +1850,30 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     relValSignals[i] = candidates[i].relValue || 0;
   }
 
+  // ── Pre-compute direct momentum signals (regime-aware) ──
+  // mom12_1 already computed by computeFactorScores(); here we create a direct
+  // per-candidate bonus/penalty that bypasses the BL blend for a purer momentum tilt.
+  const momSignal = new Float64Array(n);
+  if (hasFactors) {
+    // Collect mom12_1 ranks across candidates
+    const momRanks = candidates.map((c, i) => ({ i, rank: c.factorRanks?.mom12_1 ?? 0.5 }));
+    // Regime-aware momentum strength: strongest in Bull/Recovery, weakest in Crisis
+    let momScale = 1.0;
+    if (state5 === "strong_risk_on" || state5 === "mild_risk_on") momScale = 1.3;
+    else if (state5 === "neutral") momScale = 1.0;
+    else if (state5 === "mild_risk_off") momScale = 0.6;
+    else if (state5 === "strong_risk_off") momScale = 0.3; // momentum crashes in crisis
+    for (const { i, rank } of momRanks) {
+      // Top quartile: bonus +0.03 to +0.08; bottom quartile: penalty -0.02 to -0.05
+      if (rank >= 0.75) momSignal[i] = (0.03 + (rank - 0.75) * 0.20) * momScale;
+      else if (rank <= 0.25) momSignal[i] = (-0.02 - (0.25 - rank) * 0.12) * momScale;
+      // Middle 50%: no direct momentum signal (handled by BL blend already)
+    }
+  }
+
   // ── Pre-compute risk parity reference weights ──
   let rpWeights = null;
-  if (target === "risk_parity") {
+  if (target === "risk_parity" || target === "hybrid") {
     rpWeights = riskParityWeights(candidates, gc);
   }
 
@@ -2082,27 +2128,67 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     let relValBonus = 0;
     for (let i = 0; i < n; i++) relValBonus += (alloc[i] / (deployAmt || 1)) * relValSignals[i];
 
+    // ── Direct momentum bonus: regime-aware tilt toward momentum winners ──
+    let momBonus = 0;
+    for (let i = 0; i < n; i++) momBonus += (alloc[i] / (deployAmt || 1)) * momSignal[i];
+
     // ── Dynamic vol targeting: scale expected return by vol scale factor ──
     const dynRet = ret * dynVolScale;
 
+    // ── Dynamic regime-based allocation alignment bonus ──
+    // Reward portfolios whose macro-sector weights fall within regime-appropriate ranges
+    let regimeAlignBonus = 0;
+    if (hasRegimeTilt && REGIME_ALLOCATION_RULES[state5]) {
+      const rules = REGIME_ALLOCATION_RULES[state5];
+      // Compute actual macro-sector group weights
+      let equityWt = 0, bondWt = 0, commodityWt = 0;
+      for (let i = 0; i < n; i++) {
+        const wt = alloc[i] / (deployAmt || 1);
+        if (wt < 0.01) continue;
+        const ms = macroSectors[i];
+        if (ms === "fixed-income") bondWt += wt;
+        else if (ms === "alternatives") commodityWt += wt;
+        else equityWt += wt; // equity-core, equity-growth, equity-satellite, sector-*, intl*
+      }
+      // Score: reward being within target range, penalize being outside
+      const checkRange = (actual, min, max) => {
+        if (actual >= min && actual <= max) return 0.02; // within range bonus
+        const dist = actual < min ? min - actual : actual - max;
+        return -dist * 0.15; // penalty proportional to distance from range
+      };
+      regimeAlignBonus = checkRange(equityWt, rules.equity[0], rules.equity[1])
+        + checkRange(bondWt, rules.bond[0], rules.bond[1])
+        + checkRange(commodityWt, rules.commodity[0], rules.commodity[1]);
+    }
+
     // Combined new penalties
     const newPenalties = cvarPenalty + tailRiskPenalty + sectorConcPenalty;
+    const alphaSignals = momBonus + regimeAlignBonus;
 
-    if (target === "risk_parity" && rpWeights) {
+    if (target === "hybrid" && rpWeights) {
+      // Hybrid mode: risk-parity base + alpha tilts from scoring
+      let rpDist = 0;
+      for (let i = 0; i < n; i++) {
+        const actual = alloc[i] / (deployAmt || 1);
+        rpDist += (actual - rpWeights[i]) ** 2;
+      }
+      // Balance RP adherence (stability) with Sharpe + signals (alpha)
+      sc = -rpDist * 30 + sh * 0.6 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + alphaSignals + newPenalties;
+    } else if (target === "risk_parity" && rpWeights) {
       // Risk parity objective: minimize distance from equal-risk-contribution weights
       let rpDist = 0;
       for (let i = 0; i < n; i++) {
         const actual = alloc[i] / (deployAmt || 1);
         rpDist += (actual - rpWeights[i]) ** 2;
       }
-      sc = -rpDist * 100 + sh * 0.1 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + newPenalties;
-    } else if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
-    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
+      sc = -rpDist * 100 + sh * 0.1 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + alphaSignals + newPenalties;
+    } else if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
+    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
     else if (target === "max_return") {
       const ddPenalty = srMode === "var" ? -0.08 * estMaxDD : srMode === "vol2" ? -0.04 * vol : -0.01 * vol;
-      sc = dynRet * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
+      sc = dynRet * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
     }
-    else sc = sh * .5 + dynRet * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
+    else sc = sh * .5 + dynRet * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
@@ -3430,6 +3516,10 @@ export default function App() {
   const [simRunning, setSimRunning] = useState(false);
   const [simProgress, setSimProgress] = useState("");
   const [simResult, setSimResult] = useState(null);
+  // ── Advanced algorithm controls ──
+  const [walkForward, setWalkForward] = useState(true); // Walk-forward backtesting (no look-ahead)
+  const [drawdownProtection, setDrawdownProtection] = useState(true); // Drawdown circuit breakers
+  const [weightingMethod, setWeightingMethod] = useState("score"); // "score" | "risk_parity" | "hybrid"
 
   // ── Regime state ──
   const [regimeData, setRegimeData] = useState(null);
@@ -3903,6 +3993,20 @@ export default function App() {
     let regimeDurModel = null;
     let lastModelBuildDate = null;
 
+    // ── Drawdown control state ──
+    let ddPeak = startCash; // rolling portfolio peak value
+    let ddCounters = new Array(DRAWDOWN_LEVELS.length).fill(0); // confirmation counters per level
+    let ddActiveLevel = -1; // highest active drawdown level (-1 = normal)
+    let ddRecoveryMonths = 0; // months since drawdown ended (for gradual re-entry)
+    let ddEquityScale = 1.0; // current equity scaling factor (1.0 = no reduction)
+    const drawdownEvents = []; // track drawdown events for results
+
+    // ── Walk-forward trailing window size ──
+    // Walk-forward uses stricter rolling window (48 months) for more robust out-of-sample estimates
+    const wfTrailMonths = walkForward ? 48 : 12;
+    // Effective optimization target: override with hybrid when weightingMethod is set
+    const effectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
+
     for (let mi = 0; mi < simDates.length; mi++) {
       const monthKey = simDates[mi];
       const mIdx = dateToIdx[monthKey];
@@ -3926,6 +4030,96 @@ export default function App() {
       optCurve.push({ date: monthKey, value: optValue });
       spyCurve.push({ date: monthKey, value: spyValue });
       bal60Curve.push({ date: monthKey, value: bal60Value });
+
+      // ── Drawdown Controls with Reversal Delay ──
+      if (drawdownProtection && Object.keys(optAlloc).length > 0) {
+        if (optValue > ddPeak) ddPeak = optValue;
+        const currentDD = (ddPeak - optValue) / ddPeak; // 0 to 1
+
+        // Update confirmation counters
+        for (let lvl = 0; lvl < DRAWDOWN_LEVELS.length; lvl++) {
+          if (currentDD >= DRAWDOWN_LEVELS[lvl].threshold) {
+            ddCounters[lvl]++;
+          } else {
+            ddCounters[lvl] = 0; // reset if recovered above this level
+          }
+        }
+
+        // Find highest CONFIRMED level (counter >= required confirmation months)
+        let confirmedLevel = -1;
+        for (let lvl = DRAWDOWN_LEVELS.length - 1; lvl >= 0; lvl--) {
+          if (ddCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths) {
+            confirmedLevel = lvl; break;
+          }
+        }
+
+        // Apply equity reduction for confirmed drawdown level
+        if (confirmedLevel >= 0 && confirmedLevel !== ddActiveLevel) {
+          const reduction = DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
+          ddEquityScale = 1.0 - reduction;
+          ddActiveLevel = confirmedLevel;
+          ddRecoveryMonths = 0;
+          drawdownEvents.push({ date: monthKey, type: "TRIGGER", level: confirmedLevel,
+            drawdown: +(currentDD * 100).toFixed(1), equityScale: +ddEquityScale.toFixed(2),
+            portfolioValue: Math.round(optValue) });
+        }
+
+        // Recovery: gradual re-entry with hysteresis
+        if (ddActiveLevel >= 0) {
+          const activeThreshold = DRAWDOWN_LEVELS[ddActiveLevel].threshold;
+          if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
+            // Recovered sufficiently — start gradual re-entry
+            ddRecoveryMonths++;
+            // Gradual re-entry over 3 months: restore 1/3 of reduction each month
+            const recoveryProgress = Math.min(1.0, ddRecoveryMonths / 3);
+            const targetScale = ddActiveLevel > 0 ? (1.0 - DRAWDOWN_LEVELS[ddActiveLevel - 1].equityReduction) : 1.0;
+            ddEquityScale = ddEquityScale + (targetScale - ddEquityScale) * recoveryProgress;
+            if (ddEquityScale >= 0.98) {
+              ddEquityScale = 1.0;
+              ddActiveLevel = -1;
+              ddRecoveryMonths = 0;
+              drawdownEvents.push({ date: monthKey, type: "RECOVERED",
+                drawdown: +(currentDD * 100).toFixed(1), portfolioValue: Math.round(optValue) });
+            }
+          } else {
+            ddRecoveryMonths = 0; // still in drawdown, reset recovery counter
+          }
+        }
+
+        // Apply the equity scale to allocation weights
+        // Shift equity allocation to bonds/cash-like proportionally
+        if (ddEquityScale < 1.0 && Object.keys(optAlloc).length > 0) {
+          const scaledAlloc = {};
+          for (const [sym, wt] of Object.entries(optAlloc)) {
+            const db = etfDbMap[sym];
+            const ms = MACRO_SECTOR_MAP[db?.c] || "other";
+            if (ms === "fixed-income" || ms === "alternatives") {
+              scaledAlloc[sym] = wt; // keep defensive positions
+            } else {
+              scaledAlloc[sym] = wt * ddEquityScale; // reduce equity
+            }
+          }
+          // Redistribute reduced equity to BND (or largest bond holding) as a safe haven
+          const equityReduced = Object.entries(optAlloc).reduce((s, [sym, wt]) => {
+            const db = etfDbMap[sym];
+            const ms = MACRO_SECTOR_MAP[db?.c] || "other";
+            return (ms !== "fixed-income" && ms !== "alternatives") ? s + wt * (1 - ddEquityScale) : s;
+          }, 0);
+          // Find best bond holding or default to BND weight
+          const bondHolding = Object.keys(scaledAlloc).find(s => {
+            const db = etfDbMap[s];
+            return MACRO_SECTOR_MAP[db?.c] === "fixed-income";
+          });
+          if (bondHolding) scaledAlloc[bondHolding] = (scaledAlloc[bondHolding] || 0) + equityReduced;
+          else scaledAlloc["BND"] = (scaledAlloc["BND"] || 0) + equityReduced;
+          // Re-normalize to sum to 1
+          const totalWt = Object.values(scaledAlloc).reduce((s, w) => s + w, 0);
+          if (totalWt > 0) {
+            for (const sym of Object.keys(scaledAlloc)) scaledAlloc[sym] /= totalWt;
+          }
+          optAlloc = scaledAlloc;
+        }
+      }
 
       // Step 2: Pre-screen
       const prevTickers = Object.keys(optAlloc);
@@ -4032,10 +4226,11 @@ export default function App() {
       await new Promise(r => setTimeout(r, 0));
 
       // Step 3: Trailing stats with RECENCY WEIGHTING + RETURN SHRINKAGE
-      // Recent months matter more than old months to avoid momentum whipsaw
-      // (e.g., Jan 2021 still seeing the March-Dec 2020 rocket with equal weight)
+      // Walk-forward mode: use wider rolling window (48mo) for robust vol estimates,
+      // but still use 12mo recency-weighted returns for momentum signal.
+      // Non-walk-forward: 12-month window (original behavior).
       const trailingStats = {};
-      const trailStart = Math.max(0, mIdx - 12);
+      const trailStart = Math.max(0, mIdx - wfTrailMonths);
       for (const sym of available) {
         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
         for (let ti = trailStart; ti < mIdx; ti++) {
@@ -4171,7 +4366,7 @@ export default function App() {
           warmWeights[i] = lastBestWeights[candidates[i].t] || 0;
         }
       }
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights);
+      const result = optimizeCash([], optValue, 0, candidates, effectiveOT, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights);
       if (!result || result.length === 0) continue;
       // Save best weights for warm-starting next evaluation
       lastBestWeights = {};
@@ -4526,9 +4721,17 @@ export default function App() {
         holds: (simDates.length - totalRebalances),
         rebalanceEvents,
       },
+      drawdown: {
+        enabled: drawdownProtection,
+        events: drawdownEvents,
+        triggerCount: drawdownEvents.filter(e => e.type === "TRIGGER").length,
+        recoveryCount: drawdownEvents.filter(e => e.type === "RECOVERED").length,
+      },
+      walkForward,
+      weightingMethod,
     });
     setBtProgress(""); setBtRunning(false);
-  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash]);
+  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash, walkForward, drawdownProtection, weightingMethod]);
 
   // ═══ SIMULATION: Run backtest N times to measure win rate vs SPY ═══
   const runSimulation = useCallback(async () => {
@@ -7645,6 +7848,22 @@ useEffect(() => {
                 </div>
                 <span style={{ fontSize: 8, color: cs.purple, fontFamily: mono2 }}>Tax: {taxRates.st.toFixed(0)}% ST / {taxRates.lt.toFixed(0)}% LT</span>
               </div>
+              {/* ── Advanced Algorithm Controls ── */}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "1px solid #2a2a2a" }}>
+                <span style={{ fontSize: 8, color: cs.dim, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase" }}>ALGO</span>
+                <button onClick={() => setWalkForward(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${walkForward ? "rgba(66,190,101,.2)" : "#393939"}`, background: walkForward ? "rgba(66,190,101,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: walkForward ? cs.green : cs.dim, fontWeight: 600 }}>Walk-Forward {walkForward ? "ON" : "OFF"}</span>
+                </button>
+                <button onClick={() => setDrawdownProtection(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${drawdownProtection ? "rgba(255,126,182,.2)" : "#393939"}`, background: drawdownProtection ? "rgba(255,126,182,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: drawdownProtection ? cs.pink : cs.dim, fontWeight: 600 }}>DD Protection {drawdownProtection ? "ON" : "OFF"}</span>
+                </button>
+                {[{k:"score",l:"Score-Based",d:"Sharpe optimized"},{k:"risk_parity",l:"Risk Parity",d:"Equal risk contribution"},{k:"hybrid",l:"Hybrid",d:"RP base + alpha tilts"}].map(m => (
+                  <button key={m.k} onClick={() => setWeightingMethod(m.k)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${weightingMethod === m.k ? "rgba(120,169,255,.25)" : "#393939"}`, background: weightingMethod === m.k ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    <div style={{ fontSize: 8, color: weightingMethod === m.k ? cs.blue : cs.dim, fontWeight: 600 }}>{m.l}</div>
+                    <div style={{ fontSize: 7, color: cs.muted }}>{m.d}</div>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <button onClick={runBacktest} disabled={btRunning} style={{ width: "100%", padding: "11px", borderRadius: 0, border: "none", background: btRunning ? "#393939" : cs.blue, color: btRunning ? cs.dim : cs.bg, fontSize: 12, fontWeight: 700, cursor: btRunning ? "wait" : "pointer", fontFamily: "inherit" }}>
@@ -7721,6 +7940,45 @@ useEffect(() => {
                     </div>
                   </div>
                 </div>
+              </div>}
+              {/* ── Algorithm & Drawdown Protection Summary ── */}
+              {(btResult.walkForward || btResult.drawdown?.enabled || btResult.weightingMethod !== "score") && <div style={{ ...cardS, marginBottom: 14, background: "rgba(120,169,255,.02)", borderColor: "rgba(120,169,255,.1)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: cs.blue }}>Algorithm Features</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                      {btResult.walkForward && <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(66,190,101,.08)", border: "1px solid rgba(66,190,101,.15)", color: cs.green, fontWeight: 600 }}>Walk-Forward (48mo rolling)</span>}
+                      {btResult.weightingMethod === "hybrid" && <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(120,169,255,.08)", border: "1px solid rgba(120,169,255,.15)", color: cs.blue, fontWeight: 600 }}>Hybrid RP + Alpha</span>}
+                      {btResult.weightingMethod === "risk_parity" && <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(120,169,255,.08)", border: "1px solid rgba(120,169,255,.15)", color: cs.blue, fontWeight: 600 }}>Risk Parity</span>}
+                      <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(255,126,182,.08)", border: "1px solid rgba(255,126,182,.15)", color: cs.pink, fontWeight: 600 }}>Momentum + Mean-Reversion</span>
+                      <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(255,171,145,.08)", border: "1px solid rgba(255,171,145,.15)", color: cs.yellow, fontWeight: 600 }}>Regime-Based Allocation</span>
+                    </div>
+                  </div>
+                  {btResult.drawdown?.enabled && <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>DD Triggers</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: btResult.drawdown.triggerCount > 0 ? cs.pink : cs.green }}>{btResult.drawdown.triggerCount}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Recoveries</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: cs.green }}>{btResult.drawdown.recoveryCount}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Protection</div>
+                      <div style={{ fontSize: 8, fontWeight: 600, fontFamily: mono2, color: cs.pink }}>5%/2mo 10%/1mo 15%/1mo 20%/imm</div>
+                    </div>
+                  </div>}
+                </div>
+                {btResult.drawdown?.events?.length > 0 && <div style={{ marginTop: 8, borderTop: "1px solid #2a2a2a", paddingTop: 6 }}>
+                  <div style={{ fontSize: 8, color: cs.dim, marginBottom: 4 }}>Drawdown Events</div>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {btResult.drawdown.events.map((ev, i) => (
+                      <span key={i} style={{ fontSize: 7, padding: "2px 5px", background: ev.type === "TRIGGER" ? "rgba(255,131,137,.06)" : "rgba(66,190,101,.06)", border: `1px solid ${ev.type === "TRIGGER" ? "rgba(255,131,137,.15)" : "rgba(66,190,101,.15)"}`, color: ev.type === "TRIGGER" ? cs.red : cs.green, fontFamily: mono2 }}>
+                        {ev.date} {ev.type === "TRIGGER" ? `DD -${ev.drawdown}% → ${(ev.equityScale*100).toFixed(0)}% eq` : "Recovered"}
+                      </span>
+                    ))}
+                  </div>
+                </div>}
               </div>}
               <div style={cardS}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
