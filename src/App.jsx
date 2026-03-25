@@ -4627,6 +4627,52 @@ export default function App() {
       const allEventsToDate = rebalanceEvents.filter(e => e.date <= `${year}-12`);
       const latestAlloc = allEventsToDate.length > 0 ? allEventsToDate[allEventsToDate.length - 1] : null;
 
+      // ── Compute accurate year-end holdings with drifted weights ──
+      // Holdings weights drift between rebalances as prices move.
+      // Compute actual year-end weights by applying monthly returns since rebalance.
+      let yearEndDateKey = null;
+      for (let m = 12; m >= 1; m--) {
+        const mk = `${year}-${String(m).padStart(2, "0")}`;
+        if (returnsByDateSym[mk]) { yearEndDateKey = mk; break; }
+      }
+      const yearEndPrices = yearEndDateKey ? returnsByDateSym[yearEndDateKey] : {};
+
+      const yearEndHoldings = [];
+      if (latestAlloc?.holdings) {
+        const rebalDate = latestAlloc.date; // e.g. "2021-03"
+        // Compute growth factor for each holding from rebalance to year-end
+        const holdingsWithGrowth = latestAlloc.holdings.map(h => {
+          let growthFactor = 1.0;
+          // Walk from the month after rebalance to year-end, compounding returns
+          const rebalIdx = dateToIdx[rebalDate] || 0;
+          const yearEndIdx = yearEndDateKey ? dateToIdx[yearEndDateKey] : rebalIdx;
+          for (let di = rebalIdx + 1; di <= yearEndIdx; di++) {
+            const dk = sortedDates[di];
+            if (!dk) break;
+            const md = returnsByDateSym[dk]?.[h.ticker];
+            if (md) growthFactor *= (1 + md.ret);
+          }
+          const yearEndClose = yearEndPrices[h.ticker]?.close || null;
+          return { ...h, growthFactor, yearEndPrice: yearEndClose };
+        });
+
+        // Compute drifted weights: original weight × growth, then normalize
+        let totalDriftedWt = 0;
+        for (const h of holdingsWithGrowth) {
+          h.driftedWt = (h.weight / 100) * h.growthFactor;
+          totalDriftedWt += h.driftedWt;
+        }
+        // Year-end MV: drifted proportion × actual year-end portfolio value
+        for (const h of holdingsWithGrowth) {
+          const actualWt = totalDriftedWt > 0 ? h.driftedWt / totalDriftedWt : h.weight / 100;
+          h.yearEndMV = Math.round(actualWt * optYearEnd);
+          h.yearEndWeight = +(actualWt * 100).toFixed(1);
+          h.yearEndGL = h.costBasis > 0 ? h.yearEndMV - h.costBasis : null;
+          h.yearEndGLPct = h.costBasis > 0 ? ((h.yearEndMV / h.costBasis) - 1) * 100 : null;
+          yearEndHoldings.push(h);
+        }
+      }
+
       // Get regime at year-end from actual FRED data (independent of random rebalance timing)
       let yearEndState5 = null, yearEndRegimeScore = null, yearEndAcceleration = null, yearEndDuration = 0, yearEndTransition = null;
       if (historicalRegimes) {
@@ -4660,7 +4706,7 @@ export default function App() {
         spyRet: spyYearStart > 0 ? ((spyYearEnd - spyYearStart) / spyYearStart * 100) : 0,
         bal60Ret: bal60YearStart > 0 ? ((bal60YearEnd - bal60YearStart) / bal60YearStart * 100) : 0,
         alloc: { ...optAlloc },
-        holdings: latestAlloc?.holdings || [],
+        holdings: yearEndHoldings.length > 0 ? yearEndHoldings : (latestAlloc?.holdings || []),
         trades: yearEvents.flatMap(e => e.trades || []),
         portfolioValue: Math.round(optYearEnd),
         taxPaid: Math.round(yearTaxPaid),
@@ -8098,11 +8144,10 @@ useEffect(() => {
                                     const hStocks = (a.holdings || []).filter(h => h.isStock);
                                     const hETFs = (a.holdings || []).filter(h => !h.isStock);
                                     const renderHolding = (h, i, color) => {
-                                      // Year-end market value: weight × year-end portfolio value
-                                      const yearEndMV = (h.weight / 100) * (a.portfolioValue || 0);
-                                      // Unrealized G/L: year-end MV minus cost basis
-                                      const unrealizedGL = h.costBasis > 0 ? yearEndMV - h.costBasis : null;
-                                      const unrealizedPct = h.costBasis > 0 ? ((yearEndMV / h.costBasis) - 1) * 100 : null;
+                                      // Use pre-computed year-end values if available, otherwise fallback
+                                      const mv = h.yearEndMV || Math.round((h.weight / 100) * (a.portfolioValue || 0));
+                                      const gl = h.yearEndGL != null ? h.yearEndGL : (h.costBasis > 0 ? mv - h.costBasis : null);
+                                      const glPct = h.yearEndGLPct != null ? h.yearEndGLPct : (h.costBasis > 0 ? ((mv / h.costBasis) - 1) * 100 : null);
                                       return (
                                       <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 7px", borderRadius: 0, background: i % 2 ? "rgba(255,255,255,.02)" : "transparent" }}>
                                         <span style={{ width: 4, height: 28, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
@@ -8114,13 +8159,14 @@ useEffect(() => {
                                           <div style={{ fontSize: 7, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
                                             {h.cat}
                                             {h.costBasis > 0 && <span> · Basis {fmt$(h.costBasis)}</span>}
+                                            {h.yearEndPrice && <span> · Close ${h.yearEndPrice.toFixed(2)}</span>}
                                           </div>
                                         </div>
-                                        <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.weight}%</span>
+                                        <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.yearEndWeight || h.weight}%</span>
                                         <div style={{ textAlign: "right", minWidth: 70 }}>
-                                          <div style={{ fontFamily: mono2, fontSize: 10, fontWeight: 600, color: cs.text }}>{fmt$(Math.round(yearEndMV))}</div>
-                                          {unrealizedGL != null && <div style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: unrealizedGL >= 0 ? cs.green : cs.red }}>
-                                            {unrealizedGL >= 0 ? "+" : ""}{fmt$(Math.round(unrealizedGL))} ({unrealizedPct >= 0 ? "+" : ""}{unrealizedPct.toFixed(1)}%)
+                                          <div style={{ fontFamily: mono2, fontSize: 10, fontWeight: 600, color: cs.text }}>{fmt$(mv)}</div>
+                                          {gl != null && <div style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: gl >= 0 ? cs.green : cs.red }}>
+                                            {gl >= 0 ? "+" : ""}{fmt$(Math.round(gl))} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)
                                           </div>}
                                         </div>
                                       </div>);
