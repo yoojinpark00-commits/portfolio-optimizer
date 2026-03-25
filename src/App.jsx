@@ -314,14 +314,20 @@ function shrinkToForward(trailing, vol) {
 // the Sharpe pre-filter purely on trailing momentum.
 // For stocks: cap at 80% annualized, keep 20% of excess above cap
 // For ETFs: cap at 120% annualized (ETFs are diversified, more sustainable momentum)
-function shrinkReturn(r, isStock) {
+function shrinkReturn(r, isStock, regimeState) {
   // Progressive shrinkage: starts light at threshold, increases with magnitude
-  // ETFs: shrink above 25% annualized, Stocks: shrink above 20%
-  // Formula: beyond threshold, keep diminishing fraction via log-style compression
-  // This prevents the momentum signal from being dominated by recent rockets
-  // while still allowing moderate momentum to express
-  const threshold = isStock ? 20 : 25;    // where shrinkage begins
-  const hardCap = isStock ? 60 : 80;      // absolute max after shrinkage
+  // Regime-aware: bull markets let momentum winners run, bear markets dampen harder
+  // This prevents 2021-style whipsaw where trailing 2020 rockets get over-shrunk in a bull
+  const regimeAdj = {
+    strong_risk_on: { tMult: 1.60, cMult: 1.25 },  // raise threshold 60%, cap 25%
+    mild_risk_on:   { tMult: 1.28, cMult: 1.125 },
+    neutral:        { tMult: 1.00, cMult: 1.00 },
+    mild_risk_off:  { tMult: 0.80, cMult: 0.81 },
+    strong_risk_off:{ tMult: 0.60, cMult: 0.625 },
+  }[regimeState] || { tMult: 1.0, cMult: 1.0 };
+
+  const threshold = (isStock ? 20 : 25) * regimeAdj.tMult;
+  const hardCap = (isStock ? 60 : 80) * regimeAdj.cMult;
   const sign = r >= 0 ? 1 : -1;
   const absR = Math.abs(r);
   if (absR <= threshold) return r;
@@ -4250,7 +4256,7 @@ export default function App() {
         const rawR = wAvgMo * 12 * 100;
         const db = etfDbMap[sym];
         const isStk = db?.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk);
+        const shrunkR = shrinkReturn(rawR, isStk, btState5);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
         trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null, type: db?.type || "etf", ipo: db?.ipo };
       }
@@ -5638,7 +5644,7 @@ useEffect(() => {
         const db = etfDbMap[sym];
         if (!db) continue;
         const isStk = db.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk);
+        const shrunkR = shrinkReturn(rawR, isStk, lastRegimeCtx?.state5);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
 
         // Build candidate with live stats, keeping category/metadata from DB
