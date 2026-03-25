@@ -4234,18 +4234,33 @@ export default function App() {
       await new Promise(r => setTimeout(r, 0));
 
       // Step 3: Trailing stats with RECENCY WEIGHTING + RETURN SHRINKAGE
-      // Walk-forward mode: use wider rolling window (48mo) for robust vol estimates,
-      // but still use 12mo recency-weighted returns for momentum signal.
-      // Non-walk-forward: 12-month window (original behavior).
+      // ── Adaptive momentum decay ──
+      // Bull markets: faster decay (0.10) so rotation signal comes through in ~3-4 months
+      // Crisis: slower decay (0.03) since momentum is unreliable and we want more data
+      const momDecay = btState5 === "strong_risk_on" ? 0.10
+        : btState5 === "mild_risk_on" ? 0.08
+        : btState5 === "mild_risk_off" ? 0.04
+        : btState5 === "strong_risk_off" ? 0.03
+        : 0.05; // neutral default
+
+      // ── Adaptive trailing window ──
+      // Low-vol regimes: shorter window (24mo) to avoid stale crash data inflating vol
+      // High-vol regimes: keep full window (48mo) since elevated vol is real
+      const regData = historicalRegimes?.[monthKey];
+      const volRegime = regData?.volRegime || "normal";
+      const adaptiveTrailMonths = walkForward
+        ? (volRegime === "normal" || volRegime === "compression" ? 24 : 48)
+        : 12;
+
       const trailingStats = {};
-      const trailStart = Math.max(0, mIdx - wfTrailMonths);
+      const trailStart = Math.max(0, mIdx - adaptiveTrailMonths);
       for (const sym of available) {
         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
         for (let ti = trailStart; ti < mIdx; ti++) {
           const entry = returnsByDateSym[sortedDates[ti]]?.[sym];
           if (entry) {
             const age = mIdx - 1 - ti;
-            const w = Math.exp(-0.05 * age);
+            const w = Math.exp(-momDecay * age);
             sumWRet += w * entry.ret;
             sumW += w;
             sumRet += entry.ret;
@@ -5622,6 +5637,13 @@ useEffect(() => {
       baseCandidates.forEach(c => { etfDbMap[c.t] = c; });
 
       // Compute recency-weighted trailing stats (same logic as backtest)
+      // Use regime-aware decay: faster in bull (rotation signal), slower in crisis
+      const liveRegimeState = lastRegimeCtx?.state5 || "neutral";
+      const liveMomDecay = liveRegimeState === "strong_risk_on" ? 0.10
+        : liveRegimeState === "mild_risk_on" ? 0.08
+        : liveRegimeState === "mild_risk_off" ? 0.04
+        : liveRegimeState === "strong_risk_off" ? 0.03
+        : 0.05;
       const liveCandidates = [];
       const mIdx = sortedDates.length;
       const trailStart = Math.max(0, mIdx - 12);
@@ -5632,7 +5654,7 @@ useEffect(() => {
           const entry = returnsByDate[sortedDates[ti]]?.[sym];
           if (entry) {
             const age = mIdx - 1 - ti;
-            const w = Math.exp(-0.05 * age);
+            const w = Math.exp(-liveMomDecay * age);
             sumWRet += w * entry.ret;
             sumW += w;
             sumRet += entry.ret;
@@ -6388,11 +6410,12 @@ useEffect(() => {
                       const liveCandidates = [];
                       const mIdx = sortedDates.length;
                       const trailStart = Math.max(0, mIdx - 12);
+                      const raDecay = lastRegimeCtx?.state5?.includes("risk_on") ? 0.08 : lastRegimeCtx?.state5?.includes("risk_off") ? 0.04 : 0.05;
                       for (const sym of fetchedTickers) {
                         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
                         for (let ti = trailStart; ti < mIdx; ti++) {
                           const entry = returnsByDate[sortedDates[ti]]?.[sym];
-                          if (entry) { const age = mIdx - 1 - ti; const w = Math.exp(-0.05 * age); sumWRet += w * entry.ret; sumW += w; sumRet += entry.ret; sumRetSq += entry.ret * entry.ret; count++; }
+                          if (entry) { const age = mIdx - 1 - ti; const w = Math.exp(-raDecay * age); sumWRet += w * entry.ret; sumW += w; sumRet += entry.ret; sumRetSq += entry.ret * entry.ret; count++; }
                         }
                         if (count < 6) continue;
                         const db = etfDbMap[sym]; if (!db) continue;
