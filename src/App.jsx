@@ -8050,7 +8050,7 @@ useEffect(() => {
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.green, fontFamily: mono2, fontSize: 9 }}>Opt</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.blue, fontFamily: mono2, fontSize: 9 }}>SPY</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Alpha</th>
-                        <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>ETFs</th>
+                        <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>#</th>
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.yellow, fontFamily: mono2, fontSize: 9 }}>Regime</th>}
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Accel</th>}
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.purple, fontFamily: mono2, fontSize: 9 }}>Tax</th>
@@ -8097,16 +8097,34 @@ useEffect(() => {
                                   {(() => {
                                     const hStocks = (a.holdings || []).filter(h => h.isStock);
                                     const hETFs = (a.holdings || []).filter(h => !h.isStock);
-                                    const renderHolding = (h, i, color) => (
-                                      <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 0, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
-                                        <span style={{ width: 4, height: 14, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
-                                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color, minWidth: 40 }}>{h.ticker}</span>
-                                        <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
+                                    const renderHolding = (h, i, color) => {
+                                      // Year-end market value: weight × year-end portfolio value
+                                      const yearEndMV = (h.weight / 100) * (a.portfolioValue || 0);
+                                      // Unrealized G/L: year-end MV minus cost basis
+                                      const unrealizedGL = h.costBasis > 0 ? yearEndMV - h.costBasis : null;
+                                      const unrealizedPct = h.costBasis > 0 ? ((yearEndMV / h.costBasis) - 1) * 100 : null;
+                                      return (
+                                      <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 7px", borderRadius: 0, background: i % 2 ? "rgba(255,255,255,.02)" : "transparent" }}>
+                                        <span style={{ width: 4, height: 28, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                                            <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color }}>{h.ticker}</span>
+                                            <span style={{ fontSize: 8, color: cs.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
+                                          </div>
+                                          <div style={{ fontSize: 7, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
+                                            {h.cat}
+                                            {h.costBasis > 0 && <span> · Basis {fmt$(h.costBasis)}</span>}
+                                          </div>
+                                        </div>
                                         <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.weight}%</span>
-                                        <span style={{ fontFamily: mono2, fontSize: 8, color: cs.muted, minWidth: 50, textAlign: "right" }}>{fmt$(h.dollars)}</span>
-                                        {h.glPct != null && h.glPct !== 0 && <span style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: h.glPct >= 0 ? cs.green : cs.red, minWidth: 45, textAlign: "right" }}>{h.glPct >= 0 ? "+" : ""}{h.glPct.toFixed(1)}%</span>}
-                                      </div>
-                                    );
+                                        <div style={{ textAlign: "right", minWidth: 70 }}>
+                                          <div style={{ fontFamily: mono2, fontSize: 10, fontWeight: 600, color: cs.text }}>{fmt$(Math.round(yearEndMV))}</div>
+                                          {unrealizedGL != null && <div style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: unrealizedGL >= 0 ? cs.green : cs.red }}>
+                                            {unrealizedGL >= 0 ? "+" : ""}{fmt$(Math.round(unrealizedGL))} ({unrealizedPct >= 0 ? "+" : ""}{unrealizedPct.toFixed(1)}%)
+                                          </div>}
+                                        </div>
+                                      </div>);
+                                    };
                                     return <>
                                       <div style={{ fontSize: 10, fontWeight: 700, color: cs.green, marginBottom: 6 }}>
                                         Holdings ({a.holdings?.length || 0}{hStocks.length > 0 && hETFs.length > 0 ? ` · ${hStocks.length} Stocks + ${hETFs.length} ETFs` : hStocks.length > 0 ? " Stocks" : " ETFs"} · {fmt$(a.portfolioValue || 0)})
@@ -8116,7 +8134,22 @@ useEffect(() => {
                                         {hStocks.map((h, i) => renderHolding(h, i, cs.yellow))}
                                         {hETFs.length > 0 && <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginTop: hStocks.length > 0 ? 6 : 2, marginBottom: 1 }}>ETFs ({hETFs.length})</div>}
                                         {hETFs.map((h, i) => renderHolding(h, i, cs.green))}
-                                        <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
+                                        {/* Total G/L summary */}
+                                        {(() => {
+                                          const totalMV = a.portfolioValue || 0;
+                                          const totalBasis = (a.holdings || []).reduce((s, h) => s + (h.costBasis || 0), 0);
+                                          const totalGL = totalBasis > 0 ? totalMV - totalBasis : null;
+                                          const totalGLPct = totalBasis > 0 ? ((totalMV / totalBasis) - 1) * 100 : null;
+                                          return <div style={{ marginTop: 4, padding: "5px 7px", borderRadius: 0, background: "rgba(120,169,255,.04)", border: "1px solid rgba(120,169,255,.08)", fontSize: 8, fontFamily: mono2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                            <span style={{ color: cs.dim }}>Year-End Total</span>
+                                            <span style={{ fontWeight: 700, color: cs.text }}>{fmt$(totalMV)}</span>
+                                            {totalGL != null && <span style={{ fontWeight: 600, color: totalGL >= 0 ? cs.green : cs.red }}>
+                                              Unrealized: {totalGL >= 0 ? "+" : ""}{fmt$(Math.round(totalGL))} ({totalGLPct >= 0 ? "+" : ""}{totalGLPct.toFixed(1)}%)
+                                            </span>}
+                                          </div>;
+                                        })()}
+                                        {/* Category breakdown */}
+                                        <div style={{ marginTop: 4, padding: "5px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
                                           {(() => { const cats = {}; (a.holdings || []).forEach(h => { cats[h.cat] = (cats[h.cat] || 0) + h.weight; }); return Object.entries(cats).sort(([,x],[,y]) => y - x).map(([cat, wt]) => `${cat}: ${wt.toFixed(0)}%`).join(" · "); })()}
                                         </div>
                                       </div> : <div style={{ fontSize: 9, color: cs.muted }}>No data</div>}
