@@ -519,6 +519,8 @@ const STOCK_OPT = STOCK_DB.map(s => {
 });
 // Helper: check if a stock was publicly traded by a given year
 function stockAvailableAt(stock, year) { return (stock.ipo || 0) <= year; }
+// Set for O(1) stock ticker lookup in UI
+const STOCK_TICKER_SET = new Set(STOCK_DB.map(s => s.t));
 
 // ── Historical S&P 500 Top ~5 per GICS sector by market cap at January of each year ──
 // This captures sector leaders INCLUDING growth names that aren't overall top-30
@@ -4559,7 +4561,7 @@ export default function App() {
           const posCostBasis = Math.round(newCostBasis[r.ticker] || 0);
           const gl = posValue - posCostBasis;
           const glPct = posCostBasis > 0 ? ((posValue / posCostBasis) - 1) * 100 : 0;
-          return { ticker: r.ticker, name: r.name, cat: r.cat, weight: +(wt * 100).toFixed(1), dollars: posValue, costBasis: posCostBasis, gl: Math.round(gl), glPct: +glPct.toFixed(1) };
+          return { ticker: r.ticker, name: r.name, cat: r.cat, isStock: r.isStock || false, weight: +(wt * 100).toFixed(1), dollars: posValue, costBasis: posCostBasis, gl: Math.round(gl), glPct: +glPct.toFixed(1) };
         }).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
           taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
           grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
@@ -6221,41 +6223,51 @@ useEffect(() => {
             </div>}
             {useRegime && !lastRegimeCtx && <div style={{ fontSize: 8, color: cs.yellow, marginBottom: 6 }}>⚠ Regime enabled but data not yet loaded — optimizer ran without regime tilts.</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              {optResult.map(r => {
-                const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
-                const liveP = recPrices[r.ticker];
-                const estShares = liveP?.price > 0 ? Math.floor(r.dollars / liveP.price) : null;
-                return (
-                <div key={r.ticker} onClick={() => toggleRec(r)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 0,
-                    background: isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)",
-                    border: `1px solid ${isAccepted ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.1)"}`,
-                    cursor: "pointer", transition: "all .2s" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = isAccepted ? "rgba(255,131,137,.08)" : "rgba(66,190,101,.1)" }}
-                  onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)" }}>
-                  <Badge color={isAccepted ? cs.green : cs.blue}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
-                      <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
-                      <Badge color={cs.dim}>{r.cat}</Badge>
-                      {r.isStock && <Badge color={cs.blue}>STOCK</Badge>}
-                      {r.lev && <Badge color={cs.red}>{r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
+              {(() => {
+                const optStocks = optResult.filter(r => r.isStock);
+                const optETFs = optResult.filter(r => !r.isStock);
+                const renderRec = (r) => {
+                  const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
+                  const liveP = recPrices[r.ticker];
+                  const estShares = liveP?.price > 0 ? Math.floor(r.dollars / liveP.price) : null;
+                  return (
+                  <div key={r.ticker} onClick={() => toggleRec(r)}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 0,
+                      background: isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)",
+                      border: `1px solid ${isAccepted ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.1)"}`,
+                      cursor: "pointer", transition: "all .2s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = isAccepted ? "rgba(255,131,137,.08)" : "rgba(66,190,101,.1)" }}
+                    onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)" }}>
+                    <Badge color={isAccepted ? cs.green : cs.blue}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
+                        <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
+                        <Badge color={cs.dim}>{r.cat}</Badge>
+                        {r.isStock && <Badge color={cs.blue}>STOCK</Badge>}
+                        {r.lev && <Badge color={cs.red}>{r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
+                      </div>
+                      <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
+                        {r.lev ? `Stated R:${r.r?.toFixed?.(1) || r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r?.toFixed?.(1) || r.r}%`} · V:{r.v?.toFixed?.(1) || r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
+                        {liveP && <span style={{ color: cs.text }}> · <span style={{ color: liveP.change >= 0 ? cs.green : cs.red }}>${liveP.price?.toFixed(2)} ({liveP.change > 0 ? "+" : ""}{liveP.change}%)</span></span>}
+                        {estShares && <span> · ~{estShares} shares</span>}
+                        {!liveP && <span style={{ color: cs.yellow }}> · Price pending</span>}
+                        {r.lev && <span style={{ color: cs.red }}> · Vol decay drag</span>}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
-                      {r.lev ? `Stated R:${r.r?.toFixed?.(1) || r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r?.toFixed?.(1) || r.r}%`} · V:{r.v?.toFixed?.(1) || r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
-                      {liveP && <span style={{ color: cs.text }}> · <span style={{ color: liveP.change >= 0 ? cs.green : cs.red }}>${liveP.price?.toFixed(2)} ({liveP.change > 0 ? "+" : ""}{liveP.change}%)</span></span>}
-                      {estShares && <span> · ~{estShares} shares</span>}
-                      {!liveP && <span style={{ color: cs.yellow }}> · Price pending</span>}
-                      {r.lev && <span style={{ color: cs.red }}> · Vol decay drag</span>}
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.green : cs.text }}>${r.dollars.toLocaleString()}</div>
+                      <div style={{ fontSize: 9, color: cs.dim, fontFamily: mono2 }}>{r.pct}% of cash</div>
                     </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.green : cs.text }}>${r.dollars.toLocaleString()}</div>
-                    <div style={{ fontSize: 9, color: cs.dim, fontFamily: mono2 }}>{r.pct}% of cash</div>
-                  </div>
-                </div>
-              )})}
+                  </div>);
+                };
+                return <>
+                  {optStocks.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.yellow, marginBottom: 2, marginTop: 4 }}>📈 Stocks ({optStocks.length})</div>}
+                  {optStocks.map(renderRec)}
+                  {optETFs.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.green, marginBottom: 2, marginTop: optStocks.length > 0 ? 8 : 4 }}>📊 ETFs ({optETFs.length})</div>}
+                  {optETFs.map(renderRec)}
+                </>;
+              })()}
             </div>
 
             {accepted.size > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 0, background: "rgba(66,190,101,.06)", fontSize: 9, color: cs.green, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -6632,28 +6644,33 @@ useEffect(() => {
                       {ra.sells.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(255,131,137,.05)", fontSize: 9 }}>
                         <Badge color={cs.red}>SELL</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.red, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: cs.text }}>{fmt$(t2.curDollars)}</span>
                       </div>)}
                       {ra.reduces.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(255,171,145,.04)", fontSize: 9 }}>
                         <Badge color={cs.yellow}>REDUCE</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.yellow, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: t2.gl >= 0 ? cs.green : cs.red }}>{t2.gl >= 0 ? "+" : ""}{fmt$(t2.gl)}</span>
                       </div>)}
                       {ra.keeps.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(120,169,255,.04)", fontSize: 9 }}>
                         <Badge color={cs.blue}>KEEP</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.blue, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                       </div>)}
                       {ra.increases.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(190,149,255,.04)", fontSize: 9 }}>
                         <Badge color={cs.purple}>ADD</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.purple, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                       </div>)}
                       {ra.buys.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(110,231,183,.03)", fontSize: 9 }}>
                         <Badge color={cs.green}>BUY</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.green, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: cs.text }}>{fmt$(t2.optDollars)}</span>
                       </div>)}
@@ -8054,22 +8071,34 @@ useEffect(() => {
                               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                                 {/* Holdings */}
                                 <div style={{ flex: "1 1 250px", minWidth: 200 }}>
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: cs.green, marginBottom: 6 }}>📊 Holdings ({a.holdings?.length || 0} ETFs · {fmt$(a.portfolioValue || 0)})</div>
-                                  {a.holdings?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                    {a.holdings.map((h, i) => (
+                                  {(() => {
+                                    const hStocks = (a.holdings || []).filter(h => h.isStock);
+                                    const hETFs = (a.holdings || []).filter(h => !h.isStock);
+                                    const renderHolding = (h, i, color) => (
                                       <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 0, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
                                         <span style={{ width: 4, height: 14, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
-                                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color: cs.green, minWidth: 40 }}>{h.ticker}</span>
+                                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color, minWidth: 40 }}>{h.ticker}</span>
                                         <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
                                         <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.weight}%</span>
                                         <span style={{ fontFamily: mono2, fontSize: 8, color: cs.muted, minWidth: 50, textAlign: "right" }}>{fmt$(h.dollars)}</span>
                                         {h.glPct != null && h.glPct !== 0 && <span style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: h.glPct >= 0 ? cs.green : cs.red, minWidth: 45, textAlign: "right" }}>{h.glPct >= 0 ? "+" : ""}{h.glPct.toFixed(1)}%</span>}
                                       </div>
-                                    ))}
-                                    <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
-                                      {(() => { const cats = {}; (a.holdings || []).forEach(h => { cats[h.cat] = (cats[h.cat] || 0) + h.weight; }); return Object.entries(cats).sort(([,x],[,y]) => y - x).map(([cat, wt]) => `${cat}: ${wt.toFixed(0)}%`).join(" · "); })()}
-                                    </div>
-                                  </div> : <div style={{ fontSize: 9, color: cs.muted }}>No data</div>}
+                                    );
+                                    return <>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: cs.green, marginBottom: 6 }}>
+                                        Holdings ({a.holdings?.length || 0}{hStocks.length > 0 && hETFs.length > 0 ? ` · ${hStocks.length} Stocks + ${hETFs.length} ETFs` : hStocks.length > 0 ? " Stocks" : " ETFs"} · {fmt$(a.portfolioValue || 0)})
+                                      </div>
+                                      {a.holdings?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                        {hStocks.length > 0 && <div style={{ fontSize: 9, fontWeight: 600, color: cs.yellow, marginTop: 2, marginBottom: 1 }}>Stocks ({hStocks.length})</div>}
+                                        {hStocks.map((h, i) => renderHolding(h, i, cs.yellow))}
+                                        {hETFs.length > 0 && <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginTop: hStocks.length > 0 ? 6 : 2, marginBottom: 1 }}>ETFs ({hETFs.length})</div>}
+                                        {hETFs.map((h, i) => renderHolding(h, i, cs.green))}
+                                        <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
+                                          {(() => { const cats = {}; (a.holdings || []).forEach(h => { cats[h.cat] = (cats[h.cat] || 0) + h.weight; }); return Object.entries(cats).sort(([,x],[,y]) => y - x).map(([cat, wt]) => `${cat}: ${wt.toFixed(0)}%`).join(" · "); })()}
+                                        </div>
+                                      </div> : <div style={{ fontSize: 9, color: cs.muted }}>No data</div>}
+                                    </>;
+                                  })()}
                                 </div>
                                 {/* Rebalance Trades */}
                                 <div style={{ flex: "1 1 250px", minWidth: 200 }}>
