@@ -4934,6 +4934,10 @@ export default function App() {
       const simHurdleFloor = simHighTax ? 2.5 : simTaxRates.st > 30 ? 2.0 : 1.5;
       let simPeak = startCash, simMaxDD = 0;
       const simMonthlyRets = [];
+      // Drawdown protection state for simulation
+      let simDDCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
+      let simDDActiveLevel = -1, simDDEquityScale = 1.0, SimDDRecoveryMonths = 0;
+      let simDDBaseAlloc = null;
 
       for (let mi = 0; mi < simDates.length; mi++) {
         const monthKey = simDates[mi];
@@ -4955,6 +4959,52 @@ export default function App() {
           if (dd > simMaxDD) simMaxDD = dd;
         } else {
           simMonthlyRets.push(0);
+        }
+
+        // ── Drawdown protection (matches main backtest) ──
+        if (drawdownProtection && Object.keys(optAlloc).length > 0) {
+          if (!simDDBaseAlloc) simDDBaseAlloc = { ...optAlloc };
+          const currentDD = simPeak > 0 ? (simPeak - optValue) / simPeak : 0;
+          for (let lvl = 0; lvl < DRAWDOWN_LEVELS.length; lvl++) {
+            if (currentDD >= DRAWDOWN_LEVELS[lvl].threshold) simDDCounters[lvl]++;
+            else simDDCounters[lvl] = 0;
+          }
+          let confirmedLevel = -1;
+          for (let lvl = DRAWDOWN_LEVELS.length - 1; lvl >= 0; lvl--) {
+            if (simDDCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths) { confirmedLevel = lvl; break; }
+          }
+          if (confirmedLevel >= 0 && confirmedLevel > simDDActiveLevel) {
+            simDDEquityScale = 1.0 - DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
+            simDDActiveLevel = confirmedLevel;
+            SimDDRecoveryMonths = 0;
+          }
+          if (simDDActiveLevel >= 0) {
+            const activeThreshold = DRAWDOWN_LEVELS[simDDActiveLevel].threshold;
+            if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
+              SimDDRecoveryMonths++;
+              simDDEquityScale = Math.min(1.0, simDDEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[simDDActiveLevel].equityReduction)) / 3);
+              if (simDDEquityScale >= 0.98) {
+                simDDEquityScale = 1.0; simDDActiveLevel = -1; SimDDRecoveryMonths = 0;
+                simDDCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
+              }
+            } else { SimDDRecoveryMonths = 0; }
+          }
+          if (simDDEquityScale < 1.0 && simDDBaseAlloc) {
+            const sa = {}; let eqRed = 0;
+            for (const [sym, wt] of Object.entries(simDDBaseAlloc)) {
+              const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
+              if (ms === "fixed-income" || ms === "alternatives") sa[sym] = wt;
+              else { sa[sym] = wt * simDDEquityScale; eqRed += wt * (1 - simDDEquityScale); }
+            }
+            const bh = Object.keys(sa).find(s => MACRO_SECTOR_MAP[etfDbMap[s]?.c] === "fixed-income");
+            if (bh) sa[bh] = (sa[bh] || 0) + eqRed;
+            else if (eqRed > 0.01) sa["BND"] = (sa["BND"] || 0) + eqRed;
+            const tw = Object.values(sa).reduce((s, w) => s + w, 0);
+            if (tw > 0) for (const sym of Object.keys(sa)) sa[sym] /= tw;
+            optAlloc = sa;
+          } else if (simDDEquityScale >= 1.0 && simDDBaseAlloc) {
+            optAlloc = { ...simDDBaseAlloc };
+          }
         }
 
         // Tax-aware signal-driven rebalance triggers (matches main backtest)
@@ -4990,15 +5040,38 @@ export default function App() {
         if (!shouldEval) continue;
 
         // Trailing stats with recency weighting + shrinkage (matches main backtest)
+        // Use regime-aware decay and adaptive trailing window
+        const simRd = simHistRegimes?.[monthKey];
+        const simState5 = (() => {
+          if (!simRd) return "neutral";
+          let s5 = simRd.state5 || "neutral";
+          if (simHmmEnsembleMap[monthKey]) {
+            const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
+            const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
+            const fR = ro.indexOf(s5), hR = ro.indexOf(hmmS5);
+            if (fR >= 0 && hR >= 0) s5 = ro[Math.min(fR, hR)];
+          }
+          return s5;
+        })();
+        const simMomDecay = simState5 === "strong_risk_on" ? 0.10
+          : simState5 === "mild_risk_on" ? 0.08
+          : simState5 === "mild_risk_off" ? 0.04
+          : simState5 === "strong_risk_off" ? 0.03
+          : 0.05;
+        const simVolRegime = simRd?.volRegime || "normal";
+        const simTrailMonths = walkForward
+          ? (simVolRegime === "normal" || simVolRegime === "compression" ? 24 : 48)
+          : 12;
+
         const trailingStats = {};
-        const trailStart = Math.max(0, mIdx - 12);
+        const trailStart = Math.max(0, mIdx - simTrailMonths);
         for (const sym of available) {
           let sWR = 0, sW = 0, sR = 0, sR2 = 0, cnt = 0;
           for (let ti = trailStart; ti < mIdx; ti++) {
             const e = returnsByDateSym[sortedDates[ti]]?.[sym];
             if (e) {
               const age = mIdx - 1 - ti;
-              const w = Math.exp(-0.05 * age);
+              const w = Math.exp(-simMomDecay * age);
               sWR += w * e.ret; sW += w;
               sR += e.ret; sR2 += e.ret * e.ret; cnt++;
             }
@@ -5006,7 +5079,7 @@ export default function App() {
           if (cnt < 6) continue;
           const db = etfDbMap[sym];
           const rawR = (sWR / sW) * 12 * 100;
-          const shrunkR = shrinkReturn(rawR, db?.type === "stock");
+          const shrunkR = shrinkReturn(rawR, db?.type === "stock", simState5);
           const vol = Math.max(Math.sqrt(Math.max(0, sR2 / cnt - (sR/cnt) ** 2)) * Math.sqrt(12) * 100, 1);
           trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null, type: db?.type || "etf" };
         }
@@ -5050,7 +5123,8 @@ export default function App() {
             }
           }
         }
-        const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, simRegime, 200);
+        const simEffectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
+        const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, 200);
         if (!result || result.length === 0) continue;
 
         const newAlloc = {};
@@ -5116,6 +5190,8 @@ export default function App() {
           simCostBasis = newCB;
           simLossCarry = excessLoss - ordOffset;
           lastRebalMonth = monthKey;
+          simDDBaseAlloc = { ...newAlloc }; // reset drawdown base
+          simPeak = Math.max(simPeak, optValue);
         }
       }
 
@@ -5201,7 +5277,7 @@ export default function App() {
       rollingPeriods,
     });
     setSimProgress(""); setSimRunning(false);
-  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState]);
+  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState, walkForward, drawdownProtection, weightingMethod]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
