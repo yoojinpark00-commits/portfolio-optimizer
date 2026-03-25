@@ -1235,13 +1235,14 @@ const REGIME_ALLOCATION_RULES = {
 // ── Drawdown Control Thresholds ──
 // Each level: { threshold, confirmationMonths, equityReduction }
 // Reduction is fraction of current equity to remove (e.g., 0.20 = cut equity by 20%)
+// Thresholds raised: 5% drawdowns are normal market noise, not worth trading on
 const DRAWDOWN_LEVELS = [
-  { threshold: 0.05, confirmationMonths: 2, equityReduction: 0.20 },
-  { threshold: 0.10, confirmationMonths: 1, equityReduction: 0.40 },
-  { threshold: 0.15, confirmationMonths: 1, equityReduction: 0.60 },
-  { threshold: 0.20, confirmationMonths: 0, equityReduction: 0.80 }, // immediate
+  { threshold: 0.10, confirmationMonths: 2, equityReduction: 0.25 },
+  { threshold: 0.15, confirmationMonths: 1, equityReduction: 0.45 },
+  { threshold: 0.20, confirmationMonths: 1, equityReduction: 0.65 },
+  { threshold: 0.25, confirmationMonths: 0, equityReduction: 0.80 }, // immediate
 ];
-const DRAWDOWN_HYSTERESIS = 0.02; // must recover 2% above threshold before lifting
+const DRAWDOWN_HYSTERESIS = 0.03; // must recover 3% above threshold before lifting
 
 // ═══════════════════════════════════════════════════════════════════
 //  INLINE HMM REGIME ENGINE — 5-State Gaussian HMM + BOCPD + Ensemble
@@ -3999,6 +4000,7 @@ export default function App() {
     let ddActiveLevel = -1; // highest active drawdown level (-1 = normal)
     let ddRecoveryMonths = 0; // months since drawdown ended (for gradual re-entry)
     let ddEquityScale = 1.0; // current equity scaling factor (1.0 = no reduction)
+    let ddBaseAlloc = null; // ORIGINAL allocation from optimizer (before drawdown scaling)
     const drawdownEvents = []; // track drawdown events for results
 
     // ── Walk-forward trailing window size ──
@@ -4032,7 +4034,12 @@ export default function App() {
       bal60Curve.push({ date: monthKey, value: bal60Value });
 
       // ── Drawdown Controls with Reversal Delay ──
+      // KEY: Always apply the scale to ddBaseAlloc (the ORIGINAL optimizer allocation),
+      // never to optAlloc (which may already be scaled). This prevents compounding reductions.
       if (drawdownProtection && Object.keys(optAlloc).length > 0) {
+        // Save base allocation from optimizer if not already saved
+        if (!ddBaseAlloc) ddBaseAlloc = { ...optAlloc };
+
         if (optValue > ddPeak) ddPeak = optValue;
         const currentDD = (ddPeak - optValue) / ddPeak; // 0 to 1
 
@@ -4053,10 +4060,9 @@ export default function App() {
           }
         }
 
-        // Apply equity reduction for confirmed drawdown level
-        if (confirmedLevel >= 0 && confirmedLevel !== ddActiveLevel) {
-          const reduction = DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
-          ddEquityScale = 1.0 - reduction;
+        // Update equity scale when a new level is confirmed
+        if (confirmedLevel >= 0 && confirmedLevel > ddActiveLevel) {
+          ddEquityScale = 1.0 - DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
           ddActiveLevel = confirmedLevel;
           ddRecoveryMonths = 0;
           drawdownEvents.push({ date: monthKey, type: "TRIGGER", level: confirmedLevel,
@@ -4068,16 +4074,14 @@ export default function App() {
         if (ddActiveLevel >= 0) {
           const activeThreshold = DRAWDOWN_LEVELS[ddActiveLevel].threshold;
           if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
-            // Recovered sufficiently — start gradual re-entry
             ddRecoveryMonths++;
-            // Gradual re-entry over 3 months: restore 1/3 of reduction each month
-            const recoveryProgress = Math.min(1.0, ddRecoveryMonths / 3);
-            const targetScale = ddActiveLevel > 0 ? (1.0 - DRAWDOWN_LEVELS[ddActiveLevel - 1].equityReduction) : 1.0;
-            ddEquityScale = ddEquityScale + (targetScale - ddEquityScale) * recoveryProgress;
+            // Linear re-entry over 3 months back to full equity
+            ddEquityScale = Math.min(1.0, ddEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[ddActiveLevel].equityReduction)) / 3);
             if (ddEquityScale >= 0.98) {
               ddEquityScale = 1.0;
               ddActiveLevel = -1;
               ddRecoveryMonths = 0;
+              ddCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
               drawdownEvents.push({ date: monthKey, type: "RECOVERED",
                 drawdown: +(currentDD * 100).toFixed(1), portfolioValue: Math.round(optValue) });
             }
@@ -4086,38 +4090,34 @@ export default function App() {
           }
         }
 
-        // Apply the equity scale to allocation weights
-        // Shift equity allocation to bonds/cash-like proportionally
-        if (ddEquityScale < 1.0 && Object.keys(optAlloc).length > 0) {
+        // Apply the equity scale to the BASE allocation (not the already-scaled one)
+        if (ddEquityScale < 1.0 && ddBaseAlloc) {
           const scaledAlloc = {};
-          for (const [sym, wt] of Object.entries(optAlloc)) {
+          let equityReduced = 0;
+          for (const [sym, wt] of Object.entries(ddBaseAlloc)) {
             const db = etfDbMap[sym];
             const ms = MACRO_SECTOR_MAP[db?.c] || "other";
             if (ms === "fixed-income" || ms === "alternatives") {
-              scaledAlloc[sym] = wt; // keep defensive positions
+              scaledAlloc[sym] = wt;
             } else {
-              scaledAlloc[sym] = wt * ddEquityScale; // reduce equity
+              scaledAlloc[sym] = wt * ddEquityScale;
+              equityReduced += wt * (1 - ddEquityScale);
             }
           }
-          // Redistribute reduced equity to BND (or largest bond holding) as a safe haven
-          const equityReduced = Object.entries(optAlloc).reduce((s, [sym, wt]) => {
-            const db = etfDbMap[sym];
-            const ms = MACRO_SECTOR_MAP[db?.c] || "other";
-            return (ms !== "fixed-income" && ms !== "alternatives") ? s + wt * (1 - ddEquityScale) : s;
-          }, 0);
-          // Find best bond holding or default to BND weight
+          // Shift freed equity to the largest bond holding (or BND)
           const bondHolding = Object.keys(scaledAlloc).find(s => {
             const db = etfDbMap[s];
             return MACRO_SECTOR_MAP[db?.c] === "fixed-income";
           });
           if (bondHolding) scaledAlloc[bondHolding] = (scaledAlloc[bondHolding] || 0) + equityReduced;
-          else scaledAlloc["BND"] = (scaledAlloc["BND"] || 0) + equityReduced;
-          // Re-normalize to sum to 1
+          else if (equityReduced > 0.01) scaledAlloc["BND"] = (scaledAlloc["BND"] || 0) + equityReduced;
+          // Re-normalize
           const totalWt = Object.values(scaledAlloc).reduce((s, w) => s + w, 0);
-          if (totalWt > 0) {
-            for (const sym of Object.keys(scaledAlloc)) scaledAlloc[sym] /= totalWt;
-          }
+          if (totalWt > 0) for (const sym of Object.keys(scaledAlloc)) scaledAlloc[sym] /= totalWt;
           optAlloc = scaledAlloc;
+        } else if (ddEquityScale >= 1.0 && ddBaseAlloc) {
+          // Fully recovered — restore original allocation
+          optAlloc = { ...ddBaseAlloc };
         }
       }
 
@@ -4543,6 +4543,8 @@ export default function App() {
         }
 
         optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
+        ddBaseAlloc = { ...newAlloc }; // reset drawdown base to fresh optimizer output
+        ddPeak = Math.max(ddPeak, optValue); // update peak after rebalance
         costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
         lossCarryover = newCarryover;
         rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => {
@@ -7965,7 +7967,7 @@ useEffect(() => {
                     </div>
                     <div style={{ textAlign: "center" }}>
                       <div style={{ fontSize: 7, color: cs.dim }}>Protection</div>
-                      <div style={{ fontSize: 8, fontWeight: 600, fontFamily: mono2, color: cs.pink }}>5%/2mo 10%/1mo 15%/1mo 20%/imm</div>
+                      <div style={{ fontSize: 8, fontWeight: 600, fontFamily: mono2, color: cs.pink }}>10%/2mo 15%/1mo 20%/1mo 25%/imm</div>
                     </div>
                   </div>}
                 </div>
