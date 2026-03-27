@@ -11,7 +11,7 @@
  * ║    3. Regime-Conditional Portfolio Analytics                   ║
  * ║    4. Regime Transition Forecasting                            ║
  * ║    5. Turbulence Index (Mahalanobis Distance)                  ║
- * ║    6. (Removed — Absorption Ratio merged into Turbulence)      ║
+ * ║    6. Absorption Ratio (PCA Systemic Risk)                     ║
  * ║    7. BOCPD (Bayesian Online Change-Point Detection)           ║
  * ║    8. Ensemble Regime Detector (fuses all signals)             ║
  * ╚══════════════════════════════════════════════════════════════════╝
@@ -1574,16 +1574,12 @@ function _logGamma(x) {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * Fuses HMM probabilities with Turbulence and BOCPD into a single
- * consensus regime assessment.
+ * Fuses HMM probabilities with Turbulence, Absorption Ratio, and
+ * BOCPD into a single consensus regime assessment.
  *
  * Philosophy: the HMM is the primary signal (it labels *which* regime),
- * while Turbulence and BOCPD are confirmation/warning signals
+ * while Turbulence, AR, and BOCPD are confirmation/warning signals
  * that can override or adjust HMM confidence.
- *
- * Note: Absorption Ratio was removed — it overlaps heavily with
- * Turbulence Index (both measure "assets moving together abnormally")
- * and added parameter noise without improving regime detection quality.
  *
  * Key insight: when HMM says "Bull" but turbulence is at 95th percentile
  * and BOCPD flags a change-point, the ensemble should reduce confidence
@@ -1592,23 +1588,27 @@ function _logGamma(x) {
 export class EnsembleRegimeDetector {
   /**
    * @param {Object} opts
-   * @param {number} opts.hmmWeight - Weight for HMM signal (default 0.55)
-   * @param {number} opts.turbulenceWeight - Weight for turbulence adjustment (default 0.25)
-   * @param {number} opts.bocpdWeight - Weight for change-point adjustment (default 0.20)
+   * @param {number} opts.hmmWeight - Weight for HMM signal (default 0.50)
+   * @param {number} opts.turbulenceWeight - Weight for turbulence adjustment (default 0.20)
+   * @param {number} opts.absorptionWeight - Weight for absorption ratio adjustment (default 0.15)
+   * @param {number} opts.bocpdWeight - Weight for change-point adjustment (default 0.15)
    * @param {number} opts.turbulenceLookback - Lookback for turbulence computation (default 252)
+   * @param {number} opts.absorptionLookback - Lookback for AR computation (default 252)
    * @param {number} opts.bocpdHazard - BOCPD hazard rate (default 1/100)
    */
   constructor(opts = {}) {
     this.weights = {
-      hmm:        opts.hmmWeight || 0.55,
-      turbulence: opts.turbulenceWeight || 0.25,
-      bocpd:      opts.bocpdWeight || 0.20,
+      hmm:        opts.hmmWeight || 0.50,
+      turbulence: opts.turbulenceWeight || 0.20,
+      absorption: opts.absorptionWeight || 0.15,
+      bocpd:      opts.bocpdWeight || 0.15,
     };
     // Normalize
     const wSum = Object.values(this.weights).reduce((a, b) => a + b, 0);
     for (const k of Object.keys(this.weights)) this.weights[k] /= wSum;
 
     this.turbulenceEngine = new TurbulenceIndex({ lookback: opts.turbulenceLookback || 252 });
+    this.absorptionEngine = new AbsorptionRatio({ lookback: opts.absorptionLookback || 252 });
     this.bocpdEngine = new BOCPD({ hazard: opts.bocpdHazard || 1 / 100 });
   }
 
@@ -1624,6 +1624,7 @@ export class EnsembleRegimeDetector {
    *   currentEnsemble: number[],          — Latest ensemble probability vector
    *   currentRegime: { id, name, color, probability },
    *   turbulence: TurbulenceResult,
+   *   absorption: AbsorptionResult,
    *   bocpd: BOCPDResult,
    *   agreement: number,                 — 0-1 how much detectors agree with HMM
    *   confidenceAdjustment: number,       — How much ensemble shifts from HMM
@@ -1639,13 +1640,17 @@ export class EnsembleRegimeDetector {
       ? this.turbulenceEngine.compute(assetReturns)
       : this.turbulenceEngine._emptyResult(T);
 
+    const arResult = assetReturns
+      ? this.absorptionEngine.compute(assetReturns)
+      : this.absorptionEngine._emptyResult(T);
+
     const bocpdResult = compositeScore
       ? this.bocpdEngine.detect(compositeScore)
       : this.bocpdEngine._emptyResult(T);
 
     // Fuse signals into adjusted probabilities
     const ensembleProbs = [];
-    const minLen = Math.min(T, turbResult.turbulence.length, bocpdResult.changePointProb.length);
+    const minLen = Math.min(T, turbResult.turbulence.length, arResult.absorptionRatio.length, bocpdResult.changePointProb.length);
 
     for (let t = 0; t < minLen; t++) {
       // Start with HMM base probabilities
@@ -1655,6 +1660,10 @@ export class EnsembleRegimeDetector {
       const turbPctl = turbResult.turbulencePctl[t] || 0;
       const turbShift = Math.max(0, (turbPctl - 0.5) * 2); // 0 if calm, 1 if extreme
 
+      // Absorption adjustment: high AR shift → systemic risk rising
+      const arShift = Math.max(0, arResult.arShift[t] || 0);
+      const arStress = Math.min(1, arShift / 2); // normalize to [0,1]
+
       // BOCPD adjustment: high CP probability → uncertainty spike
       const cpProb = bocpdResult.changePointProb[t] || 0;
 
@@ -1662,8 +1671,9 @@ export class EnsembleRegimeDetector {
       // When stress indicators fire, redistribute probability from Bull/Euphoria to Correction/Crisis
       const stressLevel = (
         turbShift * this.weights.turbulence +
+        arStress * this.weights.absorption +
         cpProb * this.weights.bocpd
-      ) / (this.weights.turbulence + this.weights.bocpd);
+      ) / (this.weights.turbulence + this.weights.absorption + this.weights.bocpd);
 
       const adjusted = new Array(NUM_STATES);
       const stressFactor = Math.min(stressLevel * 2, 1); // Scale up for impact
@@ -1709,6 +1719,14 @@ export class EnsembleRegimeDetector {
         value: turbResult.currentTurbulence,
       });
     }
+    if (arResult.currentShift > 1.0) {
+      alerts.push({
+        source: 'Absorption Ratio',
+        message: `AR shift +${arResult.currentShift.toFixed(1)}σ — correlations converging, systemic risk rising`,
+        severity: arResult.currentShift > 2.0 ? 'high' : 'medium',
+        value: arResult.currentAR,
+      });
+    }
     if (bocpdResult.currentCPProb > 0.2) {
       alerts.push({
         source: 'Change-Point',
@@ -1740,6 +1758,7 @@ export class EnsembleRegimeDetector {
         probability: currentMax,
       },
       turbulence: turbResult,
+      absorption: arResult,
       bocpd: bocpdResult,
       agreement,
       confidenceAdjustment: l1Dist,
