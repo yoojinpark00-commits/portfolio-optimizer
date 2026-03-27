@@ -4702,6 +4702,7 @@ export default function App() {
 
       annualResults.push({
         year,
+        isOOS: false, // will be updated after split point is computed
         optRet: optYearStart > 0 ? ((optYearEnd - optYearStart) / optYearStart * 100) : 0,
         spyRet: spyYearStart > 0 ? ((spyYearEnd - spyYearStart) / spyYearStart * 100) : 0,
         bal60Ret: bal60YearStart > 0 ? ((bal60YearEnd - bal60YearStart) / bal60YearStart * 100) : 0,
@@ -4769,6 +4770,62 @@ export default function App() {
     const spyVol = calcVol(spyCurve);
     const bal60Vol = calcVol(bal60Curve);
 
+    // ── 80/20 In-Sample / Out-of-Sample Split ──
+    const OOS_FRACTION = 0.2;
+    const splitIdx = Math.floor(simYears.length * (1 - OOS_FRACTION));
+    const splitYear = simYears[splitIdx] || simYears[simYears.length - 1];
+    const splitDate = `${splitYear}-01`;
+
+    // Tag annual results
+    for (const ar of annualResults) ar.isOOS = ar.year >= splitYear;
+
+    // Helper: compute metrics for a curve segment
+    const segmentMetrics = (curve, startVal, numYrs) => {
+      if (!curve.length || numYrs <= 0) return { final: startVal, cagr: 0, vol: 0, dd: 0, sharpe: 0 };
+      const endVal = curve[curve.length - 1].value;
+      const cagr = (Math.pow(Math.max(0, endVal) / Math.max(1, startVal), 1 / numYrs) - 1) * 100;
+      const vol = calcVol(curve);
+      const dd = calcDD(curve);
+      const sharpe = vol > 0 ? (cagr - RF) / vol : 0;
+      return { final: endVal, cagr, vol, dd, sharpe };
+    };
+
+    // Split curves at boundary
+    const isOptCurve = optCurve.filter(p => p.date < splitDate);
+    const oosOptCurve = optCurve.filter(p => p.date >= splitDate);
+    const isSpyCurve = spyCurve.filter(p => p.date < splitDate);
+    const oosSpyCurve = spyCurve.filter(p => p.date >= splitDate);
+    const isBal60Curve = bal60Curve.filter(p => p.date < splitDate);
+    const oosBal60Curve = bal60Curve.filter(p => p.date >= splitDate);
+
+    const isYears = splitIdx;
+    const oosYears = simYears.length - splitIdx;
+
+    // Prepend the last IS point to OOS curves so vol/dd calculations have a starting reference
+    const lastISopt = isOptCurve.length > 0 ? isOptCurve[isOptCurve.length - 1] : { value: startCash };
+    const lastISspy = isSpyCurve.length > 0 ? isSpyCurve[isSpyCurve.length - 1] : { value: startCash };
+    const lastISbal = isBal60Curve.length > 0 ? isBal60Curve[isBal60Curve.length - 1] : { value: startCash };
+    const oosOptFull = [lastISopt, ...oosOptCurve];
+    const oosSpyFull = [lastISspy, ...oosSpyCurve];
+    const oosBal60Full = [lastISbal, ...oosBal60Curve];
+
+    const oosAnalysis = {
+      splitYear,
+      splitDate,
+      isYears,
+      oosYears,
+      is: {
+        opt: segmentMetrics(isOptCurve, startCash, isYears),
+        spy: segmentMetrics(isSpyCurve, startCash, isYears),
+        bal60: segmentMetrics(isBal60Curve, startCash, isYears),
+      },
+      oos: {
+        opt: segmentMetrics(oosOptFull, lastISopt.value, oosYears),
+        spy: segmentMetrics(oosSpyFull, lastISspy.value, oosYears),
+        bal60: segmentMetrics(oosBal60Full, lastISbal.value, oosYears),
+      },
+    };
+
     setBtResult({
       curves: { opt: optCurve, spy: spyCurve, bal60: bal60Curve },
       summary: {
@@ -4779,6 +4836,7 @@ export default function App() {
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
+      oosAnalysis,
       regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (incremental, no look-ahead)" : "FRED (12-series, 5-state, daily EMA)") : "Proxy (SPY momentum/vol)",
       regimeDurationModel: regimeDurModel ? true : false,
       tax: {
@@ -5199,6 +5257,19 @@ export default function App() {
       // Compute sim volatility from monthly returns
       const simAvgRet = simMonthlyRets.length > 0 ? simMonthlyRets.reduce((s, r) => s + r, 0) / simMonthlyRets.length : 0;
       const simVol = simMonthlyRets.length > 1 ? Math.sqrt(simMonthlyRets.reduce((s, r) => s + (r - simAvgRet) ** 2, 0) / simMonthlyRets.length) * Math.sqrt(12) * 100 : 0;
+
+      // IS/OOS split for this simulation run
+      const simSplitIdx = Math.floor(simDates.length * 0.8);
+      const simSplitDate = simDates[simSplitIdx] || simDates[simDates.length - 1];
+      // Track portfolio value at split point from equity curve
+      // simMonthlyRets[i] corresponds to simDates[i]
+      let isEndVal = startCash;
+      for (let i = 0; i < simSplitIdx && i < simMonthlyRets.length; i++) isEndVal *= (1 + simMonthlyRets[i]);
+      const isCAGR = (Math.pow(Math.max(0, isEndVal) / startCash, 12 / Math.max(1, simSplitIdx)) - 1) * 100;
+      const oosCAGR = simMonthlyRets.length > simSplitIdx
+        ? (Math.pow(Math.max(0, optValue) / Math.max(1, isEndVal), 12 / Math.max(1, simMonthlyRets.length - simSplitIdx)) - 1) * 100
+        : 0;
+
       results.push({
         finalValue: optValue,
         cagr: optCAGR,
@@ -5209,6 +5280,8 @@ export default function App() {
         vol: simVol,
         sharpe: simVol > 0 ? (optCAGR - 2) / simVol : 0,
         sharpeBeatsSPY: false, // computed after all sims
+        isCAGR,
+        oosCAGR,
       });
     }
 
@@ -5275,6 +5348,11 @@ export default function App() {
       avgSharpe: +avg(results.map(r => r.sharpe)).toFixed(2),
       medianSharpe: +pctl(results.map(r => r.sharpe).sort((a, b) => a - b), 50).toFixed(2),
       rollingPeriods,
+      // IS/OOS split metrics
+      isAvgCAGR: +avg(results.map(r => r.isCAGR)).toFixed(1),
+      oosAvgCAGR: +avg(results.map(r => r.oosCAGR)).toFixed(1),
+      isAvgAlpha: +(avg(results.map(r => r.isCAGR)) - spyCAGR * 0.8).toFixed(1), // approximate IS alpha
+      oosAvgAlpha: +(avg(results.map(r => r.oosCAGR)) - spyCAGR * 0.2).toFixed(1), // approximate OOS alpha
     });
     setSimProgress(""); setSimRunning(false);
   }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState, walkForward, drawdownProtection, weightingMethod]);
@@ -8080,6 +8158,51 @@ useEffect(() => {
                 ))}
               </div>
 
+              {/* IS/OOS Split Analysis */}
+              {btResult.oosAnalysis && <div style={{ ...cardS, marginBottom: 14, background: "rgba(120,169,255,.02)", borderColor: "rgba(120,169,255,.12)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: cs.blue, marginBottom: 8 }}>In-Sample vs Out-of-Sample ({btResult.oosAnalysis.isYears}yr / {btResult.oosAnalysis.oosYears}yr · Split at {btResult.oosAnalysis.splitYear})</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {[
+                    { label: `In-Sample (2006-${btResult.oosAnalysis.splitYear - 1})`, data: btResult.oosAnalysis.is, isBg: "rgba(66,190,101,.03)", isBorder: "rgba(66,190,101,.1)" },
+                    { label: `Out-of-Sample (${btResult.oosAnalysis.splitYear}-2025)`, data: btResult.oosAnalysis.oos, isBg: "rgba(255,171,145,.03)", isBorder: "rgba(255,171,145,.1)" },
+                  ].map(section => (
+                    <div key={section.label} style={{ padding: 10, background: section.isBg, border: `1px solid ${section.isBorder}`, borderRadius: 2 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: cs.text, marginBottom: 6 }}>{section.label}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                        {[
+                          { l: "Optimized", d: section.data.opt, c: cs.green },
+                          { l: "S&P 500", d: section.data.spy, c: cs.blue },
+                          { l: "60/40", d: section.data.bal60, c: cs.purple },
+                        ].map(s => (
+                          <div key={s.l}>
+                            <div style={{ fontSize: 8, fontWeight: 600, color: s.c, marginBottom: 3 }}>{s.l}</div>
+                            <div style={{ fontSize: 7, color: cs.dim }}>CAGR</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{s.d.cagr.toFixed(1)}%</div>
+                            <div style={{ fontSize: 7, color: cs.dim, marginTop: 2 }}>Sharpe</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{s.d.sharpe.toFixed(2)}</div>
+                            <div style={{ fontSize: 7, color: cs.dim, marginTop: 2 }}>Max DD</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2, color: cs.red }}>-{s.d.dd.toFixed(1)}%</div>
+                            <div style={{ fontSize: 7, color: cs.dim, marginTop: 2 }}>Vol</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{s.d.vol.toFixed(1)}%</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Alpha vs SPY */}
+                      <div style={{ marginTop: 6, padding: "4px 6px", background: "rgba(255,255,255,.02)", borderRadius: 2, fontSize: 8, fontFamily: mono2 }}>
+                        <span style={{ color: cs.dim }}>Alpha vs SPY: </span>
+                        <span style={{ fontWeight: 700, color: (section.data.opt.cagr - section.data.spy.cagr) >= 0 ? cs.green : cs.red }}>
+                          {(section.data.opt.cagr - section.data.spy.cagr) >= 0 ? "+" : ""}{(section.data.opt.cagr - section.data.spy.cagr).toFixed(1)}%
+                        </span>
+                        <span style={{ color: cs.dim }}> · Sharpe diff: </span>
+                        <span style={{ fontWeight: 700, color: (section.data.opt.sharpe - section.data.spy.sharpe) >= 0 ? cs.green : cs.red }}>
+                          {(section.data.opt.sharpe - section.data.spy.sharpe) >= 0 ? "+" : ""}{(section.data.opt.sharpe - section.data.spy.sharpe).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
               {/* Tax Impact Summary */}
               {btResult.tax && (btResult.tax.totalPaid > 0 || btResult.tax.totalSaved > 0) && <div style={{ ...cardS, marginBottom: 14, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -8184,12 +8307,17 @@ useEffect(() => {
                         const alpha = a.optRet - a.spyRet;
                         const isExp = btExpandedYear === a.year;
                         const cs2 = 8 + (useRegime ? 2 : 0);
+                        const oosRow = a.isOOS;
+                        const defaultBg = oosRow ? "rgba(255,171,145,.02)" : "transparent";
                         return (<React.Fragment key={a.year}>
                           <tr onClick={() => setBtExpandedYear(isExp ? null : a.year)}
-                            style={{ borderBottom: isExp ? "none" : "1px solid #222222", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : "transparent" }}
-                            onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = "#1e1e1e" }}
-                            onMouseLeave={e => { if (!isExp) e.currentTarget.style.background = "transparent" }}>
-                            <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>{isExp ? "▾" : "▸"} {a.year}</td>
+                            style={{ borderBottom: isExp ? "none" : "1px solid #222222", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : defaultBg }}
+                            onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = oosRow ? "rgba(255,171,145,.05)" : "#1e1e1e" }}
+                            onMouseLeave={e => { if (!isExp) e.currentTarget.style.background = defaultBg }}>
+                            <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>
+                              {isExp ? "▾" : "▸"} {a.year}
+                              {oosRow && <span style={{ fontSize: 6, color: cs.yellow, marginLeft: 4, fontWeight: 400, letterSpacing: ".04em" }}>OOS</span>}
+                            </td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: cs.dim, fontSize: 9 }}>{fmt$(a.portfolioValue || 0)}</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.optRet >= 0 ? cs.green : cs.red }}>{a.optRet >= 0 ? "+" : ""}{a.optRet.toFixed(1)}%</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.spyRet >= 0 ? cs.blue : cs.red }}>{a.spyRet >= 0 ? "+" : ""}{a.spyRet.toFixed(1)}%</td>
