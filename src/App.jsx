@@ -314,24 +314,27 @@ function shrinkToForward(trailing, vol) {
 // the Sharpe pre-filter purely on trailing momentum.
 // For stocks: cap at 80% annualized, keep 20% of excess above cap
 // For ETFs: cap at 120% annualized (ETFs are diversified, more sustainable momentum)
-function shrinkReturn(r, isStock, regimeState) {
-  // Progressive shrinkage: starts light at threshold, increases with magnitude
-  // Regime-aware: bull markets let momentum winners run, bear markets dampen harder
-  // This prevents 2021-style whipsaw where trailing 2020 rockets get over-shrunk in a bull
+function shrinkReturn(r, isStock, regimeState, adaptiveParams) {
+  // Progressive shrinkage with data-driven thresholds when available.
+  // adaptiveParams: { threshold, hardCap } from cross-sectional percentiles, or null for defaults.
+  // Regime adjustment still applies on top.
   const regimeAdj = {
-    strong_risk_on: { tMult: 1.60, cMult: 1.25 },  // raise threshold 60%, cap 25%
+    strong_risk_on: { tMult: 1.60, cMult: 1.25 },
     mild_risk_on:   { tMult: 1.28, cMult: 1.125 },
     neutral:        { tMult: 1.00, cMult: 1.00 },
     mild_risk_off:  { tMult: 0.80, cMult: 0.81 },
     strong_risk_off:{ tMult: 0.60, cMult: 0.625 },
   }[regimeState] || { tMult: 1.0, cMult: 1.0 };
 
-  const threshold = (isStock ? 20 : 25) * regimeAdj.tMult;
-  const hardCap = (isStock ? 60 : 80) * regimeAdj.cMult;
+  // Use adaptive params if available, otherwise hardcoded defaults
+  const baseThreshold = adaptiveParams ? adaptiveParams.threshold * (isStock ? 0.8 : 1.0) : (isStock ? 20 : 25);
+  const baseHardCap = adaptiveParams ? adaptiveParams.hardCap * (isStock ? 0.75 : 1.0) : (isStock ? 60 : 80);
+
+  const threshold = baseThreshold * regimeAdj.tMult;
+  const hardCap = baseHardCap * regimeAdj.cMult;
   const sign = r >= 0 ? 1 : -1;
   const absR = Math.abs(r);
   if (absR <= threshold) return r;
-  // Progressive: keep 60% of the next 25%, then 30% beyond that
   const tier1 = Math.min(absR - threshold, 25) * 0.60;
   const tier2 = Math.max(0, absR - threshold - 25) * 0.30;
   const shrunk = threshold + tier1 + tier2;
@@ -1402,6 +1405,104 @@ function hmmToState5(probs) {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
+ * Compute adaptive factor weights from rolling Information Coefficients (IC).
+ * For each factor, computes Spearman rank correlation between factor score and
+ * subsequent 1-month return over a trailing window. Factors with higher predictive
+ * power get higher weights.
+ *
+ * @param {Object} returnsByDate - { date: { sym: { ret } } }
+ * @param {string[]} sortedDates
+ * @param {number} mIdx - current month index
+ * @param {Object} etfDbMap - ticker metadata
+ * @param {number} lookback - months to look back (default 36)
+ * @returns {Object|null} { mom12_1, rev1m, val, qual, lowvol, carry } weights summing to 1, or null if insufficient data
+ */
+function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap, lookback = 36) {
+  if (mIdx < lookback + 12) return null; // need at least lookback + 12mo for factor computation
+
+  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry"];
+  const ics = {};
+  for (const f of factors) ics[f] = [];
+
+  // For each month t in [mIdx-lookback, mIdx-1], compute factor scores at t
+  // and correlate with realized returns at t+1
+  for (let t = mIdx - lookback; t < mIdx - 1; t++) {
+    if (t < 13) continue; // need 12 months of data for factor computation
+
+    // Collect available symbols and their 1-month forward return
+    const syms = [];
+    const fwdRets = {};
+    const fwdDate = sortedDates[t + 1];
+    if (!fwdDate) continue;
+
+    for (const sym of Object.keys(returnsByDate[sortedDates[t]] || {})) {
+      const fwd = returnsByDate[fwdDate]?.[sym];
+      if (fwd) { syms.push(sym); fwdRets[sym] = fwd.ret; }
+    }
+    if (syms.length < 10) continue;
+
+    // Compute factor scores at time t (lightweight: just momentum and basic factors)
+    const scores = {};
+    for (const sym of syms) {
+      const monthlyRets = [];
+      for (let ti = Math.max(0, t - 12); ti < t; ti++) {
+        const e = returnsByDate[sortedDates[ti]]?.[sym];
+        if (e) monthlyRets.push(e.ret);
+      }
+      if (monthlyRets.length < 6) continue;
+      const db = etfDbMap[sym] || {};
+      scores[sym] = {
+        mom12_1: monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0),
+        rev1m: -(monthlyRets[monthlyRets.length - 1] || 0),
+        val: db.d || 0,
+        qual: (monthlyRets.reduce((a, b) => a + b, 0) > 0 ? 2 : 0) + 1 / (1 + (db.er || 0.1)),
+        lowvol: 1 / (Math.sqrt(monthlyRets.reduce((s, r) => s + r * r, 0) / monthlyRets.length) || 0.01),
+        carry: db.d || 0,
+      };
+    }
+
+    const scoredSyms = syms.filter(s => scores[s]);
+    if (scoredSyms.length < 10) continue;
+
+    // Rank correlation (Spearman) for each factor vs forward return
+    const fwdRank = {};
+    const sortedByFwd = scoredSyms.sort((a, b) => fwdRets[a] - fwdRets[b]);
+    sortedByFwd.forEach((s, i) => { fwdRank[s] = i; });
+
+    for (const f of factors) {
+      const sortedByF = [...scoredSyms].sort((a, b) => (scores[a][f] || 0) - (scores[b][f] || 0));
+      const fRank = {};
+      sortedByF.forEach((s, i) => { fRank[s] = i; });
+      // Spearman = 1 - 6*sum(d^2) / (n*(n^2-1))
+      const n = scoredSyms.length;
+      let sumD2 = 0;
+      for (const s of scoredSyms) sumD2 += (fRank[s] - fwdRank[s]) ** 2;
+      const spearman = 1 - (6 * sumD2) / (n * (n * n - 1));
+      ics[f].push(spearman);
+    }
+  }
+
+  // Average IC per factor
+  const avgIC = {};
+  let totalPositiveIC = 0;
+  for (const f of factors) {
+    avgIC[f] = ics[f].length > 0 ? ics[f].reduce((s, v) => s + v, 0) / ics[f].length : 0;
+    totalPositiveIC += Math.max(0, avgIC[f]);
+  }
+
+  if (totalPositiveIC <= 0) return null; // no predictive factor found
+
+  // Weight = max(0, avgIC) / sum, floored at 0.05
+  const weights = {};
+  for (const f of factors) weights[f] = Math.max(0.05, Math.max(0, avgIC[f]) / totalPositiveIC);
+  // Renormalize
+  const wSum = factors.reduce((s, f) => s + weights[f], 0);
+  for (const f of factors) weights[f] = weights[f] / wSum;
+
+  return weights;
+}
+
+/**
  * Compute multi-factor scores for all candidates using trailing return data.
  * Returns enriched candidates with factor scores attached.
  *
@@ -1412,7 +1513,7 @@ function hmmToState5(probs) {
  * @param {Object} etfDbMap - ticker → ETF_DB entry
  * @returns {Object} { enriched: trailingStats with factor fields, factorRanks: { sym: { mom, rev, val, qual, lowvol, carry, composite } } }
  */
-function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap) {
+function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveWeights) {
   const syms = Object.keys(trailingStats);
   if (syms.length < 3 || mIdx < 13) return { enriched: trailingStats, factorRanks: {} };
 
@@ -1466,8 +1567,9 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
   }
 
   // ── Composite factor score (weighted blend) ──
-  // Weights tuned for robustness: momentum strongest but diversified across all factors
-  const factorWeights = { mom12_1: 0.30, rev1m: 0.10, val: 0.15, qual: 0.15, lowvol: 0.15, carry: 0.15 };
+  // Use adaptive IC-based weights if available, otherwise hardcoded defaults
+  const defaultFactorWeights = { mom12_1: 0.30, rev1m: 0.10, val: 0.15, qual: 0.15, lowvol: 0.15, carry: 0.15 };
+  const factorWeights = adaptiveWeights || defaultFactorWeights;
   for (const sym of syms) {
     let composite = 0;
     for (const [f, w] of Object.entries(factorWeights)) {
@@ -1492,7 +1594,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
  * @param {number} tau - uncertainty scaling (default 0.05)
  * @returns {number[]} Adjusted expected returns per candidate
  */
-function blackLittermanReturns(candidates, tau = 0.05) {
+function blackLittermanReturns(candidates, tau = 0.05, rfRate = RF) {
   const n = candidates.length;
   if (n === 0) return [];
 
@@ -1501,7 +1603,7 @@ function blackLittermanReturns(candidates, tau = 0.05) {
   const avgVol = candidates.reduce((s, c) => s + c.v, 0) / n;
   const eqReturns = candidates.map(c => {
     const beta = c.v / (avgVol || 15);
-    return RF + beta * (avgRet - RF);
+    return rfRate + beta * (avgRet - rfRate);
   });
 
   // Views: factor score implies a view on relative performance
@@ -1725,7 +1827,8 @@ function factorDiversificationScore(alloc, candidates, deployAmt) {
 
 // regimeCtx: { state5, acceleration, duration, transition, durationModel } or just a string
 // prevBest: optional previous allocation weights to warm-start from
-function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest) {
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest, rfRate) {
+  const localRF = rfRate != null ? rfRate : RF;
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
   const numIterations = iterations || 6000;
@@ -1754,6 +1857,14 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   const [baseDefBonus, baseAggBonus, baseKellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
+
+  // ── Confidence scaling: scale tilt magnitude by HMM posterior probability ──
+  // 90%+ confident → full tilt (1.0). 55% barely classified → 51% of tilt.
+  // This makes tilts data-driven instead of full-blast on every regime detection.
+  const hmmProbs = regimeCtx?.hmmProbs;
+  const maxProb = hmmProbs ? Math.max(...hmmProbs) : 0.7; // fallback if no HMM
+  const confidenceScale = 0.3 + 0.7 * Math.min(1, (maxProb - 0.4) / 0.5);
+
   const durationScale = Math.min(2.0, 0.5 + (duration / 12) * 1.5);
   let accelMod = 1.0;
   if (state5.includes("risk_off")) accelMod = acceleration < -0.15 ? 0.6 : acceleration > 0.15 ? 1.3 : 1.0;
@@ -1803,10 +1914,10 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const volMod = volSignal < 0 ? 0.85 : 1.0; // only dampen during expansion, never amplify
   const vixMod = vixInversion ? 0.7 : 1.0; // gentler than before (was 0.5)
 
-  const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1.15 : 1.0);
+  const defBonus = baseDefBonus * confidenceScale * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1.15 : 1.0);
   // Entry bonus reaches aggressive categories in ANY state (including neutral after bear→neutral recovery)
-  const aggBonus = (baseAggBonus * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
-  const kellyMult = baseKellyMult;
+  const aggBonus = (baseAggBonus * confidenceScale * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
+  const kellyMult = baseKellyMult * (0.5 + 0.5 * confidenceScale);
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
@@ -1820,7 +1931,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const hasFactors = candidates.some(c => c.factorScore != null);
   let blReturns = null;
   if (hasFactors) {
-    blReturns = blackLittermanReturns(candidates);
+    blReturns = blackLittermanReturns(candidates, 0.05, localRF);
   }
 
   // Pre-compute adjusted returns, vols as typed arrays
@@ -1903,7 +2014,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     if (!useKelly) { maxPct[i] = levCap; continue; }
     const sigSq = volArr[i] * volArr[i];
     if (sigSq <= 0) { maxPct[i] = levCap; continue; }
-    const fStar = 0.5 * ((adjRet[i] - RF) / 100) / sigSq;
+    const fStar = 0.5 * ((adjRet[i] - localRF) / 100) / sigSq;
     const adj = AGGRESSIVE_CATS.has(c.c) ? kellyMult : 1.0;
     maxPct[i] = Math.max(0.01, Math.min(fStar * adj, levCap));
   }
@@ -2040,7 +2151,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
     // Score
     const var95 = vol * 1.645;
-    const sh = srMode === "var" ? (var95 > 0 ? (ret - RF) / var95 : 0) : srMode === "vol2" ? (vol > 0 ? (ret - RF) / (vol * vol / 100) : 0) : (vol > 0 ? (ret - RF) / vol : 0);
+    const sh = srMode === "var" ? (var95 > 0 ? (ret - localRF) / var95 : 0) : srMode === "vol2" ? (vol > 0 ? (ret - localRF) / (vol * vol / 100) : 0) : (vol > 0 ? (ret - localRF) / vol : 0);
     const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
 
     let levPenalty = 0, levExposure = 0;
@@ -3529,6 +3640,7 @@ export default function App() {
   const [walkForward, setWalkForward] = useState(true); // Walk-forward backtesting (no look-ahead)
   const [drawdownProtection, setDrawdownProtection] = useState(true); // Drawdown circuit breakers
   const [weightingMethod, setWeightingMethod] = useState("score"); // "score" | "risk_parity" | "hybrid"
+  const [oosFraction, setOosFraction] = useState(0.3); // OOS split ratio (default 30%)
 
   // ── Regime state ──
   const [regimeData, setRegimeData] = useState(null);
@@ -4001,6 +4113,7 @@ export default function App() {
     // The model is rebuilt periodically (every 12 months) for efficiency.
     let regimeDurModel = null;
     let lastModelBuildDate = null;
+    let adaptiveFactorWeights = null; // rolling IC-based factor weights
 
     // ── Drawdown control state ──
     let ddPeak = startCash; // rolling portfolio peak value
@@ -4135,6 +4248,8 @@ export default function App() {
       const monthsSinceRebal = lastRebalanceMonth ? (mIdx - dateToIdx[lastRebalanceMonth]) : 999;
       let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
       let btDuration = 0, btTransition = null, regimeChanged = false;
+      // Dynamic risk-free rate from 10Y Treasury yield at this date
+      const dynamicRF = historicalRegimes?.[monthKey]?.dgs10 ?? RF;
       if (useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
         if (regData) {
@@ -4234,14 +4349,22 @@ export default function App() {
       await new Promise(r => setTimeout(r, 0));
 
       // Step 3: Trailing stats with RECENCY WEIGHTING + RETURN SHRINKAGE
-      // ── Adaptive momentum decay ──
-      // Bull markets: faster decay (0.10) so rotation signal comes through in ~3-4 months
-      // Crisis: slower decay (0.03) since momentum is unreliable and we want more data
-      const momDecay = btState5 === "strong_risk_on" ? 0.10
-        : btState5 === "mild_risk_on" ? 0.08
-        : btState5 === "mild_risk_off" ? 0.04
-        : btState5 === "strong_risk_off" ? 0.03
-        : 0.05; // neutral default
+      // ── Vol-derived momentum decay ──
+      // Instead of hardcoded regime→decay mapping, derive from trailing SPY volatility.
+      // Higher vol → more noise → slower decay (use more data). Lower vol → cleaner signal → faster decay.
+      let trailingSPYVol = 15; // fallback
+      { const spyRets = [];
+        for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) {
+          const r = returnsByDateSym[sortedDates[rv]]?.["SPY"];
+          if (r) spyRets.push(r.ret);
+        }
+        if (spyRets.length >= 6) {
+          const avg = spyRets.reduce((s, r) => s + r, 0) / spyRets.length;
+          trailingSPYVol = Math.sqrt(spyRets.reduce((s, r) => s + (r - avg) ** 2, 0) / spyRets.length) * Math.sqrt(12) * 100;
+        }
+      }
+      // Map: vol 10% → decay 0.10 (fast), vol 20% → 0.07, vol 30% → 0.04 (slow)
+      const momDecay = Math.max(0.02, Math.min(0.12, 0.13 - trailingSPYVol * 0.003));
 
       // ── Adaptive trailing window ──
       // Low-vol regimes: shorter window (24mo) to avoid stale crash data inflating vol
@@ -4251,6 +4374,25 @@ export default function App() {
       const adaptiveTrailMonths = walkForward
         ? (volRegime === "normal" || volRegime === "compression" ? 24 : 48)
         : 12;
+
+      // ── Adaptive shrinkage: compute from raw returns before applying shrinkage ──
+      // Quick scan of raw annualized returns to get cross-sectional distribution
+      const rawReturnsForShrink = [];
+      const quickTrailStart = Math.max(0, mIdx - 12);
+      for (const sym of available) {
+        let qWR = 0, qW = 0, qCnt = 0;
+        for (let ti = quickTrailStart; ti < mIdx; ti++) {
+          const e = returnsByDateSym[sortedDates[ti]]?.[sym];
+          if (e) { const age = mIdx - 1 - ti; const w = Math.exp(-momDecay * age); qWR += w * e.ret; qW += w; qCnt++; }
+        }
+        if (qCnt >= 6) rawReturnsForShrink.push(Math.abs((qWR / qW) * 12 * 100));
+      }
+      // Compute adaptive shrinkage thresholds from return distribution
+      const shrinkParams = rawReturnsForShrink.length >= 20 ? (() => {
+        const sorted = rawReturnsForShrink.sort((a, b) => a - b);
+        const p = (arr, pct) => arr[Math.floor(arr.length * pct / 100)] || arr[arr.length - 1];
+        return { threshold: Math.max(15, p(sorted, 80)), hardCap: Math.max(40, p(sorted, 95)) };
+      })() : null;
 
       const trailingStats = {};
       const trailStart = Math.max(0, mIdx - adaptiveTrailMonths);
@@ -4273,7 +4415,7 @@ export default function App() {
         const rawR = wAvgMo * 12 * 100;
         const db = etfDbMap[sym];
         const isStk = db?.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk, btState5);
+        const shrunkR = shrinkReturn(rawR, isStk, btState5, shrinkParams);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
         trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null, type: db?.type || "etf", ipo: db?.ipo };
       }
@@ -4282,8 +4424,8 @@ export default function App() {
       // In bear/neutral: relax to -80% so crash recovery candidates remain accessible.
       const returnFloor = isBullish ? -50 : -80;
 
-      // ── Compute multi-factor scores ──
-      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
+      // ── Compute multi-factor scores (with adaptive IC-based weights if available) ──
+      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveFactorWeights);
 
       // ── Compute relative value signals ──
       const relValSignals = computeRelativeValue(returnsByDateSym, sortedDates, mIdx, trailingStats);
@@ -4351,6 +4493,8 @@ export default function App() {
         if (cutoffIdx > 24) {
           regimeDurModel = buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym, cutoffIdx);
           lastModelBuildDate = monthKey;
+          // Also recompute adaptive factor weights (rolling IC)
+          adaptiveFactorWeights = computeAdaptiveFactorWeights(returnsByDateSym, sortedDates, mIdx, etfDbMap, 36);
         }
       }
 
@@ -4389,7 +4533,7 @@ export default function App() {
           warmWeights[i] = lastBestWeights[candidates[i].t] || 0;
         }
       }
-      const result = optimizeCash([], optValue, 0, candidates, effectiveOT, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights);
+      const result = optimizeCash([], optValue, 0, candidates, effectiveOT, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights, dynamicRF);
       if (!result || result.length === 0) continue;
       // Save best weights for warm-starting next evaluation
       lastBestWeights = {};
@@ -4771,7 +4915,7 @@ export default function App() {
     const bal60Vol = calcVol(bal60Curve);
 
     // ── 80/20 In-Sample / Out-of-Sample Split ──
-    const OOS_FRACTION = 0.2;
+    const OOS_FRACTION = oosFraction;
     const splitIdx = Math.floor(simYears.length * (1 - OOS_FRACTION));
     const splitYear = simYears[splitIdx] || simYears[simYears.length - 1];
     const splitDate = `${splitYear}-01`;
@@ -4860,7 +5004,7 @@ export default function App() {
       weightingMethod,
     });
     setBtProgress(""); setBtRunning(false);
-  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash, walkForward, drawdownProtection, weightingMethod]);
+  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash, walkForward, drawdownProtection, weightingMethod, oosFraction]);
 
   // ═══ SIMULATION: Run backtest N times to measure win rate vs SPY ═══
   const runSimulation = useCallback(async () => {
@@ -5111,11 +5255,13 @@ export default function App() {
           }
           return s5;
         })();
-        const simMomDecay = simState5 === "strong_risk_on" ? 0.10
-          : simState5 === "mild_risk_on" ? 0.08
-          : simState5 === "mild_risk_off" ? 0.04
-          : simState5 === "strong_risk_off" ? 0.03
-          : 0.05;
+        // Vol-derived momentum decay (matches backtest)
+        let simSPYVol = 15;
+        { const sr = [];
+          for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) { const r = returnsByDateSym[sortedDates[rv]]?.["SPY"]; if (r) sr.push(r.ret); }
+          if (sr.length >= 6) { const a = sr.reduce((s, r) => s + r, 0) / sr.length; simSPYVol = Math.sqrt(sr.reduce((s, r) => s + (r - a) ** 2, 0) / sr.length) * Math.sqrt(12) * 100; }
+        }
+        const simMomDecay = Math.max(0.02, Math.min(0.12, 0.13 - simSPYVol * 0.003));
         const simVolRegime = simRd?.volRegime || "normal";
         const simTrailMonths = walkForward
           ? (simVolRegime === "normal" || simVolRegime === "compression" ? 24 : 48)
@@ -5837,16 +5983,19 @@ useEffect(() => {
       baseCandidates.forEach(c => { etfDbMap[c.t] = c; });
 
       // Compute recency-weighted trailing stats (same logic as backtest)
-      // Use regime-aware decay: faster in bull (rotation signal), slower in crisis
-      const liveRegimeState = lastRegimeCtx?.state5 || "neutral";
-      const liveMomDecay = liveRegimeState === "strong_risk_on" ? 0.10
-        : liveRegimeState === "mild_risk_on" ? 0.08
-        : liveRegimeState === "mild_risk_off" ? 0.04
-        : liveRegimeState === "strong_risk_off" ? 0.03
-        : 0.05;
+      // Vol-derived decay: compute trailing SPY vol and map to decay
       const liveCandidates = [];
       const mIdx = sortedDates.length;
       const trailStart = Math.max(0, mIdx - 12);
+      let liveSPYVol = 15;
+      { const spyR = [];
+        for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) {
+          const r = returnsByDate[sortedDates[rv]]?.["SPY"];
+          if (r) spyR.push(r.ret);
+        }
+        if (spyR.length >= 6) { const a = spyR.reduce((s, r) => s + r, 0) / spyR.length; liveSPYVol = Math.sqrt(spyR.reduce((s, r) => s + (r - a) ** 2, 0) / spyR.length) * Math.sqrt(12) * 100; }
+      }
+      const liveMomDecay = Math.max(0.02, Math.min(0.12, 0.13 - liveSPYVol * 0.003));
 
       for (const sym of fetchedTickers) {
         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
@@ -6610,7 +6759,11 @@ useEffect(() => {
                       const liveCandidates = [];
                       const mIdx = sortedDates.length;
                       const trailStart = Math.max(0, mIdx - 12);
-                      const raDecay = lastRegimeCtx?.state5?.includes("risk_on") ? 0.08 : lastRegimeCtx?.state5?.includes("risk_off") ? 0.04 : 0.05;
+                      // Vol-derived decay (matches backtest)
+                      let raSPYVol = 15;
+                      { const sr = []; for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) { const r = returnsByDate[sortedDates[rv]]?.["SPY"]; if (r) sr.push(r.ret); }
+                        if (sr.length >= 6) { const a = sr.reduce((s, r) => s + r, 0) / sr.length; raSPYVol = Math.sqrt(sr.reduce((s, r) => s + (r - a) ** 2, 0) / sr.length) * Math.sqrt(12) * 100; } }
+                      const raDecay = Math.max(0.02, Math.min(0.12, 0.13 - raSPYVol * 0.003));
                       for (const sym of fetchedTickers) {
                         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
                         for (let ti = trailStart; ti < mIdx; ti++) {
@@ -8111,6 +8264,13 @@ useEffect(() => {
                     <div style={{ fontSize: 7, color: cs.muted }}>{m.d}</div>
                   </button>
                 ))}
+                <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}>
+                  <span style={{ fontSize: 8, color: cs.dim, whiteSpace: "nowrap" }}>OOS</span>
+                  <input type="range" min="10" max="50" step="5" value={oosFraction * 100}
+                    onChange={e => setOosFraction(+e.target.value / 100)}
+                    style={{ width: 60, accentColor: cs.yellow, cursor: "pointer" }} />
+                  <span style={{ fontSize: 9, fontFamily: mono2, color: cs.yellow, fontWeight: 600, minWidth: 28 }}>{(oosFraction * 100).toFixed(0)}%</span>
+                </div>
               </div>
             </div>
 
