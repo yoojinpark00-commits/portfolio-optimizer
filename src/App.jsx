@@ -5501,7 +5501,7 @@ export default function App() {
       oosAvgAlpha: +(avg(results.map(r => r.oosCAGR)) - spyCAGR * 0.2).toFixed(1), // approximate OOS alpha
     });
     setSimProgress(""); setSimRunning(false);
-  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState, walkForward, drawdownProtection, weightingMethod, oosFraction]);
+  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState, walkForward, drawdownProtection, weightingMethod]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
