@@ -4137,7 +4137,7 @@ export default function App() {
     const isMedTax = btTaxRates.st > 30;
     const taxCooldownMonths = isHighTax ? 3 : 2; // high-tax: 3-month min, else 2
     const taxSignalThreshold = isHighTax ? 3 : 2; // high-tax: need 3 confirming signals, else 2
-    const taxHurdleFloor = isHighTax ? 2.5 : isMedTax ? 2.0 : 1.5; // scale floor with tax rate
+    const taxHurdleFloor = isHighTax ? 3.5 : isMedTax ? 3.0 : 2.5; // raised floor for daily data — trade less, let positions compound
     const rebalanceEvents = [];
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
     // Only simulate days where SPY data exists
@@ -4342,9 +4342,11 @@ export default function App() {
           }
         }
       }
-      // ── Tax-aware signal-driven rebalance triggers ──
-      // Only evaluate at month boundaries (first trading day of new month) to avoid daily churn
-      // Exception: first allocation always evaluates immediately
+      // ── Rebalance Trigger Engine (daily monitoring, deliberate rebalancing) ──
+      // With daily data, signals fire more frequently. The engine must be more
+      // selective to avoid excessive trading that erodes alpha through tax drag
+      // and transaction costs. Daily monitoring is for DRAWDOWN only.
+      // Rebalance evaluation happens at month boundaries with strict gating.
       const isNewMonth = monthKey !== lastEvalMonth;
       if (isNewMonth) lastEvalMonth = monthKey;
 
@@ -4353,57 +4355,60 @@ export default function App() {
       if (!shouldEvaluate && isNewMonth && useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
 
-        // Regime change is strong enough to trigger alone (even in high-tax states)
-        if (regimeChanged) shouldEvaluate = true;
+        // ── Gate 1: Regime change — only if persistent (not a 1-month flicker) ──
+        // Require the regime to have been different for at least 2 consecutive months
+        // to filter out noise from monthly FRED data revisions
+        if (regimeChanged && btDuration >= 2) shouldEvaluate = true;
 
-        // Three-stage pattern prediction: fires alone if confidence >= 55%
-        // Note: computeThreeStagePredict expects monthly regime data and monthly index
+        // ── Gate 2: Three-stage pattern prediction — only high confidence ──
         if (!shouldEvaluate && !isFirstAllocation) {
-          // Build monthly index from regime data for three-stage prediction
           const regEntries = Object.keys(historicalRegimes).sort();
           const regMonthIdx = regEntries.indexOf(monthKey);
           const threeStagePredict = regMonthIdx >= 0 ? computeThreeStagePredict(historicalRegimes, regEntries, regMonthIdx) : null;
-          if (threeStagePredict?.shouldTrigger && monthsSinceRebal >= taxCooldownDays) {
+          // Raised confidence threshold from 55% to 65% for daily mode
+          if (threeStagePredict?.shouldTrigger && threeStagePredict.confidence >= 0.65 && monthsSinceRebal >= taxCooldownDays) {
             shouldEvaluate = true;
-            // Store for logging in rebalance events
             if (btRegime) btRegime.threeStagePredict = threeStagePredict;
           }
         }
 
-        // For other signals, count confirmations — threshold scales with tax rate
+        // ── Gate 3: Multi-signal confirmation — require MORE signals with daily data ──
         if (!shouldEvaluate) {
           let signalCount = 0;
 
-          // Signal 1: Stress acceleration crossover
-          if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.5) signalCount++;
+          // Signal 1: Stress acceleration (raised threshold from 0.5 to 0.8)
+          if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.8) signalCount++;
 
-          // Signal 2: Volatility regime shift (compare to previous month's regime)
+          // Signal 2: Volatility regime shift (only dramatic transitions)
           { const prevMk = `${Math.floor((mYear * 12 + mMonth - 1) / 12)}-${String((mYear * 12 + mMonth - 1) % 12 + 1).padStart(2, "0")}`;
             const prevReg = historicalRegimes[prevMk];
             const volShift = regData?.volRegime !== prevReg?.volRegime;
             const meaningfulShift = volShift && (
               (prevReg?.volRegime === "compression" && regData?.volRegime === "expansion") ||
-              (prevReg?.volRegime === "normal" && regData?.volRegime === "elevated") ||
-              (prevReg?.volRegime === "elevated" && regData?.volRegime === "normal")
-            );
+              (prevReg?.volRegime === "normal" && regData?.volRegime === "elevated")
+            ); // removed elevated→normal (not urgent enough to trade on)
             if (meaningfulShift) signalCount++;
           }
 
-          // Signal 3: VIX inversion
+          // Signal 3: VIX inversion (keep — this is a strong signal)
           if (regData?.vixInversion) signalCount++;
 
-          // Tax-aware threshold: high-tax states need 3 signals, others need 2
-          if (signalCount >= taxSignalThreshold) shouldEvaluate = true;
+          // Raised threshold: need 3 signals regardless of tax state
+          if (signalCount >= 3) shouldEvaluate = true;
         }
 
-        // Quarterly fallback (cooldown in trading days)
-        if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
+        // ── Gate 4: Semi-annual fallback instead of quarterly ──
+        // With daily monitoring catching drawdowns, we don't need quarterly rebalancing
+        if (!shouldEvaluate && mMonth % 6 === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
       } else if (!shouldEvaluate && isNewMonth) {
-        if (mMonth % 3 === 0) shouldEvaluate = true;
+        // No regime data: semi-annual fallback
+        if (mMonth % 6 === 0) shouldEvaluate = true;
       }
 
-      // Tax-aware minimum cooldown between rebalances (in trading days)
-      if (!isFirstAllocation && monthsSinceRebal < taxCooldownDays) shouldEvaluate = false;
+      // ── Minimum cooldown: 3 months (63 trading days) regardless of tax state ──
+      // With daily data, even low-tax states should trade less to let positions mature
+      const minCooldownDays = Math.max(taxCooldownDays, 63);
+      if (!isFirstAllocation && monthsSinceRebal < minCooldownDays) shouldEvaluate = false;
 
       if (!shouldEvaluate) continue;
       // Yield to UI every evaluation to prevent freeze
