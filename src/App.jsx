@@ -1530,9 +1530,9 @@ function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap
  * @param {Object} etfDbMap - ticker → ETF_DB entry
  * @returns {Object} { enriched: trailingStats with factor fields, factorRanks: { sym: { mom, rev, val, qual, lowvol, carry, composite } } }
  */
-function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveWeights) {
+function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveWeights, lookbackPeriods = 12) {
   const syms = Object.keys(trailingStats);
-  if (syms.length < 3 || mIdx < 13) return { enriched: trailingStats, factorRanks: {} };
+  if (syms.length < 3 || mIdx < lookbackPeriods + 1) return { enriched: trailingStats, factorRanks: {} };
 
   const scores = {};
 
@@ -1540,7 +1540,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
     const db = etfDbMap[sym] || {};
     const ts = trailingStats[sym];
     const monthlyRets = [];
-    for (let ti = Math.max(0, mIdx - 12); ti < mIdx; ti++) {
+    for (let ti = Math.max(0, mIdx - lookbackPeriods); ti < mIdx; ti++) {
       const e = returnsByDate[sortedDates[ti]]?.[sym];
       if (e) monthlyRets.push(e.ret);
     }
@@ -4071,11 +4071,11 @@ export default function App() {
 
     let histData = {};
     try {
-      // Fetch in large batches — Yahoo Finance has no rate limit
+      // Fetch in large batches — daily data for precise monitoring
       for (let i = 0; i < allSymbols.length; i += 15) {
         const batch = allSymbols.slice(i, i + 15);
-        setBtProgress(`Fetching batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
-        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31`);
+        setBtProgress(`Fetching daily data batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
+        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31&interval=1d`);
         const json = await resp.json();
         if (json.data) Object.assign(histData, json.data);
       }
@@ -4090,20 +4090,17 @@ export default function App() {
       setBtRunning(false); return;
     }
 
-    setBtProgress(`Processing ${available.length} ETFs...`);
+    setBtProgress(`Processing ${available.length} symbols (daily data)...`);
 
-    // Build monthly returns for each symbol
-    // Pre-index monthly returns by date key for O(1) lookup
-    const monthlyReturns = {};
+    // Build daily returns for each symbol
+    // Pre-index by date key (YYYY-MM-DD) for O(1) lookup
     const returnsByDateSym = {};
     const allDateKeys = new Set();
     for (const sym of available) {
       const prices = histData[sym];
-      monthlyReturns[sym] = [];
       for (let i = 1; i < prices.length; i++) {
-        const dateKey = prices[i].date.slice(0, 7);
+        const dateKey = prices[i].date; // full YYYY-MM-DD
         const entry = { date: prices[i].date, ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close, close: prices[i].close };
-        monthlyReturns[sym].push(entry);
         if (!returnsByDateSym[dateKey]) returnsByDateSym[dateKey] = {};
         returnsByDateSym[dateKey][sym] = entry;
         allDateKeys.add(dateKey);
@@ -4111,12 +4108,16 @@ export default function App() {
     }
     const sortedDates = [...allDateKeys].sort();
     const dateToIdx = {}; sortedDates.forEach((d, i) => { dateToIdx[d] = i; });
+    // Trading days per year (~252) for annualization
+    const TRADING_DAYS_PER_YEAR = 252;
+    // Map each date to its month key (YYYY-MM) for regime data lookup
+    const dateToMonth = (d) => d.slice(0, 7);
 
-    // ═══ MONTHLY MONITORING WITH CONDITIONAL REBALANCING ═══
+    // ═══ DAILY MONITORING WITH CONDITIONAL REBALANCING ═══
     const startCash = btStartCash;
-    const optCurve = [{ date: "2006-01", value: startCash }];
-    const spyCurve = [{ date: "2006-01", value: startCash }];
-    const bal60Curve = [{ date: "2006-01", value: startCash }];
+    const optCurve = [{ date: "2006-01-01", value: startCash }];
+    const spyCurve = [{ date: "2006-01-01", value: startCash }];
+    const bal60Curve = [{ date: "2006-01-01", value: startCash }];
     let optValue = startCash, spyValue = startCash, bal60Value = startCash;
     let optAlloc = {};
     let costBasisMap = {}; // ticker → total dollar cost basis (actual purchase cost)
@@ -4139,9 +4140,13 @@ export default function App() {
     const taxHurdleFloor = isHighTax ? 2.5 : isMedTax ? 2.0 : 1.5; // scale floor with tax rate
     const rebalanceEvents = [];
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
-    // Only simulate months where SPY data actually exists
+    // Only simulate days where SPY data exists
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
-    const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
+    const simDates = sortedDates.filter(d => d >= "2006-01-01" && d <= "2025-12-31" && spyDates.has(d));
+    // Track last evaluated month to avoid re-evaluating the same month multiple times
+    let lastEvalMonth = null;
+    // Convert cooldown from months to trading days (~21 per month)
+    const taxCooldownDays = taxCooldownMonths * 21;
 
     // ── Build regime-duration-return model from historical data ──
     // IMPORTANT: To avoid forward-looking bias, we build this INCREMENTALLY during the backtest.
@@ -4167,28 +4172,34 @@ export default function App() {
     const effectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
 
     for (let mi = 0; mi < simDates.length; mi++) {
-      const monthKey = simDates[mi];
-      const mIdx = dateToIdx[monthKey];
-      const mYear = parseInt(monthKey.slice(0, 4));
-      const mMonth = parseInt(monthKey.slice(5, 7)) - 1;
-      const monthData = returnsByDateSym[monthKey] || {};
+      const dateKey = simDates[mi];
+      const mIdx = dateToIdx[dateKey];
+      const monthKey = dateToMonth(dateKey); // YYYY-MM for regime lookup
+      const mYear = parseInt(dateKey.slice(0, 4));
+      const mMonth = parseInt(dateKey.slice(5, 7)) - 1;
+      const dayData = returnsByDateSym[dateKey] || {};
       try {
 
-      // Step 1: Apply returns
+      // Step 1: Apply daily returns
       if (Object.keys(optAlloc).length > 0) {
-        let optMonthRet = 0;
+        let optDayRet = 0;
         for (const [sym, wt] of Object.entries(optAlloc)) {
-          const md = monthData[sym];
-          if (md) optMonthRet += wt * md.ret;
+          const md = dayData[sym];
+          if (md) optDayRet += wt * md.ret;
         }
-        optValue *= (1 + optMonthRet);
+        optValue *= (1 + optDayRet);
       }
-      const spyMd = monthData["SPY"];
+      const spyMd = dayData["SPY"];
       if (spyMd) spyValue *= (1 + spyMd.ret);
-      bal60Value *= (1 + 0.6 * (monthData["VTI"]?.ret || 0) + 0.4 * (monthData["BND"]?.ret || 0));
-      optCurve.push({ date: monthKey, value: optValue });
-      spyCurve.push({ date: monthKey, value: spyValue });
-      bal60Curve.push({ date: monthKey, value: bal60Value });
+      bal60Value *= (1 + 0.6 * (dayData["VTI"]?.ret || 0) + 0.4 * (dayData["BND"]?.ret || 0));
+      // Record curve at daily granularity (sampled to ~monthly for chart performance)
+      // Always push last trading day of each month + every 5th day for drawdown precision
+      const isMonthEnd = mi + 1 >= simDates.length || dateToMonth(simDates[mi + 1]) !== monthKey;
+      if (isMonthEnd || mi % 5 === 0) {
+        optCurve.push({ date: dateKey, value: optValue });
+        spyCurve.push({ date: dateKey, value: spyValue });
+        bal60Curve.push({ date: dateKey, value: bal60Value });
+      }
 
       // ── Drawdown Controls with Reversal Delay ──
       // KEY: Always apply the scale to ddBaseAlloc (the ORIGINAL optimizer allocation),
@@ -4209,10 +4220,11 @@ export default function App() {
           }
         }
 
-        // Find highest CONFIRMED level (counter >= required confirmation months)
+        // Find highest CONFIRMED level (counter >= required confirmation in trading days)
+        // confirmationMonths × 21 trading days per month
         let confirmedLevel = -1;
         for (let lvl = DRAWDOWN_LEVELS.length - 1; lvl >= 0; lvl--) {
-          if (ddCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths) {
+          if (ddCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths * 21) {
             confirmedLevel = lvl; break;
           }
         }
@@ -4232,8 +4244,8 @@ export default function App() {
           const activeThreshold = DRAWDOWN_LEVELS[ddActiveLevel].threshold;
           if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
             ddRecoveryMonths++;
-            // Linear re-entry over 3 months back to full equity
-            ddEquityScale = Math.min(1.0, ddEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[ddActiveLevel].equityReduction)) / 3);
+            // Linear re-entry over ~63 trading days (3 months) back to full equity
+            ddEquityScale = Math.min(1.0, ddEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[ddActiveLevel].equityReduction)) / 63);
             if (ddEquityScale >= 0.98) {
               ddEquityScale = 1.0;
               ddActiveLevel = -1;
@@ -4291,9 +4303,14 @@ export default function App() {
         if (regData) {
           btState5 = regData.state5 || null; btRegimeScore = regData.score; btAcceleration = regData.acceleration ?? null;
           const regime3 = regData.regime; btDuration = 1;
-          for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
-            const prev = historicalRegimes[sortedDates[mIdx - lb]];
-            if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
+          // Walk back by MONTH (regime data is monthly) to compute duration
+          { const curMonthNum = mYear * 12 + mMonth;
+            for (let lb = 1; lb <= 36; lb++) {
+              const prevM = curMonthNum - lb;
+              const prevMk = `${Math.floor(prevM / 12)}-${String(prevM % 12 + 1).padStart(2, "0")}`;
+              const prev = historicalRegimes[prevMk];
+              if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
+            }
           }
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
             threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx),
@@ -4315,29 +4332,38 @@ export default function App() {
               }
               btRegime.hmmState5 = hmmState5;
               btRegime.hmmProbs = ensProbs;
-              // Detect regime change from HMM perspective too
-              const prevMonth = mi > 0 ? simDates[mi - 1] : null;
-              if (prevMonth && btHmmEnsembleMap[prevMonth]) {
-                const prevHmmState = hmmToState5(btHmmEnsembleMap[prevMonth]);
+              // Detect regime change from HMM perspective too (compare current month to prev month)
+              const curMonthNum2 = mYear * 12 + mMonth;
+              const prevMonthKey = `${Math.floor((curMonthNum2 - 1) / 12)}-${String((curMonthNum2 - 1) % 12 + 1).padStart(2, "0")}`;
+              if (btHmmEnsembleMap[prevMonthKey]) {
+                const prevHmmState = hmmToState5(btHmmEnsembleMap[prevMonthKey]);
                 if (prevHmmState !== hmmState5) regimeChanged = true;
               }
           }
         }
       }
       // ── Tax-aware signal-driven rebalance triggers ──
-      // High-tax states need stronger confirmation to justify the tax drag
+      // Only evaluate at month boundaries (first trading day of new month) to avoid daily churn
+      // Exception: first allocation always evaluates immediately
+      const isNewMonth = monthKey !== lastEvalMonth;
+      if (isNewMonth) lastEvalMonth = monthKey;
+
       let shouldEvaluate = isFirstAllocation;
 
-      if (!shouldEvaluate && useRegime && historicalRegimes) {
+      if (!shouldEvaluate && isNewMonth && useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
 
         // Regime change is strong enough to trigger alone (even in high-tax states)
         if (regimeChanged) shouldEvaluate = true;
 
         // Three-stage pattern prediction: fires alone if confidence >= 55%
+        // Note: computeThreeStagePredict expects monthly regime data and monthly index
         if (!shouldEvaluate && !isFirstAllocation) {
-          const threeStagePredict = computeThreeStagePredict(historicalRegimes, sortedDates, mIdx);
-          if (threeStagePredict?.shouldTrigger && monthsSinceRebal >= taxCooldownMonths) {
+          // Build monthly index from regime data for three-stage prediction
+          const regEntries = Object.keys(historicalRegimes).sort();
+          const regMonthIdx = regEntries.indexOf(monthKey);
+          const threeStagePredict = regMonthIdx >= 0 ? computeThreeStagePredict(historicalRegimes, regEntries, regMonthIdx) : null;
+          if (threeStagePredict?.shouldTrigger && monthsSinceRebal >= taxCooldownDays) {
             shouldEvaluate = true;
             // Store for logging in rebalance events
             if (btRegime) btRegime.threeStagePredict = threeStagePredict;
@@ -4351,9 +4377,9 @@ export default function App() {
           // Signal 1: Stress acceleration crossover
           if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.5) signalCount++;
 
-          // Signal 2: Volatility regime shift (only meaningful transitions)
-          if (mi > 0) {
-            const prevReg = historicalRegimes[simDates[mi - 1]];
+          // Signal 2: Volatility regime shift (compare to previous month's regime)
+          { const prevMk = `${Math.floor((mYear * 12 + mMonth - 1) / 12)}-${String((mYear * 12 + mMonth - 1) % 12 + 1).padStart(2, "0")}`;
+            const prevReg = historicalRegimes[prevMk];
             const volShift = regData?.volRegime !== prevReg?.volRegime;
             const meaningfulShift = volShift && (
               (prevReg?.volRegime === "compression" && regData?.volRegime === "expansion") ||
@@ -4370,58 +4396,53 @@ export default function App() {
           if (signalCount >= taxSignalThreshold) shouldEvaluate = true;
         }
 
-        // Quarterly fallback (cooldown scales with tax rate)
-        if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= taxCooldownMonths) shouldEvaluate = true;
-      } else if (!shouldEvaluate) {
+        // Quarterly fallback (cooldown in trading days)
+        if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
+      } else if (!shouldEvaluate && isNewMonth) {
         if (mMonth % 3 === 0) shouldEvaluate = true;
       }
 
-      // Tax-aware minimum cooldown between rebalances
-      if (!isFirstAllocation && monthsSinceRebal < taxCooldownMonths) shouldEvaluate = false;
+      // Tax-aware minimum cooldown between rebalances (in trading days)
+      if (!isFirstAllocation && monthsSinceRebal < taxCooldownDays) shouldEvaluate = false;
 
       if (!shouldEvaluate) continue;
       // Yield to UI every evaluation to prevent freeze
-      setBtProgress(`Evaluating ${monthKey}...`);
+      setBtProgress(`Evaluating ${dateKey}...`);
       await new Promise(r => setTimeout(r, 0));
 
       // Step 3: Trailing stats with RECENCY WEIGHTING + RETURN SHRINKAGE
-      // ── Vol-derived momentum decay ──
-      // Instead of hardcoded regime→decay mapping, derive from trailing SPY volatility.
-      // Higher vol → more noise → slower decay (use more data). Lower vol → cleaner signal → faster decay.
-      let trailingSPYVol = 15; // fallback
+      // All windows now in trading days (~252/year, ~21/month)
+      // ── Vol-derived momentum decay from trailing SPY vol (1 year of daily data) ──
+      let trailingSPYVol = 15;
       { const spyRets = [];
-        for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) {
+        for (let rv = Math.max(0, mIdx - TRADING_DAYS_PER_YEAR); rv < mIdx; rv++) {
           const r = returnsByDateSym[sortedDates[rv]]?.["SPY"];
           if (r) spyRets.push(r.ret);
         }
-        if (spyRets.length >= 6) {
+        if (spyRets.length >= 60) {
           const avg = spyRets.reduce((s, r) => s + r, 0) / spyRets.length;
-          trailingSPYVol = Math.sqrt(spyRets.reduce((s, r) => s + (r - avg) ** 2, 0) / spyRets.length) * Math.sqrt(12) * 100;
+          trailingSPYVol = Math.sqrt(spyRets.reduce((s, r) => s + (r - avg) ** 2, 0) / spyRets.length) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
         }
       }
-      // Map: vol 10% → decay 0.10 (fast), vol 20% → 0.07, vol 30% → 0.04 (slow)
       const momDecay = Math.max(0.02, Math.min(0.12, 0.13 - trailingSPYVol * 0.003));
 
-      // ── Adaptive trailing window ──
-      // Low-vol regimes: shorter window (24mo) to avoid stale crash data inflating vol
-      // High-vol regimes: keep full window (48mo) since elevated vol is real
+      // ── Adaptive trailing window (in trading days) ──
       const regData = historicalRegimes?.[monthKey];
       const volRegime = regData?.volRegime || "normal";
-      const adaptiveTrailMonths = walkForward
-        ? (volRegime === "normal" || volRegime === "compression" ? 24 : 48)
-        : 12;
+      const adaptiveTrailDays = walkForward
+        ? (volRegime === "normal" || volRegime === "compression" ? 504 : 1008) // 24mo or 48mo in trading days
+        : TRADING_DAYS_PER_YEAR; // 1 year
 
-      // ── Adaptive shrinkage: compute from raw returns before applying shrinkage ──
-      // Quick scan of raw annualized returns to get cross-sectional distribution
+      // ── Adaptive shrinkage: scan raw returns (1 year of daily data, annualized) ──
       const rawReturnsForShrink = [];
-      const quickTrailStart = Math.max(0, mIdx - 12);
+      const quickTrailStart = Math.max(0, mIdx - TRADING_DAYS_PER_YEAR);
       for (const sym of available) {
         let qWR = 0, qW = 0, qCnt = 0;
         for (let ti = quickTrailStart; ti < mIdx; ti++) {
           const e = returnsByDateSym[sortedDates[ti]]?.[sym];
           if (e) { const age = mIdx - 1 - ti; const w = Math.exp(-momDecay * age); qWR += w * e.ret; qW += w; qCnt++; }
         }
-        if (qCnt >= 6) rawReturnsForShrink.push(Math.abs((qWR / qW) * 12 * 100));
+        if (qCnt >= 60) rawReturnsForShrink.push(Math.abs((qWR / qW) * TRADING_DAYS_PER_YEAR * 100));
       }
       // Compute adaptive shrinkage thresholds from return distribution
       const shrinkParams = rawReturnsForShrink.length >= 20 ? (() => {
@@ -4431,7 +4452,7 @@ export default function App() {
       })() : null;
 
       const trailingStats = {};
-      const trailStart = Math.max(0, mIdx - adaptiveTrailMonths);
+      const trailStart = Math.max(0, mIdx - adaptiveTrailDays);
       for (const sym of available) {
         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
         for (let ti = trailStart; ti < mIdx; ti++) {
@@ -4446,13 +4467,15 @@ export default function App() {
             count++;
           }
         }
-        if (count < 6) continue;
-        const wAvgMo = sumWRet / sumW;
-        const rawR = wAvgMo * 12 * 100;
+        if (count < 60) continue; // need at least ~3 months of daily data
+        const wAvgDay = sumWRet / sumW;
+        // Annualize: daily weighted avg return × 252 trading days
+        const rawR = wAvgDay * TRADING_DAYS_PER_YEAR * 100;
         const db = etfDbMap[sym];
         const isStk = db?.type === "stock";
         const shrunkR = shrinkReturn(rawR, isStk, btState5, shrinkParams);
-        const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
+        // Annualize daily vol: std(daily returns) × sqrt(252)
+        const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100, 1);
         trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null, type: db?.type || "etf", ipo: db?.ipo };
       }
       const isBullish = btState5 && (btState5.includes("risk_on"));
@@ -4461,7 +4484,8 @@ export default function App() {
       const returnFloor = isBullish ? -50 : -80;
 
       // ── Compute multi-factor scores (with adaptive IC-based weights if available) ──
-      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveFactorWeights);
+      // Use 252 trading days lookback for daily data
+      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveFactorWeights, TRADING_DAYS_PER_YEAR);
 
       // ── Compute relative value signals ──
       const relValSignals = computeRelativeValue(returnsByDateSym, sortedDates, mIdx, trailingStats);
@@ -4472,20 +4496,21 @@ export default function App() {
       // ── Compute realized portfolio vol for dynamic vol targeting ──
       if (btRegime && Object.keys(optAlloc).length > 0) {
         let portVarSum = 0;
+        // Compute realized portfolio vol from trailing ~126 trading days (6 months) of daily returns
         const recentRets = [];
-        for (let rv = Math.max(0, mIdx - 6); rv < mIdx; rv++) {
+        for (let rv = Math.max(0, mIdx - 126); rv < mIdx; rv++) {
           const md = returnsByDateSym[sortedDates[rv]];
           if (!md) continue;
-          let mRet = 0;
+          let dRet = 0;
           for (const [sym, wt] of Object.entries(optAlloc)) {
-            if (md[sym]) mRet += wt * md[sym].ret;
+            if (md[sym]) dRet += wt * md[sym].ret;
           }
-          recentRets.push(mRet);
+          recentRets.push(dRet);
         }
-        if (recentRets.length >= 3) {
+        if (recentRets.length >= 30) {
           const rm = recentRets.reduce((a, b) => a + b, 0) / recentRets.length;
           const rv = recentRets.reduce((a, r) => a + (r - rm) ** 2, 0) / recentRets.length;
-          btRegime.realizedVol = Math.sqrt(rv) * Math.sqrt(12) * 100; // annualized
+          btRegime.realizedVol = Math.sqrt(rv) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
         }
       }
 
@@ -4584,7 +4609,7 @@ export default function App() {
 
       // Step 6: Tax cost with loss offset
       const allTkrs = [...new Set([...prevTickers, ...Object.keys(newAlloc)])];
-      const monthPrices = returnsByDateSym[monthKey] || {};
+      const monthPrices = returnsByDateSym[dateKey] || {};
       const trades = allTkrs.map(ticker => {
         const ow = prevAlloc[ticker] || 0, nw = newAlloc[ticker] || 0, ch = nw - ow;
         if (Math.abs(ch) < 0.005) return null;
@@ -4628,9 +4653,10 @@ export default function App() {
         const positionCostBasis = costBasisMap[ticker] || 0;
         const soldCostBasis = positionCostBasis * proportionSold;
         const gl = sellProceeds - soldCostBasis;
-        // Per-position holding period: months since position was established
+        // Per-position holding period: convert trading days to months (~21 trading days/month)
         const estMonth = posEstablishedMap[ticker];
-        const posHoldingMonths = estMonth ? (dateToIdx[monthKey] - dateToIdx[estMonth]) : monthsSinceRebal;
+        const posHoldingDays = estMonth ? (dateToIdx[dateKey] - (dateToIdx[estMonth] || 0)) : monthsSinceRebal;
+        const posHoldingMonths = Math.floor(posHoldingDays / 21);
         const isLongTerm = posHoldingMonths >= 12;
         if (gl > 0) { grossGains += gl; if (isLongTerm) ltGains += gl; else stGains += gl; }
         else grossLosses += Math.abs(gl);
@@ -4685,7 +4711,7 @@ export default function App() {
       for (const ticker of prevTickers) {
         const estMonth = posEstablishedMap[ticker];
         if (estMonth) {
-          const holdingMonths = dateToIdx[monthKey] - dateToIdx[estMonth];
+          const holdingMonths = Math.floor((dateToIdx[dateKey] - (dateToIdx[estMonth] || 0)) / 21);
           // If 9-11 months held (close to LT), add significant hurdle penalty for selling
           if (holdingMonths >= 9 && holdingMonths < 12) {
             const wt = prevAlloc[ticker] || 0;
@@ -4712,7 +4738,7 @@ export default function App() {
 
         // ── Update cost basis, shares, and cost-per-share maps ──
         const newCostBasis = {}, newShares = {}, newCostPerShare = {}, newPosEstablished = {};
-        const monthPrices2 = returnsByDateSym[monthKey] || {};
+        const monthPrices2 = returnsByDateSym[dateKey] || {};
         for (const [ticker, newWt] of Object.entries(newAlloc)) {
           if (newWt <= 0.005) continue;
           const closePrice = monthPrices2[ticker]?.close || 0;
@@ -4723,14 +4749,14 @@ export default function App() {
             newCostBasis[ticker] = dollars;
             newShares[ticker] = closePrice > 0 ? dollars / closePrice : 0;
             newCostPerShare[ticker] = closePrice;
-            newPosEstablished[ticker] = monthKey; // track when position was established
+            newPosEstablished[ticker] = dateKey; // track when position was established
           } else if (newWt <= oldWt) {
             // Reduced/kept position: proportional
             const proportionKept = newWt / oldWt;
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) * proportionKept;
             newShares[ticker] = (sharesMap[ticker] || 0) * proportionKept;
             newCostPerShare[ticker] = costPerShareMap[ticker] || closePrice;
-            newPosEstablished[ticker] = posEstablishedMap[ticker] || monthKey; // preserve original establishment date
+            newPosEstablished[ticker] = posEstablishedMap[ticker] || dateKey; // preserve original establishment date
           } else {
             // Increased position: old basis + new at current price
             const addedWt = newWt - oldWt;
@@ -4741,16 +4767,16 @@ export default function App() {
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) + addedDollars;
             newShares[ticker] = totalShares;
             newCostPerShare[ticker] = totalShares > 0 ? newCostBasis[ticker] / totalShares : closePrice;
-            newPosEstablished[ticker] = monthKey; // reset establishment date (new lot at higher cost)
+            newPosEstablished[ticker] = dateKey; // reset establishment date (new lot at higher cost)
           }
         }
 
-        optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
+        optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = dateKey;
         ddBaseAlloc = { ...newAlloc }; // reset drawdown base to fresh optimizer output
         ddPeak = Math.max(ddPeak, optValue); // update peak after rebalance
         costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
         lossCarryover = newCarryover;
-        rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => {
+        rebalanceEvents.push({ date: dateKey, decision: "REBALANCE", holdings: result.map(r => {
           const wt = newAlloc[r.ticker] || 0;
           const posValue = Math.round(wt * optValue);
           const posCostBasis = Math.round(newCostBasis[r.ticker] || 0);
@@ -4810,10 +4836,11 @@ export default function App() {
       // ── Compute accurate year-end holdings with drifted weights ──
       // Holdings weights drift between rebalances as prices move.
       // Compute actual year-end weights by applying monthly returns since rebalance.
+      // Find last trading day of this year in the daily data
       let yearEndDateKey = null;
-      for (let m = 12; m >= 1; m--) {
-        const mk = `${year}-${String(m).padStart(2, "0")}`;
-        if (returnsByDateSym[mk]) { yearEndDateKey = mk; break; }
+      const yearPrefix = String(year);
+      for (let di = sortedDates.length - 1; di >= 0; di--) {
+        if (sortedDates[di].startsWith(yearPrefix)) { yearEndDateKey = sortedDates[di]; break; }
       }
       const yearEndPrices = yearEndDateKey ? returnsByDateSym[yearEndDateKey] : {};
 
@@ -4936,14 +4963,17 @@ export default function App() {
       return maxDD * 100;
     };
 
-    // Volatility from monthly returns
+    // Volatility from curve returns (auto-detect frequency from data spacing)
     const calcVol = (curve) => {
       const rets = [];
       for (let i = 1; i < curve.length; i++) rets.push(curve[i].value / curve[i-1].value - 1);
       if (rets.length < 2) return 0;
       const avg = rets.reduce((s, r) => s + r, 0) / rets.length;
       const v = rets.reduce((s, r) => s + (r - avg) ** 2, 0) / (rets.length - 1);
-      return Math.sqrt(v) * Math.sqrt(12) * 100;
+      // Estimate periods per year from data density
+      const numYears = curve.length > 1 ? (new Date(curve[curve.length-1].date) - new Date(curve[0].date)) / (365.25 * 86400000) : 1;
+      const periodsPerYear = numYears > 0 ? rets.length / numYears : 12;
+      return Math.sqrt(v) * Math.sqrt(periodsPerYear) * 100;
     };
 
     const optVol = calcVol(optCurve);
