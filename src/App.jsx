@@ -1420,7 +1420,7 @@ function hmmToState5(probs) {
 function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap, lookback = 36) {
   if (mIdx < lookback + 12) return null; // need at least lookback + 12mo for factor computation
 
-  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry"];
+  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
   const ics = {};
   for (const f of factors) ics[f] = [];
 
@@ -1458,7 +1458,24 @@ function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap
         qual: (monthlyRets.reduce((a, b) => a + b, 0) > 0 ? 2 : 0) + 1 / (1 + (db.er || 0.1)),
         lowvol: 1 / (Math.sqrt(monthlyRets.reduce((s, r) => s + r * r, 0) / monthlyRets.length) || 0.01),
         carry: db.d || 0,
+        csRev: 0, // placeholder, computed below
       };
+    }
+
+    // Cross-sectional demeaned reversal for IC computation
+    const icCatGroups = {};
+    const scoredSymsAll = syms.filter(s => scores[s]);
+    for (const sym of scoredSymsAll) {
+      const cat = etfDbMap[sym]?.c || "Unknown";
+      if (!icCatGroups[cat]) icCatGroups[cat] = [];
+      icCatGroups[cat].push({ sym, r: scores[sym].mom12_1 });
+    }
+    for (const sym of scoredSymsAll) {
+      const cat = etfDbMap[sym]?.c || "Unknown";
+      const group = icCatGroups[cat];
+      if (group.length < 2) continue;
+      const avg = group.reduce((s, g) => s + g.r, 0) / group.length;
+      scores[sym].csRev = -(scores[sym].mom12_1 - avg);
     }
 
     const scoredSyms = syms.filter(s => scores[s]);
@@ -1527,7 +1544,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
       const e = returnsByDate[sortedDates[ti]]?.[sym];
       if (e) monthlyRets.push(e.ret);
     }
-    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0 }; continue; }
+    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0, csRev: 0 }; continue; }
 
     // ── 1. Momentum (12-1): skip most recent month to avoid reversal ──
     const mom12_1raw = monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0) * 100;
@@ -1551,11 +1568,30 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
     if (cat.includes("bond") || cat.includes("treasury")) carry = (ts.d || 0) + 1.5; // bond carry premium
     if (cat.includes("commodity")) carry = Math.max(0, carry - 0.5); // commodity roll cost
 
-    scores[sym] = { mom12_1: mom12_1raw, rev1m, val, qual, lowvol, carry };
+    scores[sym] = { mom12_1: mom12_1raw, rev1m, val, qual, lowvol, carry, csRev: 0 };
+  }
+
+  // ── 7. Cross-sectional demeaned reversal (Kakushadze §3.9) ──
+  // Group assets by category, compute category-average trailing return,
+  // then each asset's score = -(asset return - category avg return)
+  // Negative sign because underperformers relative to peers are expected to revert UP
+  const catGroups = {};
+  for (const sym of syms) {
+    const cat = trailingStats[sym]?.c || "Unknown";
+    if (!catGroups[cat]) catGroups[cat] = [];
+    catGroups[cat].push({ sym, r: trailingStats[sym]?.r || 0 });
+  }
+  for (const sym of syms) {
+    if (!scores[sym]) continue;
+    const cat = trailingStats[sym]?.c || "Unknown";
+    const group = catGroups[cat];
+    if (group.length < 2) { scores[sym].csRev = 0; continue; }
+    const catAvg = group.reduce((s, g) => s + g.r, 0) / group.length;
+    scores[sym].csRev = -((trailingStats[sym]?.r || 0) - catAvg);
   }
 
   // ── Cross-sectional percentile ranking (0-1) for each factor ──
-  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry"];
+  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
   const ranks = {};
 
   for (const f of factors) {
@@ -1568,7 +1604,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
 
   // ── Composite factor score (weighted blend) ──
   // Use adaptive IC-based weights if available, otherwise hardcoded defaults
-  const defaultFactorWeights = { mom12_1: 0.30, rev1m: 0.10, val: 0.15, qual: 0.15, lowvol: 0.15, carry: 0.15 };
+  const defaultFactorWeights = { mom12_1: 0.25, rev1m: 0.10, val: 0.15, qual: 0.12, lowvol: 0.13, carry: 0.15, csRev: 0.10 };
   const factorWeights = adaptiveWeights || defaultFactorWeights;
   for (const sym of syms) {
     let composite = 0;
