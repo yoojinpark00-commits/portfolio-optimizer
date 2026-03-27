@@ -308,28 +308,21 @@ function shrinkToForward(trailing, vol) {
   return Math.max(3, Math.min(18, fwd));
 }
 
-// ── Return Shrinkage: dampen extreme trailing returns to reduce momentum bias ──
-// A stock that returned 200% last year almost never repeats — mean reversion dominates.
-// This blends extreme returns toward a cap, preventing any single stock from dominating
-// the Sharpe pre-filter purely on trailing momentum.
-// For stocks: cap at 80% annualized, keep 20% of excess above cap
-// For ETFs: cap at 120% annualized (ETFs are diversified, more sustainable momentum)
-function shrinkReturn(r, isStock) {
-  // Progressive shrinkage: starts light at threshold, increases with magnitude
-  // ETFs: shrink above 25% annualized, Stocks: shrink above 20%
-  // Formula: beyond threshold, keep diminishing fraction via log-style compression
-  // This prevents the momentum signal from being dominated by recent rockets
-  // while still allowing moderate momentum to express
-  const threshold = isStock ? 20 : 25;    // where shrinkage begins
-  const hardCap = isStock ? 60 : 80;      // absolute max after shrinkage
-  const sign = r >= 0 ? 1 : -1;
-  const absR = Math.abs(r);
-  if (absR <= threshold) return r;
-  // Progressive: keep 60% of the next 25%, then 30% beyond that
-  const tier1 = Math.min(absR - threshold, 25) * 0.60;
-  const tier2 = Math.max(0, absR - threshold - 25) * 0.30;
-  const shrunk = threshold + tier1 + tier2;
-  return sign * Math.min(shrunk, hardCap);
+// ── Vol-Normalized Returns (Kakushadze & Serur §3.1, Eq. 269) ──
+// Risk-adjusted momentum: R_risk.adj = R_mean / σ
+// This naturally dampens extreme trailing returns from high-vol assets,
+// making momentum signals comparable across assets with very different
+// volatility profiles (e.g., ARKK at 38% vol vs XLP at 11.5%).
+// Replaces the prior tiered shrinkage heuristic and momentum crash filter.
+function volNormalizedReturn(r, vol) {
+  const sigma = Math.max(vol, 1); // floor vol at 1% to avoid division issues
+  // Scale risk-adjusted return back to comparable magnitude
+  // Multiply by reference vol (15%) so the output is in familiar return units
+  const REF_VOL = 15;
+  const riskAdj = (r / sigma) * REF_VOL;
+  // Light cap at ±60% to prevent extreme outliers, but vol-normalization
+  // handles most cases naturally without arbitrary thresholds
+  return Math.max(-60, Math.min(60, riskAdj));
 }
 const PAL=["#42be65","#78a9ff","#ff7eb6","#ffab91","#be95ff","#82cfff","#08bdba","#ff8389","#33b1ff","#d4bbff"];
 
@@ -1114,98 +1107,47 @@ function computeThreeStagePredict(historicalRegimes, sortedDates, mIdx) {
   };
 }
 
-// ── Three-Stage Regime Context ──
-// Tracks the pattern: prevRegime → bridgeRegime → currentRegime
-// This distinguishes: bull→neutral(1m)→bull (brief pause) from bear→neutral(3m)→bull (genuine reversal)
+// ── Simple Regime Transition Context ──
+// Simplified from the prior three-stage pattern detector. Tracks only the
+// most recent transition (prevRegime → currentRegime) and duration.
+// The three-stage system had too many hand-tuned parameters (bridge duration
+// thresholds, pattern-specific signal strengths, fade schedules) that were
+// prone to overfitting. The optimizer still gets regime transition info
+// via the two-stage fallback in optimizeCash().
 function computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) {
   if (!historicalRegimes || mIdx < 3) return null;
   const dateKey = sortedDates[mIdx];
   const current = historicalRegimes[dateKey];
   if (!current) return null;
 
-  const curRegime = current.regime; // bull/neutral/bear (3-state)
+  const curRegime = current.regime;
 
-  // Walk backward to find: current run → bridge regime → previous regime
+  // Compute current regime duration
   let curDuration = 1;
-  let bridgeRegime = null, bridgeDuration = 0;
-  let prevRegime = null, prevDuration = 0;
-  let phase = "current"; // current → bridge → prev
-
-  for (let lb = 1; lb <= 60 && mIdx - lb >= 0; lb++) {
+  for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
     const prev = historicalRegimes[sortedDates[mIdx - lb]];
-    if (!prev) continue;
-    const r = prev.regime;
-
-    if (phase === "current") {
-      if (r === curRegime) { curDuration++; }
-      else { bridgeRegime = r; bridgeDuration = 1; phase = "bridge"; }
-    } else if (phase === "bridge") {
-      if (r === bridgeRegime) { bridgeDuration++; }
-      else { prevRegime = r; prevDuration = 1; phase = "prev"; }
-    } else if (phase === "prev") {
-      if (r === prevRegime) { prevDuration++; }
-      else break; // found all three stages
-    }
+    if (prev && prev.regime === curRegime) curDuration++;
+    else break;
   }
 
-  if (!bridgeRegime) return null; // no transition found (been in same regime entire history)
-
-  // Classify the pattern
-  let patternType, patternSignal;
-  const fullPattern = `${prevRegime || "?"}→${bridgeRegime}→${curRegime}`;
-
-  if (prevRegime === curRegime) {
-    // Same regime before and after the bridge
-    if (bridgeDuration <= 2) {
-      patternType = "continuation_brief"; // brief pause, resume — treat as extended run
-      patternSignal = 0; // no special signal, just extend duration
-    } else if (bridgeDuration <= 6) {
-      patternType = "continuation_extended"; // consolidation then re-entry
-      patternSignal = curRegime === "bull" ? 0.03 : curRegime === "bear" ? -0.03 : 0;
-    } else {
-      patternType = "consolidation_reset"; // long pause = fresh start, don't extend duration
-      patternSignal = 0;
-    }
-  } else if (prevRegime && prevRegime !== curRegime) {
-    // Different regime — genuine reversal
-    if (prevRegime === "bear" && curRegime === "bull") {
-      patternType = "reversal_bear_to_bull";
-      patternSignal = bridgeDuration <= 3 ? 0.10 : bridgeDuration <= 6 ? 0.06 : 0.03; // shorter bridge = sharper reversal = stronger signal
-    } else if (prevRegime === "bull" && curRegime === "bear") {
-      patternType = "reversal_bull_to_bear";
-      patternSignal = bridgeDuration <= 3 ? -0.10 : bridgeDuration <= 6 ? -0.06 : -0.03;
-    } else if (prevRegime === "bear" && curRegime === "neutral") {
-      patternType = "recovery_emerging";
-      patternSignal = 0.04; // cautious optimism
-    } else if (prevRegime === "bull" && curRegime === "neutral") {
-      patternType = "topping_emerging";
-      patternSignal = -0.04; // cautious pessimism
-    } else {
-      patternType = "transition";
-      patternSignal = 0;
-    }
-  } else {
-    patternType = "unknown";
-    patternSignal = 0;
+  // Find previous regime
+  let prevRegime = null;
+  const prevStart = mIdx - curDuration;
+  if (prevStart >= 0) {
+    const prevReg = historicalRegimes[sortedDates[prevStart]];
+    if (prevReg) prevRegime = prevReg.regime;
   }
 
-  // For continuation patterns with brief bridge, compute effective duration
-  // bull(12m) → neutral(1m) → bull(3m) should feel like bull for ~15 months, not 3
-  let effectiveDuration = curDuration;
-  if (patternType === "continuation_brief" && prevDuration > 0) {
-    effectiveDuration = curDuration + bridgeDuration + prevDuration; // full run including bridge
-  } else if (patternType === "continuation_extended") {
-    effectiveDuration = curDuration + Math.floor(prevDuration * 0.5); // partial credit for pre-bridge
-  }
+  if (!prevRegime || prevRegime === curRegime) return null;
 
   return {
-    pattern: fullPattern,
-    patternType,
-    patternSignal, // additional tilt adjustment
-    prevRegime, prevDuration,
-    bridgeRegime, bridgeDuration,
+    pattern: `${prevRegime}→${curRegime}`,
+    patternType: "transition",
+    patternSignal: 0, // no pattern-based signal — let the optimizer's transition logic handle tilts
+    prevRegime, prevDuration: 0,
+    bridgeRegime: null, bridgeDuration: 0,
     currentRegime: curRegime, currentDuration: curDuration,
-    effectiveDuration, // used instead of raw duration for tilt scaling
+    effectiveDuration: curDuration,
   };
 }
 
@@ -1451,18 +1393,21 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
 }
 
 /**
- * Black-Litterman expected return adjustment.
- * Blends equilibrium (market-cap-implied) returns with factor-based "views".
+ * Inverse-volatility blended expected returns (inspired by Kakushadze §3.6).
+ *
+ * Instead of a fixed 70/30 momentum/equilibrium blend, the weight on
+ * equilibrium scales with each asset's volatility: high-vol assets get
+ * more shrinkage toward equilibrium (their trailing returns are noisier),
+ * low-vol assets keep more of their trailing signal.
  *
  * @param {Object[]} candidates - array of { r, v, d, factorScore, ... }
- * @param {number} tau - uncertainty scaling (default 0.05)
  * @returns {number[]} Adjusted expected returns per candidate
  */
-function blackLittermanReturns(candidates, tau = 0.05) {
+function blackLittermanReturns(candidates) {
   const n = candidates.length;
   if (n === 0) return [];
 
-  // Equilibrium returns: CAPM-style, proportional to vol (higher vol → higher expected return)
+  // Equilibrium returns: CAPM-style, proportional to beta
   const avgRet = candidates.reduce((s, c) => s + c.r, 0) / n;
   const avgVol = candidates.reduce((s, c) => s + c.v, 0) / n;
   const eqReturns = candidates.map(c => {
@@ -1470,18 +1415,20 @@ function blackLittermanReturns(candidates, tau = 0.05) {
     return RF + beta * (avgRet - RF);
   });
 
-  // Views: factor score implies a view on relative performance
-  // factorScore > 0.5 → bullish view, < 0.5 → bearish view
-  const blReturns = candidates.map((c, i) => {
-    const eq = eqReturns[i];
+  // Factor view adjustment (if available)
+  const viewAdj = candidates.map(c => {
     const fs = c.factorScore ?? 0.5;
-    // View: deviation from equilibrium proportional to factor score extremity
     const viewStrength = (fs - 0.5) * 2; // -1 to +1
-    const view = eq + viewStrength * avgVol * 0.5; // scale view by average vol
-    // Blend: tau controls how much views dominate vs equilibrium
-    // Higher tau → more weight on views
-    const conf = Math.abs(viewStrength) * 0.8 + 0.2; // confidence increases with factor extremity
-    return eq * (1 - tau * conf) + view * tau * conf;
+    return viewStrength * avgVol * 0.3;
+  });
+
+  // Inverse-vol blending: w_eq = σ_i / (σ_i + σ_ref)
+  // High-vol → more equilibrium weight; low-vol → more trailing weight
+  const REF_VOL = avgVol || 15;
+  const blReturns = candidates.map((c, i) => {
+    const eqWeight = c.v / (c.v + REF_VOL); // ~0.5 at avg vol, higher for high-vol
+    const eq = eqReturns[i] + viewAdj[i];
+    return c.r * (1 - eqWeight) + eq * eqWeight;
   });
 
   return blReturns;
@@ -1750,14 +1697,9 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     }
   }
 
+  // Simple transition bonus: bear→bull/neutral recovery signal
   let entryBonus = 0;
-  // Three-stage pattern signal overrides simple transition when available
-  if (threeStage && threeStage.patternSignal !== 0) {
-    entryBonus = threeStage.patternSignal;
-    // Scale by how fresh the current stage is (strongest in months 1-6)
-    if (threeStage.currentDuration > 8) entryBonus *= 0.5; // fade after 8 months
-  } else if (transition) {
-    // Fallback: simple two-stage transition (backward compat)
+  if (transition) {
     const [from, to] = transition.includes("→") ? transition.split("→") : [null, null];
     if (from === "bear" && (to === "bull" || to === "neutral") && duration >= 2 && duration <= 8) entryBonus = 0.08;
     else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) entryBonus = 0.04;
@@ -1772,7 +1714,6 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1.15 : 1.0);
   // Entry bonus reaches aggressive categories in ANY state (including neutral after bear→neutral recovery)
   const aggBonus = (baseAggBonus * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
-  const kellyMult = baseKellyMult;
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
@@ -1804,20 +1745,16 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
     let baseRet = (c.lev && Math.abs(c.lev) > 1) ? getAdjustedReturn(c.r, c.v, c.lev) : c.r;
-    // Black-Litterman blend: 70% trailing (momentum), 30% BL equilibrium+views
-    if (blReturns) baseRet = baseRet * 0.70 + blReturns[i] * 0.30;
+    // Inverse-vol blended returns: high-vol assets shrink more toward equilibrium
+    if (blReturns) baseRet = blReturns[i];
     adjRet[i] = baseRet;
     volArr[i] = c.v / 100;
     isLev[i] = (c.lev && Math.abs(c.lev) > 1) ? 1 : 0;
   }
 
-  // ── Momentum crash filter: dampen extreme momentum when crowded ──
-  let extremeMomCount = 0;
-  for (let i = 0; i < n; i++) { if (adjRet[i] > 18) extremeMomCount++; }
-  if (extremeMomCount / n > 0.4) {
-    const momDampen = 0.85;
-    for (let i = 0; i < n; i++) { if (adjRet[i] > 18) adjRet[i] *= momDampen; }
-  }
+  // Note: Momentum crash filter removed — vol-normalized returns (R/σ)
+  // naturally compress extreme momentum from high-vol assets, making the
+  // separate crash filter redundant. See Kakushadze & Serur §3.1 Eq. 269.
 
   // ── Pre-compute relative value signals if available ──
   const relValSignals = new Float64Array(n);
@@ -1837,8 +1774,11 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     dynVolScale = dynamicVolScale(regimeCtx.realizedVol, volTarget);
   }
 
-  // Leverage caps + Kelly caps
+  // Position caps: inverse-vol sizing (Kakushadze §3.6) + leverage caps
+  // Replaces Half-Kelly: w_i ∝ 1/σ_i, normalized, then capped by leverage limits.
+  // Simpler, fewer parameters, and naturally gives low-vol assets more room.
   const maxPct = new Float64Array(n);
+  const avgVolArr = volArr.reduce((s, v) => s + v, 0) / n || 0.15;
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
     let levCap = 1.0;
@@ -1846,11 +1786,9 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // Individual stock cap: max 15% per stock to limit idiosyncratic risk
     if (c.type === "stock") levCap = Math.min(levCap, 0.15);
     if (!useKelly) { maxPct[i] = levCap; continue; }
-    const sigSq = volArr[i] * volArr[i];
-    if (sigSq <= 0) { maxPct[i] = levCap; continue; }
-    const fStar = 0.5 * ((adjRet[i] - RF) / 100) / sigSq;
-    const adj = AGGRESSIVE_CATS.has(c.c) ? kellyMult : 1.0;
-    maxPct[i] = Math.max(0.01, Math.min(fStar * adj, levCap));
+    // Inverse-vol cap: low-vol assets get higher max allocation
+    const invVolCap = Math.min(0.30, Math.max(0.03, avgVolArr / (volArr[i] || 0.01) * 0.15));
+    maxPct[i] = Math.min(invVolCap, levCap);
   }
 
   // ── Pre-compute flat correlation matrix (n×n) — eliminates gc() calls in hot loop ──
@@ -4054,10 +3992,9 @@ export default function App() {
         const wAvgMo = sumWRet / sumW;
         const rawR = wAvgMo * 12 * 100;
         const db = etfDbMap[sym];
-        const isStk = db?.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
-        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null, type: db?.type || "etf", ipo: db?.ipo };
+        const adjR = volNormalizedReturn(rawR, vol);
+        trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: adjR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null, type: db?.type || "etf", ipo: db?.ipo };
       }
       const isBullish = btState5 && (btState5.includes("risk_on"));
       // In bull markets: exclude assets below -50% (likely broken).
@@ -4732,9 +4669,9 @@ export default function App() {
           if (cnt < 6) continue;
           const db = etfDbMap[sym];
           const rawR = (sWR / sW) * 12 * 100;
-          const shrunkR = shrinkReturn(rawR, db?.type === "stock");
           const vol = Math.max(Math.sqrt(Math.max(0, sR2 / cnt - (sR/cnt) ** 2)) * Math.sqrt(12) * 100, 1);
-          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null, type: db?.type || "etf" };
+          const adjR = volNormalizedReturn(rawR, vol);
+          trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: adjR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null, type: db?.type || "etf" };
         }
 
         const cands = Object.values(trailingStats).filter(s => {
@@ -5432,15 +5369,14 @@ useEffect(() => {
         const rawR = wAvgMo * 12 * 100;
         const db = etfDbMap[sym];
         if (!db) continue;
-        const isStk = db.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
+        const adjR = volNormalizedReturn(rawR, vol);
 
         // Build candidate with live stats, keeping category/metadata from DB
         liveCandidates.push({
           t: sym, n: db.n, c: db.c, h: db.h || 1,
           er: db.er || 0, d: db.d || 0, lev: db.lev || null,
-          r: shrunkR,  // LIVE: recency-weighted + shrunk trailing return
+          r: adjR,     // LIVE: vol-normalized trailing return (§3.1 risk-adjusted momentum)
           v: vol,      // LIVE: trailing 12-month volatility
           type: db.type || "etf", ipo: db.ipo,
         });
@@ -6174,9 +6110,9 @@ useEffect(() => {
                         if (count < 6) continue;
                         const db = etfDbMap[sym]; if (!db) continue;
                         const rawR = (sumWRet / sumW) * 12 * 100;
-                        const shrunkR = shrinkReturn(rawR, db.type === "stock");
                         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) ** 2)) * Math.sqrt(12) * 100, 1);
-                        liveCandidates.push({ t: sym, n: db.n, c: db.c, h: db.h || 1, er: db.er || 0, d: db.d || 0, lev: db.lev || null, r: shrunkR, v: vol, type: db.type || "etf", ipo: db.ipo });
+                        const adjR = volNormalizedReturn(rawR, vol);
+                        liveCandidates.push({ t: sym, n: db.n, c: db.c, h: db.h || 1, er: db.er || 0, d: db.d || 0, lev: db.lev || null, r: adjR, v: vol, type: db.type || "etf", ipo: db.ipo });
                       }
                       const liveSet = new Set(liveCandidates.map(c => c.t));
                       for (const c of baseCandidates) { if (!liveSet.has(c.t)) liveCandidates.push(c); }
