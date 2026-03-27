@@ -5405,7 +5405,7 @@ export default function App() {
       const simVol = simMonthlyRets.length > 1 ? Math.sqrt(simMonthlyRets.reduce((s, r) => s + (r - simAvgRet) ** 2, 0) / simMonthlyRets.length) * Math.sqrt(12) * 100 : 0;
 
       // IS/OOS split for this simulation run
-      const simSplitIdx = Math.floor(simDates.length * 0.8);
+      const simSplitIdx = Math.floor(simDates.length * (1 - oosFraction));
       const simSplitDate = simDates[simSplitIdx] || simDates[simDates.length - 1];
       // Track portfolio value at split point from equity curve
       // simMonthlyRets[i] corresponds to simDates[i]
@@ -5501,7 +5501,7 @@ export default function App() {
       oosAvgAlpha: +(avg(results.map(r => r.oosCAGR)) - spyCAGR * 0.2).toFixed(1), // approximate OOS alpha
     });
     setSimProgress(""); setSimRunning(false);
-  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState, walkForward, drawdownProtection, weightingMethod]);
+  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState, walkForward, drawdownProtection, weightingMethod, oosFraction]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
