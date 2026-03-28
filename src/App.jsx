@@ -2045,8 +2045,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const c = candidates[i];
     let levCap = 1.0;
     if (c.lev && Math.abs(c.lev) > 1) { levCap = c.lev < 0 ? 0.05 : Math.abs(c.lev) >= 3 ? 0.10 : 0.15; }
-    // Individual stock cap: max 15% per stock to limit idiosyncratic risk
-    if (c.type === "stock") levCap = Math.min(levCap, 0.15);
+    // Uniform 20% cap per position (stocks and ETFs treated equally)
+    levCap = Math.min(levCap, 0.20);
     if (!useKelly) { maxPct[i] = levCap; continue; }
     const sigSq = volArr[i] * volArr[i];
     if (sigSq <= 0) { maxPct[i] = levCap; continue; }
@@ -2140,7 +2140,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // Normalize + apply Kelly/leverage caps + hard 30% per-position cap
     // Two-pass: cap positions, then re-normalize the uncapped to fill the freed weight
     let allocSum2 = 0;
-    const POS_CAP = 0.30; // no single position > 30% of deployment
+    const POS_CAP = 0.20; // uniform 20% cap — stocks and ETFs treated equally
     for (let i = 0; i < n; i++) {
       let pct = ws[i] / wSum;
       if (pct > 0) pct = Math.min(pct, maxPct[i], POS_CAP);
@@ -2209,14 +2209,6 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
     // HARD REJECT: fewer than 3 positions — no single-stock or 2-stock portfolios allowed
     if (activeCount < 3) continue;
-
-    // HARD CAP: enforce max 25% per individual stock AFTER normalization
-    let hadStockViolation = false;
-    for (let i = 0; i < n; i++) {
-      const wt = alloc[i] / (deployAmt || 1);
-      if (candidates[i].type === "stock" && wt > 0.25) hadStockViolation = true;
-    }
-    if (hadStockViolation) continue; // skip this iteration entirely
 
     // ── SECTOR CONCENTRATION: hard reject if any macro-sector exceeds limit ──
     // Use relaxed limit (75%) for small candidate pools (backtest) to avoid rejecting everything
@@ -2300,8 +2292,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     for (let i = 0; i < n; i++) wtdSpyCorr += (alloc[i] / (deployAmt || 1)) * spyCorr[i];
     // Also add existing positions' SPY correlation
     for (let i = 0; i < nEx; i++) wtdSpyCorr += exW[i] * gc(itemCats[i], "US Large Cap");
-    const hasStocks = candidates.some(c => c.type === "stock");
-    const spyPenaltyScale = hasStocks ? 1.0 : 0.15; // minimize for ETF-only mode
+    const spyPenaltyScale = 0.5; // moderate SPY overlap penalty — differentiation matters but don't force exotic picks
     const spyPenalty = (wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0) * spyPenaltyScale;
 
     // ── Factor diversification: reward balanced factor exposure ──
@@ -2403,7 +2394,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   // Redistribute excess proportional to REMAINING HEADROOM (cap - current), not equally
   // This guarantees convergence: no position can be pushed over the cap by redistribution
   const finalTotal = filtered.reduce((s, r) => s + r.dollars, 0) || 1;
-  const maxPosDollars = finalTotal * 0.30;
+  const maxPosDollars = finalTotal * 0.20; // uniform 20% cap
   for (let pass = 0; pass < 5; pass++) {
     let excess = 0;
     filtered.forEach(r => {
@@ -3674,7 +3665,7 @@ export default function App() {
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
   const [useRegime, setUseRegime] = useState(true); // Regime-adaptive toggle
   const [taxState, setTaxState] = useState("None"); // State for tax calc
-  const [includeStocks, setIncludeStocks] = useState("etf"); // "etf" | "stocks" | "both"
+  const [includeStocks, setIncludeStocks] = useState("both"); // always full universe (ETF + stocks)
   const [optResult, setOptResult] = useState(null);
   const [optRunning, setOptRunning] = useState(false);
   const [recPrices, setRecPrices] = useState({}); // cached live prices for optimizer recommendations
@@ -4088,12 +4079,8 @@ export default function App() {
       "HDV","DGRO",
     ];
     const benchmarks = ["SPY"];
-    // For stocks: use historical S&P 500 top 30 by year (no survivorship bias)
-    const btStocks = (includeStocks === "stocks" || includeStocks === "both") ? SP500_ALL_TICKERS : [];
-    // In stocks-only mode, skip ETF universe (except benchmarks for comparison)
-    const btETFsFiltered = includeStocks === "stocks" ? [] : btETFs;
-
-    const allSymbols = [...new Set([...btETFsFiltered, ...benchmarks, ...btStocks])];
+    // Unified universe: always fetch both ETFs and stocks for maximum alpha opportunity
+    const allSymbols = [...new Set([...btETFs, ...benchmarks, ...SP500_ALL_TICKERS])];
     setBtProgress(`Fetching ${allSymbols.length} symbols (2005-2025)...`);
 
     let histData = {};
@@ -4547,13 +4534,8 @@ export default function App() {
       }
 
       const allCandidates = Object.values(trailingStats).filter(s => {
-        if (s.t === "SPY" || s.v <= 0 || s.r <= returnFloor) return false;
-        // For stocks: only include if it was a sector leader for this year
-        const db = etfDbMap[s.t];
-        if (db?.type === "stock") {
-          const yearStocks = getStocksForYear(mYear);
-          if (!yearStocks.includes(s.t)) return false;
-        }
+        // SPY allowed as a position — the optimizer can hold it and tilt around it
+        if (s.v <= 0 || s.r <= returnFloor) return false;
         return true;
       });
       // ── Tiered candidate selection ──
@@ -5137,8 +5119,8 @@ export default function App() {
       "XLK","XLF","XLV","XLE","XLU","XLRE","SOXX","ARKK","ICLN",
       "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","HDV","DGRO",
     ];
-    const btStocks = (includeStocks === "stocks" || includeStocks === "both") ? SP500_ALL_TICKERS : [];
-    const allSymbols = [...new Set([...btETFs, "SPY", ...btStocks])];
+    // Unified universe: always fetch both ETFs and stocks
+    const allSymbols = [...new Set([...btETFs, "SPY", ...SP500_ALL_TICKERS])];
 
     setSimProgress(`Fetching ${allSymbols.length} symbols...`);
     let histData = {};
@@ -5406,12 +5388,7 @@ export default function App() {
         }
 
         const cands = Object.values(trailingStats).filter(s => {
-          if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
-          const db = etfDbMap[s.t];
-          if (db?.type === "stock") {
-            const yearStocks = getStocksForYear(mYear);
-            if (!yearStocks.includes(s.t)) return false;
-          }
+          if (s.v <= 0 || s.r <= -50) return false;
           return true;
         }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 30);
 
@@ -5805,7 +5782,7 @@ useEffect(() => {
   }), [sq, sc]);
 
   const frontier = useMemo(() => {
-    try { if (cashBalance <= 0) return null; const fCands = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT].slice(0, 40) : includeStocks === "stocks" ? STOCK_OPT.slice(0, 30) : ETF_DB.slice(0, 30); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
+    try { if (cashBalance <= 0) return null; const fCands = [...ETF_DB, ...STOCK_OPT].slice(0, 40); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
   }, [allPos, cashBalance, holdingsVal]);
 
   // ─── Ticker search ───
@@ -6077,7 +6054,7 @@ useEffect(() => {
 
     try {
     // ── Step 1: Fetch trailing 12-month history for all candidates ──
-    const baseCandidates = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT] : includeStocks === "stocks" ? STOCK_OPT : ETF_DB;
+    const baseCandidates = [...ETF_DB, ...STOCK_OPT];
     const tickers = baseCandidates.map(c => c.t);
     // Compute date range: 13 months back (need 12 months of returns = 13 price points)
     const endDate = new Date().toISOString().slice(0, 10);
@@ -6666,11 +6643,7 @@ useEffect(() => {
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
                   <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (hmmResult ? `${hmmResult.currentEnsemble.name} (HMM+FRED)` : regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
                 </button>
-                {["etf", "stocks", "both"].map(mode => (
-                  <button key={mode} onClick={() => setIncludeStocks(mode)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${includeStocks === mode ? "rgba(120,169,255,.25)" : "#393939"}`, background: includeStocks === mode ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
-                    <span style={{ fontSize: 9, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF Only" : mode === "stocks" ? "Stocks Only" : "ETF+Stocks"}</span>
-                  </button>
-                ))}
+                <span style={{ fontSize: 8, color: cs.blue, fontFamily: mono2, fontWeight: 600 }}>All Assets</span>
               </div>
 
               {ot === "max_return" && srMode === "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🚀 Max Return + VaR: aggressive growth with a light drawdown brake. Return is weighted 1.5x with a mild VaR penalty. Hard constraints (min 3 positions, 25% stock cap, return shrinkage) still apply.</div>}
@@ -6860,7 +6833,7 @@ useEffect(() => {
                     setRebalRunning(true);
                     try {
                     // ── Fetch live trailing data (same as Deploy Cash optimizer) ──
-                    const baseCandidates = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT] : includeStocks === "stocks" ? STOCK_OPT : ETF_DB;
+                    const baseCandidates = [...ETF_DB, ...STOCK_OPT];
                     const tickers = baseCandidates.map(c => c.t);
                     const endDate = new Date().toISOString().slice(0, 10);
                     const startDate = new Date(Date.now() - 14 * 30 * 86400000).toISOString().slice(0, 10);
@@ -8367,11 +8340,7 @@ useEffect(() => {
                 <button onClick={() => setUseRegime(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${useRegime ? "rgba(255,171,145,.2)" : "#393939"}`, background: useRegime ? "rgba(255,171,145,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>Regime-Adaptive {useRegime ? "ON" : "OFF"}</span>
                 </button>
-                {["etf", "stocks", "both"].map(mode => (
-                  <button key={mode} onClick={() => setIncludeStocks(mode)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${includeStocks === mode ? "rgba(120,169,255,.25)" : "#393939"}`, background: includeStocks === mode ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
-                    <span style={{ fontSize: 8, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF" : mode === "stocks" ? "Stocks" : "ETF+Stocks"}</span>
-                  </button>
-                ))}
+                <span style={{ fontSize: 8, color: cs.blue, fontFamily: mono2, fontWeight: 600 }}>All Assets</span>
                 {[{k:"var",l:"VaR Sharpe"},{k:"cvar",l:"CVaR Sharpe"}].map(m => (
                   <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "4px 8px", borderRadius: 0, border: `1px solid ${srMode === m.k ? "rgba(66,190,101,.2)" : "#393939"}`, background: srMode === m.k ? "rgba(66,190,101,.06)" : "transparent", color: srMode === m.k ? cs.green : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
                 ))}
@@ -8415,9 +8384,6 @@ useEffect(() => {
           {btResult && (() => {
             const { curves, summary, annual, startCash: sc2 } = btResult;
             return <>
-              {includeStocks !== "etf" && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (2006–2025, ~100-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year. Covers 2008 crisis (AIG in Financials pre-crash, removed after), 2010 recovery (V/MA enter), 2017 tech shift (NVDA enters), 2020 COVID (TSLA in Consumer), and 2023 AI boom (SMCI). GE Industrial #1 in 2006, exits by 2018. Return shrinkage (80% cap) + SPY-overlap penalty.</div>
-              </div>}
               {/* Interactive Equity Curve */}
               <EquityCurve curves={curves} sc2={sc2} />
 
