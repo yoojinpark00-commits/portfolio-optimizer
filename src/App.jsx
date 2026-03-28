@@ -4264,6 +4264,9 @@ export default function App() {
       const mYear = parseInt(dateKey.slice(0, 4));
       const mMonth = parseInt(dateKey.slice(5, 7)) - 1;
       const dayData = returnsByDateSym[dateKey] || {};
+      // Declare regime variables BEFORE the try block so they're available throughout
+      let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
+      let btDuration = 0, btTransition = null, regimeChanged = false;
       try {
 
       // Step 1: Apply daily returns
@@ -4385,8 +4388,7 @@ export default function App() {
       const prevTickers = Object.keys(optAlloc);
       const isFirstAllocation = prevTickers.length === 0;
       const monthsSinceRebal = lastRebalanceMonth ? (mIdx - dateToIdx[lastRebalanceMonth]) : 999;
-      let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
-      let btDuration = 0, btTransition = null, regimeChanged = false;
+      // btRegime, btState5, etc. declared before try block (above) to avoid TDZ
       // Dynamic risk-free rate from 10Y Treasury yield at this date
       const dynamicRF = historicalRegimes?.[monthKey]?.dgs10 ?? RF;
       if (useRegime && historicalRegimes) {
