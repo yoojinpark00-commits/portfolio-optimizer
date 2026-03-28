@@ -314,10 +314,8 @@ function shrinkToForward(trailing, vol) {
 // the Sharpe pre-filter purely on trailing momentum.
 // For stocks: cap at 80% annualized, keep 20% of excess above cap
 // For ETFs: cap at 120% annualized (ETFs are diversified, more sustainable momentum)
-function shrinkReturn(r, isStock, regimeState, adaptiveParams) {
+function shrinkReturn(r, isStock, regimeState, adaptiveParams, factorScore) {
   // Progressive shrinkage with data-driven thresholds when available.
-  // adaptiveParams: { threshold, hardCap } from cross-sectional percentiles, or null for defaults.
-  // Regime adjustment still applies on top.
   const regimeAdj = {
     strong_risk_on: { tMult: 1.60, cMult: 1.25 },
     mild_risk_on:   { tMult: 1.28, cMult: 1.125 },
@@ -326,12 +324,19 @@ function shrinkReturn(r, isStock, regimeState, adaptiveParams) {
     strong_risk_off:{ tMult: 0.60, cMult: 0.625 },
   }[regimeState] || { tMult: 1.0, cMult: 1.0 };
 
-  // Use adaptive params if available, otherwise hardcoded defaults
+  // In bull regimes, high-quality-momentum assets get LESS shrinkage
+  // factorScore > 0.7 = top 30% by composite factor quality
+  // This lets winners ride when fundamentals confirm the momentum
+  let qualityBoost = 1.0;
+  if (factorScore > 0.7 && (regimeState === "strong_risk_on" || regimeState === "mild_risk_on")) {
+    qualityBoost = 1.0 + (factorScore - 0.7) * 1.5; // up to 1.45x at factorScore=1.0
+  }
+
   const baseThreshold = adaptiveParams ? adaptiveParams.threshold * (isStock ? 0.8 : 1.0) : (isStock ? 20 : 25);
   const baseHardCap = adaptiveParams ? adaptiveParams.hardCap * (isStock ? 0.75 : 1.0) : (isStock ? 60 : 80);
 
-  const threshold = baseThreshold * regimeAdj.tMult;
-  const hardCap = baseHardCap * regimeAdj.cMult;
+  const threshold = baseThreshold * regimeAdj.tMult * qualityBoost;
+  const hardCap = baseHardCap * regimeAdj.cMult * qualityBoost;
   const sign = r >= 0 ? 1 : -1;
   const absR = Math.abs(r);
   if (absR <= threshold) return r;
@@ -2344,7 +2349,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const newPenalties = cvarPenalty + tailRiskPenalty + sectorConcPenalty;
     const alphaSignals = momBonus + regimeAlignBonus;
     // Common signals used across strategies
-    const commonSignals = regimeBonus + divAdj + spyPenalty + relValBonus + alphaSignals + newPenalties;
+    // Regime bonus amplified 2x so it competes with Sharpe signal (0.6-1.2 range)
+    const commonSignals = regimeBonus * 2.0 + divAdj + spyPenalty + relValBonus + alphaSignals + newPenalties;
 
     if (target === "hybrid" && rpWeights) {
       // Hybrid: risk-parity base + alpha tilts — best balance of stability and alpha
@@ -4203,6 +4209,8 @@ export default function App() {
     let costPerShareMap = {}; // ticker → average cost per share
     let posEstablishedMap = {}; // ticker → monthKey when position was first established/last increased
     let totalTaxPaid = 0, totalRebalances = 0;
+    let annualTaxSpent = 0, annualTaxYear = 0; // annual tax budget tracker
+    const TAX_BUDGET_PCT = 1.0; // max 1% of portfolio value in taxes per year
     let totalTaxSaved = 0; // tax saved via loss offsets
     let lossCarryover = 0; // unused losses carried forward to future periods
     let annualOrdinaryOffsetUsed = 0; // track $3k/year ordinary income offset
@@ -4279,9 +4287,13 @@ export default function App() {
         bal60Curve.push({ date: dateKey, value: bal60Value });
       }
 
-      // ── Drawdown Controls with Reversal Delay ──
-      // KEY: Always apply the scale to ddBaseAlloc (the ORIGINAL optimizer allocation),
-      // never to optAlloc (which may already be scaled). This prevents compounding reductions.
+      // ── Drawdown Controls with Reversal Delay (Regime-Aware) ──
+      // KEY: Always apply the scale to ddBaseAlloc (the ORIGINAL optimizer allocation).
+      // REGIME-AWARE: Don't trigger new drawdown levels during confirmed recovery/bull.
+      // Drawdowns during regime-confirmed rallies are typically V-shaped — selling low
+      // and buying back higher destroys alpha. Only trigger when regime confirms stress.
+      const ddRegimeAllowsTrigger = !btState5 || btState5 === "neutral" ||
+        btState5.includes("risk_off"); // only trigger in neutral, bear, or unknown
       if (drawdownProtection && Object.keys(optAlloc).length > 0) {
         // Save base allocation from optimizer if not already saved
         if (!ddBaseAlloc) ddBaseAlloc = { ...optAlloc };
@@ -4307,8 +4319,9 @@ export default function App() {
           }
         }
 
-        // Update equity scale when a new level is confirmed
-        if (confirmedLevel >= 0 && confirmedLevel > ddActiveLevel) {
+        // Update equity scale when a new level is confirmed AND regime allows it
+        // In bull/recovery regimes, only the most severe level (25%+ immediate) triggers
+        if (confirmedLevel >= 0 && confirmedLevel > ddActiveLevel && (ddRegimeAllowsTrigger || confirmedLevel >= DRAWDOWN_LEVELS.length - 1)) {
           ddEquityScale = 1.0 - DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
           ddActiveLevel = confirmedLevel;
           ddRecoveryMonths = 0;
@@ -4480,18 +4493,33 @@ export default function App() {
           if (signalCount >= 3) shouldEvaluate = true;
         }
 
-        // ── Gate 4: Semi-annual fallback instead of quarterly ──
-        // With daily monitoring catching drawdowns, we don't need quarterly rebalancing
+        // ── Gate 4: Semi-annual fallback ──
         if (!shouldEvaluate && mMonth % 6 === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
+
+        // ── Gate 5: Monthly drift check ──
+        // If any position has drifted >5% from target weight, evaluate rebalance.
+        // This catches organic drift (winners growing, losers shrinking) without waiting
+        // for a regime signal. SPY auto-rebalances via market-cap weighting — we should too.
+        if (!shouldEvaluate && isNewMonth && monthsSinceRebal >= 42 && lastBestWeights) {
+          let maxDrift = 0;
+          for (const [ticker, targetWt] of Object.entries(lastBestWeights)) {
+            const actualWt = optAlloc[ticker] || 0;
+            maxDrift = Math.max(maxDrift, Math.abs(actualWt - targetWt));
+          }
+          if (maxDrift > 0.05) shouldEvaluate = true; // >5% drift in any position
+        }
       } else if (!shouldEvaluate && isNewMonth) {
         // No regime data: semi-annual fallback
         if (mMonth % 6 === 0) shouldEvaluate = true;
       }
 
       // ── Minimum cooldown: 3 months (63 trading days) regardless of tax state ──
-      // With daily data, even low-tax states should trade less to let positions mature
       const minCooldownDays = Math.max(taxCooldownDays, 63);
       if (!isFirstAllocation && monthsSinceRebal < minCooldownDays) shouldEvaluate = false;
+
+      // ── Annual tax budget: don't rebalance if we've already spent >1% of portfolio in taxes this year ──
+      if (mYear !== annualTaxYear) { annualTaxSpent = 0; annualTaxYear = mYear; }
+      if (!isFirstAllocation && annualTaxSpent > optValue * TAX_BUDGET_PCT / 100) shouldEvaluate = false;
 
       if (!shouldEvaluate) continue;
       // Yield to UI every evaluation to prevent freeze
@@ -4575,6 +4603,21 @@ export default function App() {
       // Use 252 trading days lookback for daily data
       computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveFactorWeights, TRADING_DAYS_PER_YEAR);
 
+      // ── Second-pass shrinkage: let high-quality-momentum winners ride in bull regimes ──
+      if (isBullish) {
+        for (const sym of Object.keys(trailingStats)) {
+          const ts = trailingStats[sym];
+          if (ts.factorScore > 0.7) {
+            // Re-compute with quality boost — only makes returns LESS shrunk (never more)
+            const db = etfDbMap[sym];
+            const rawR = ts.r; // already shrunk once — re-shrink from original would be ideal
+            // Approximate: boost the existing return toward what it would be with less shrinkage
+            const boostFactor = 1.0 + (ts.factorScore - 0.7) * 0.5; // up to 15% boost at score=1.0
+            ts.r = ts.r * boostFactor;
+          }
+        }
+      }
+
       // ── Compute relative value signals ──
       const relValSignals = computeRelativeValue(returnsByDateSym, sortedDates, mIdx, trailingStats);
       for (const sym of Object.keys(trailingStats)) {
@@ -4615,14 +4658,14 @@ export default function App() {
         const factor = s.factorScore ?? 0.5;
         return sharpe * 0.60 + factor * 3.0 * 0.40; // scale factor to comparable range
       };
-      // All candidates available in every regime — let the optimizer + regime tilts do the selection
-      // Pre-filtering was removing valuable diversifiers and capping alpha potential
-      const candidates = allCandidates.sort((a, b) => sortScore(b) - sortScore(a));
+      // Pre-filter to top 60 by blended score, then give optimizer 2000 iterations
+      // 750 assets × 300 iterations = throwing darts in the dark
+      // 60 assets × 2000 iterations = thorough search of the best candidates
+      const candidates = allCandidates.sort((a, b) => sortScore(b) - sortScore(a)).slice(0, 60);
       if (candidates.length < 3) continue;
 
-      // Scale iterations to candidate pool: more candidates → more iterations needed for coverage
-      const btIterations = candidates.length > 80 ? 600 : candidates.length > 40 ? 400 : 300;
-      setBtProgress(`${monthKey}: ${isBullish ? "bull" : "bear/neutral"} → ${candidates.length} candidates, ${btIterations} iterations`);
+      const btIterations = 2000;
+      setBtProgress(`${dateKey}: ${isBullish ? "bull" : "bear/neutral"} → ${allCandidates.length}→${candidates.length} candidates, ${btIterations} iterations`);
 
       // Rebuild regime-duration model periodically (every 12 months) using only PAST data
       // This prevents forward-looking bias: the model at 2008-10 only knows data up to 2007-10
@@ -4868,6 +4911,7 @@ export default function App() {
         }
 
         optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = dateKey;
+        annualTaxSpent += estTC; // track against annual tax budget
         ddBaseAlloc = { ...newAlloc }; // reset drawdown base to fresh optimizer output
         ddPeak = Math.max(ddPeak, optValue); // update peak after rebalance
         costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
