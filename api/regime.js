@@ -465,6 +465,12 @@ function computeMonthlyRegimesV2(data) {
         const spIdx = binarySearchLastLE(data.sp500, dateStr);
         if (spIdx >= 0) spyPrice = data.sp500[spIdx].value;
       }
+      // 10Y Treasury yield (for dynamic risk-free rate)
+      let dgs10Val = null;
+      if (data.dgs10?.length > 0) {
+        const dgsIdx = binarySearchLastLE(data.dgs10, dateStr);
+        if (dgsIdx >= 0) dgs10Val = data.dgs10[dgsIdx].value;
+      }
 
       results.push({
         date: `${year}-${String(month).padStart(2, "0")}`,
@@ -487,6 +493,7 @@ function computeMonthlyRegimesV2(data) {
         // Volatility regime decomposition
         volRegime,
         volSignal,
+        dgs10: dgs10Val,
       });
     }
   }

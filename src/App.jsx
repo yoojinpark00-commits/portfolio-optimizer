@@ -264,9 +264,13 @@ const ETF_DB = [
   {t:"XAR",n:"SPDR S&P Aerospace & Defense",c:"Sector Indust",h:70,er:.35,r:10.5,v:20.0,d:.5},
   // ── Extended: Buffer / Defined Outcome ──
   {t:"BUFR",n:"FT Cboe Vest Fund of Buffer ETFs",c:"US Large Cap",h:503,er:.95,r:7.0,v:8.0,d:0},
+  // ── Managed Futures / Trend Following (Crisis Alpha) ──
+  {t:"DBMF",n:"iMGP DBi Managed Futures",c:"Managed Futures",h:10,er:.85,r:5.0,v:12.0,d:0},
+  {t:"KMLM",n:"KFA Mount Lucas Managed Futures",c:"Managed Futures",h:25,er:.92,r:4.5,v:11.0,d:0},
+  {t:"CTA",n:"Simplify Managed Futures",c:"Managed Futures",h:15,er:.75,r:4.0,v:10.5,d:0},
 ];
 
-const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Sector Health":.62,"Sector Finance":.72,"Sector Energy":.32,"Sector Indust":.75,"Sector Consumer":.78,"Sector RE":.42,"Sector Utilities":.30,"Sector Materials":.48,"Sector Comms":.82,"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Sector Finance":.58,"Sector Energy":.35,"Sector Indust":.60,"Sector Consumer":.62,"Sector RE":.45,"Sector Utilities":.48,"Sector Materials":.42,"Sector Comms":.55,"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Sector Energy":.55,"Sector Indust":.72,"Sector Consumer":.68,"Sector RE":.58,"Sector Utilities":.42,"Sector Materials":.55,"Sector Comms":.62,"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Sector Indust":.55,"Sector Consumer":.42,"Sector RE":.30,"Sector Utilities":.35,"Sector Materials":.62,"Sector Comms":.35,"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Sector Consumer":.72,"Sector RE":.48,"Sector Utilities":.42,"Sector Materials":.68,"Sector Comms":.62,"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Sector RE":.45,"Sector Utilities":.38,"Sector Materials":.48,"Sector Comms":.70,"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Sector Utilities":.62,"Sector Materials":.35,"Sector Comms":.38,"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Sector Materials":.38,"Sector Comms":.32,"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Sector Comms":.42,"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
+const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Sector Health":.62,"Sector Finance":.72,"Sector Energy":.32,"Sector Indust":.75,"Sector Consumer":.78,"Sector RE":.42,"Sector Utilities":.30,"Sector Materials":.48,"Sector Comms":.82,"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Sector Finance":.58,"Sector Energy":.35,"Sector Indust":.60,"Sector Consumer":.62,"Sector RE":.45,"Sector Utilities":.48,"Sector Materials":.42,"Sector Comms":.55,"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Sector Energy":.55,"Sector Indust":.72,"Sector Consumer":.68,"Sector RE":.58,"Sector Utilities":.42,"Sector Materials":.55,"Sector Comms":.62,"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Sector Indust":.55,"Sector Consumer":.42,"Sector RE":.30,"Sector Utilities":.35,"Sector Materials":.62,"Sector Comms":.35,"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Sector Consumer":.72,"Sector RE":.48,"Sector Utilities":.42,"Sector Materials":.68,"Sector Comms":.62,"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Sector RE":.45,"Sector Utilities":.38,"Sector Materials":.48,"Sector Comms":.70,"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Sector Utilities":.62,"Sector Materials":.35,"Sector Comms":.38,"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Sector Materials":.38,"Sector Comms":.32,"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Sector Comms":.42,"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Managed Futures":.15,"Stock":.20,"Cash":0},"Managed Futures":{"Stock":-.05,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
 // Parent category mapping: sub-category → parent ETF category (for cross-group fallback)
 const SUB_PARENT = {
   "Tech-Semi":"Sector Tech","Tech-Software":"Sector Tech","Tech-Internet":"Sector Tech",
@@ -314,18 +318,32 @@ function shrinkToForward(trailing, vol) {
 // the Sharpe pre-filter purely on trailing momentum.
 // For stocks: cap at 80% annualized, keep 20% of excess above cap
 // For ETFs: cap at 120% annualized (ETFs are diversified, more sustainable momentum)
-function shrinkReturn(r, isStock) {
-  // Progressive shrinkage: starts light at threshold, increases with magnitude
-  // ETFs: shrink above 25% annualized, Stocks: shrink above 20%
-  // Formula: beyond threshold, keep diminishing fraction via log-style compression
-  // This prevents the momentum signal from being dominated by recent rockets
-  // while still allowing moderate momentum to express
-  const threshold = isStock ? 20 : 25;    // where shrinkage begins
-  const hardCap = isStock ? 60 : 80;      // absolute max after shrinkage
+function shrinkReturn(r, isStock, regimeState, adaptiveParams, factorScore) {
+  // Progressive shrinkage with data-driven thresholds when available.
+  const regimeAdj = {
+    strong_risk_on: { tMult: 1.60, cMult: 1.25 },
+    mild_risk_on:   { tMult: 1.28, cMult: 1.125 },
+    neutral:        { tMult: 1.00, cMult: 1.00 },
+    mild_risk_off:  { tMult: 0.80, cMult: 0.81 },
+    strong_risk_off:{ tMult: 0.60, cMult: 0.625 },
+  }[regimeState] || { tMult: 1.0, cMult: 1.0 };
+
+  // In bull regimes, high-quality-momentum assets get LESS shrinkage
+  // factorScore > 0.7 = top 30% by composite factor quality
+  // This lets winners ride when fundamentals confirm the momentum
+  let qualityBoost = 1.0;
+  if (factorScore > 0.7 && (regimeState === "strong_risk_on" || regimeState === "mild_risk_on")) {
+    qualityBoost = 1.0 + (factorScore - 0.7) * 1.5; // up to 1.45x at factorScore=1.0
+  }
+
+  const baseThreshold = adaptiveParams ? adaptiveParams.threshold * (isStock ? 0.8 : 1.0) : (isStock ? 20 : 25);
+  const baseHardCap = adaptiveParams ? adaptiveParams.hardCap * (isStock ? 0.75 : 1.0) : (isStock ? 60 : 80);
+
+  const threshold = baseThreshold * regimeAdj.tMult * qualityBoost;
+  const hardCap = baseHardCap * regimeAdj.cMult * qualityBoost;
   const sign = r >= 0 ? 1 : -1;
   const absR = Math.abs(r);
   if (absR <= threshold) return r;
-  // Progressive: keep 60% of the next 25%, then 30% beyond that
   const tier1 = Math.min(absR - threshold, 25) * 0.60;
   const tier2 = Math.max(0, absR - threshold - 25) * 0.30;
   const shrunk = threshold + tier1 + tier2;
@@ -513,6 +531,8 @@ const STOCK_OPT = STOCK_DB.map(s => {
 });
 // Helper: check if a stock was publicly traded by a given year
 function stockAvailableAt(stock, year) { return (stock.ipo || 0) <= year; }
+// Set for O(1) stock ticker lookup in UI
+const STOCK_TICKER_SET = new Set(STOCK_DB.map(s => s.t));
 
 // ── Historical S&P 500 Top ~5 per GICS sector by market cap at January of each year ──
 // This captures sector leaders INCLUDING growth names that aren't overall top-30
@@ -817,6 +837,7 @@ const MACRO_SECTOR_MAP = {
   "International": "intl", "Intl Developed": "intl", "Emerging Mkts": "intl-em",
   "US Bond": "fixed-income", "US Treasury": "fixed-income", "US Corp Bond": "fixed-income", "US High Yield": "fixed-income", "Intl Bond": "fixed-income",
   "Commodity": "alternatives",
+  "Managed Futures": "alternatives",
 };
 
 // ── Category-level skewness estimates for CVaR computation ──
@@ -829,6 +850,7 @@ const CATEGORY_SKEW = {
   "Sector Consumer": -0.30, "Sector Indust": -0.25, "Sector Utilities": 0.05,
   "US Bond": 0.15, "US Treasury": 0.25, "US Corp Bond": 0.10, "Intl Bond": 0.05,
   "Commodity": -0.10, "Factor LowVol": 0.0, "Factor Quality": -0.15,
+  "Managed Futures": 0.20, // positive skew — crisis alpha (profits in tails)
 };
 
 /**
@@ -1210,13 +1232,40 @@ function computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) {
 }
 
 // 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
+// Amplified magnitudes so regime signal is meaningful vs Sharpe (0.6-1.2 range)
 const REGIME_TILTS = {
-  strong_risk_on: [-0.12, +0.15, 1.0],
-  mild_risk_on:   [-0.06, +0.08, 1.0],
+  strong_risk_on: [-0.25, +0.35, 1.0],
+  mild_risk_on:   [-0.12, +0.18, 1.0],
   neutral:        [0, 0, 1.0],
-  mild_risk_off:  [+0.08, -0.06, 0.8],
-  strong_risk_off: [+0.15, -0.12, 0.5],
+  mild_risk_off:  [+0.18, -0.12, 0.7],
+  strong_risk_off: [+0.30, -0.25, 0.4],
 };
+
+// ── Dynamic Regime-Based Allocation Rules ──
+// Target ranges for macro-sector groups by regime state.
+// equity = equity-core + equity-growth + equity-satellite + sector-* + intl*
+// bond = fixed-income
+// commodity = alternatives
+// Values are [min, max] as fractions (0-1)
+const REGIME_ALLOCATION_RULES = {
+  strong_risk_on: { equity: [0.70, 0.90], bond: [0.05, 0.20], commodity: [0.00, 0.10] }, // Bull/Recovery
+  mild_risk_on:   { equity: [0.60, 0.80], bond: [0.10, 0.25], commodity: [0.00, 0.10] },
+  neutral:        { equity: [0.45, 0.65], bond: [0.15, 0.30], commodity: [0.05, 0.15] },
+  mild_risk_off:  { equity: [0.30, 0.50], bond: [0.25, 0.40], commodity: [0.10, 0.20] }, // Correction/Euphoria
+  strong_risk_off: { equity: [0.15, 0.35], bond: [0.30, 0.45], commodity: [0.15, 0.25] }, // Crisis
+};
+
+// ── Drawdown Control Thresholds ──
+// Each level: { threshold, confirmationMonths, equityReduction }
+// Reduction is fraction of current equity to remove (e.g., 0.20 = cut equity by 20%)
+// Thresholds raised: 5% drawdowns are normal market noise, not worth trading on
+const DRAWDOWN_LEVELS = [
+  { threshold: 0.10, confirmationMonths: 2, equityReduction: 0.25 },
+  { threshold: 0.15, confirmationMonths: 1, equityReduction: 0.45 },
+  { threshold: 0.20, confirmationMonths: 1, equityReduction: 0.65 },
+  { threshold: 0.25, confirmationMonths: 0, equityReduction: 0.80 }, // immediate
+];
+const DRAWDOWN_HYSTERESIS = 0.03; // must recover 3% above threshold before lifting
 
 // ═══════════════════════════════════════════════════════════════════
 //  INLINE HMM REGIME ENGINE — 5-State Gaussian HMM + BOCPD + Ensemble
@@ -1368,6 +1417,126 @@ function hmmToState5(probs) {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
+ * Compute adaptive factor weights from rolling Information Coefficients (IC).
+ * For each factor, computes Spearman rank correlation between factor score and
+ * subsequent 1-month return over a trailing window. Factors with higher predictive
+ * power get higher weights.
+ *
+ * @param {Object} returnsByDate - { date: { sym: { ret } } }
+ * @param {string[]} sortedDates
+ * @param {number} mIdx - current month index
+ * @param {Object} etfDbMap - ticker metadata
+ * @param {number} lookback - months to look back (default 36)
+ * @returns {Object|null} { mom12_1, rev1m, val, qual, lowvol, carry } weights summing to 1, or null if insufficient data
+ */
+function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap, lookback = 36) {
+  if (mIdx < lookback + 12) return null; // need at least lookback + 12mo for factor computation
+
+  const factors = ["mom12_1", "mom6_1", "mom3_1", "tsmom", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
+  const ics = {};
+  for (const f of factors) ics[f] = [];
+
+  // For each month t in [mIdx-lookback, mIdx-1], compute factor scores at t
+  // and correlate with realized returns at t+1
+  for (let t = mIdx - lookback; t < mIdx - 1; t++) {
+    if (t < 13) continue; // need 12 months of data for factor computation
+
+    // Collect available symbols and their 1-month forward return
+    const syms = [];
+    const fwdRets = {};
+    const fwdDate = sortedDates[t + 1];
+    if (!fwdDate) continue;
+
+    for (const sym of Object.keys(returnsByDate[sortedDates[t]] || {})) {
+      const fwd = returnsByDate[fwdDate]?.[sym];
+      if (fwd) { syms.push(sym); fwdRets[sym] = fwd.ret; }
+    }
+    if (syms.length < 10) continue;
+
+    // Compute factor scores at time t (lightweight: just momentum and basic factors)
+    const scores = {};
+    for (const sym of syms) {
+      const monthlyRets = [];
+      for (let ti = Math.max(0, t - 12); ti < t; ti++) {
+        const e = returnsByDate[sortedDates[ti]]?.[sym];
+        if (e) monthlyRets.push(e.ret);
+      }
+      if (monthlyRets.length < 6) continue;
+      const db = etfDbMap[sym] || {};
+      const mom12_1 = monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0);
+      const totalRetIC = monthlyRets.reduce((a, b) => a + b, 0);
+      scores[sym] = {
+        mom12_1,
+        mom6_1: monthlyRets.length >= 7 ? monthlyRets.slice(-7, -1).reduce((a, b) => a + b, 0) : mom12_1 * 0.5,
+        mom3_1: monthlyRets.length >= 4 ? monthlyRets.slice(-4, -1).reduce((a, b) => a + b, 0) : mom12_1 * 0.25,
+        tsmom: totalRetIC > 0 ? Math.min(totalRetIC, 0.5) : Math.max(totalRetIC, -0.5),
+        rev1m: -(monthlyRets[monthlyRets.length - 1] || 0),
+        val: db.d || 0,
+        qual: (totalRetIC > 0 ? 2 : 0) + 1 / (1 + (db.er || 0.1)),
+        lowvol: 1 / (Math.sqrt(monthlyRets.reduce((s, r) => s + r * r, 0) / monthlyRets.length) || 0.01),
+        carry: db.d || 0,
+        csRev: 0, // placeholder, computed below
+      };
+    }
+
+    // Cross-sectional demeaned reversal for IC computation
+    const icCatGroups = {};
+    const scoredSymsAll = syms.filter(s => scores[s]);
+    for (const sym of scoredSymsAll) {
+      const cat = etfDbMap[sym]?.c || "Unknown";
+      if (!icCatGroups[cat]) icCatGroups[cat] = [];
+      icCatGroups[cat].push({ sym, r: scores[sym].mom12_1 });
+    }
+    for (const sym of scoredSymsAll) {
+      const cat = etfDbMap[sym]?.c || "Unknown";
+      const group = icCatGroups[cat];
+      if (group.length < 2) continue;
+      const avg = group.reduce((s, g) => s + g.r, 0) / group.length;
+      scores[sym].csRev = -(scores[sym].mom12_1 - avg);
+    }
+
+    const scoredSyms = syms.filter(s => scores[s]);
+    if (scoredSyms.length < 10) continue;
+
+    // Rank correlation (Spearman) for each factor vs forward return
+    const fwdRank = {};
+    const sortedByFwd = scoredSyms.sort((a, b) => fwdRets[a] - fwdRets[b]);
+    sortedByFwd.forEach((s, i) => { fwdRank[s] = i; });
+
+    for (const f of factors) {
+      const sortedByF = [...scoredSyms].sort((a, b) => (scores[a][f] || 0) - (scores[b][f] || 0));
+      const fRank = {};
+      sortedByF.forEach((s, i) => { fRank[s] = i; });
+      // Spearman = 1 - 6*sum(d^2) / (n*(n^2-1))
+      const n = scoredSyms.length;
+      let sumD2 = 0;
+      for (const s of scoredSyms) sumD2 += (fRank[s] - fwdRank[s]) ** 2;
+      const spearman = 1 - (6 * sumD2) / (n * (n * n - 1));
+      ics[f].push(spearman);
+    }
+  }
+
+  // Average IC per factor
+  const avgIC = {};
+  let totalPositiveIC = 0;
+  for (const f of factors) {
+    avgIC[f] = ics[f].length > 0 ? ics[f].reduce((s, v) => s + v, 0) / ics[f].length : 0;
+    totalPositiveIC += Math.max(0, avgIC[f]);
+  }
+
+  if (totalPositiveIC <= 0) return null; // no predictive factor found
+
+  // Weight = max(0, avgIC) / sum, floored at 0.05
+  const weights = {};
+  for (const f of factors) weights[f] = Math.max(0.05, Math.max(0, avgIC[f]) / totalPositiveIC);
+  // Renormalize
+  const wSum = factors.reduce((s, f) => s + weights[f], 0);
+  for (const f of factors) weights[f] = weights[f] / wSum;
+
+  return weights;
+}
+
+/**
  * Compute multi-factor scores for all candidates using trailing return data.
  * Returns enriched candidates with factor scores attached.
  *
@@ -1378,9 +1547,9 @@ function hmmToState5(probs) {
  * @param {Object} etfDbMap - ticker → ETF_DB entry
  * @returns {Object} { enriched: trailingStats with factor fields, factorRanks: { sym: { mom, rev, val, qual, lowvol, carry, composite } } }
  */
-function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap) {
+function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveWeights, lookbackPeriods = 12) {
   const syms = Object.keys(trailingStats);
-  if (syms.length < 3 || mIdx < 13) return { enriched: trailingStats, factorRanks: {} };
+  if (syms.length < 3 || mIdx < lookbackPeriods + 1) return { enriched: trailingStats, factorRanks: {} };
 
   const scores = {};
 
@@ -1388,14 +1557,34 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
     const db = etfDbMap[sym] || {};
     const ts = trailingStats[sym];
     const monthlyRets = [];
-    for (let ti = Math.max(0, mIdx - 12); ti < mIdx; ti++) {
+    for (let ti = Math.max(0, mIdx - lookbackPeriods); ti < mIdx; ti++) {
       const e = returnsByDate[sortedDates[ti]]?.[sym];
       if (e) monthlyRets.push(e.ret);
     }
-    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0 }; continue; }
+    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, mom6_1: 0, mom3_1: 0, tsmom: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0, csRev: 0 }; continue; }
 
     // ── 1. Momentum (12-1): skip most recent month to avoid reversal ──
     const mom12_1raw = monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0) * 100;
+
+    // ── 1b. Multi-horizon momentum: 6-month and 3-month (skip most recent ~21 days to avoid reversal) ──
+    // Different horizons capture different phenomena — 3mo = intermediate trend, 6mo = medium sentiment
+    // With daily data (lookbackPeriods=252): 6mo ≈ 126 days, 3mo ≈ 63 days, skip last ~21 days
+    const skipDays = Math.max(1, Math.round(lookbackPeriods / 12)); // ~21 days for daily, ~1 for monthly
+    const m6Window = Math.round(lookbackPeriods / 2); // ~126 days for daily
+    const m3Window = Math.round(lookbackPeriods / 4); // ~63 days for daily
+    const mom6_1 = monthlyRets.length >= m6Window + skipDays
+      ? monthlyRets.slice(-(m6Window + skipDays), -skipDays).reduce((a, b) => a + b, 0) * 100
+      : mom12_1raw * 0.5;
+    const mom3_1 = monthlyRets.length >= m3Window + skipDays
+      ? monthlyRets.slice(-(m3Window + skipDays), -skipDays).reduce((a, b) => a + b, 0) * 100
+      : mom12_1raw * 0.25;
+
+    // ── 1c. Time-Series Momentum (TSMOM): absolute return signal ──
+    // Unlike cross-sectional momentum (rank best vs worst), TSMOM uses each asset's OWN
+    // trailing return as an absolute go/no-go signal. Positive trailing return → long, negative → avoid.
+    // Prevents buying "best of the worst" in bear markets (Moskowitz, Ooi & Pedersen 2012).
+    const totalRet = monthlyRets.reduce((a, b) => a + b, 0);
+    const tsmom = totalRet > 0 ? Math.min(totalRet * 100, 50) : Math.max(totalRet * 100, -50); // capped magnitude
 
     // ── 2. Short-term Reversal (1-month): most recent month, inverted ──
     const rev1m = -(monthlyRets[monthlyRets.length - 1] || 0) * 100;
@@ -1416,11 +1605,30 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
     if (cat.includes("bond") || cat.includes("treasury")) carry = (ts.d || 0) + 1.5; // bond carry premium
     if (cat.includes("commodity")) carry = Math.max(0, carry - 0.5); // commodity roll cost
 
-    scores[sym] = { mom12_1: mom12_1raw, rev1m, val, qual, lowvol, carry };
+    scores[sym] = { mom12_1: mom12_1raw, mom6_1, mom3_1, tsmom, rev1m, val, qual, lowvol, carry, csRev: 0 };
+  }
+
+  // ── 7. Cross-sectional demeaned reversal (Kakushadze §3.9) ──
+  // Group assets by category, compute category-average trailing return,
+  // then each asset's score = -(asset return - category avg return)
+  // Negative sign because underperformers relative to peers are expected to revert UP
+  const catGroups = {};
+  for (const sym of syms) {
+    const cat = trailingStats[sym]?.c || "Unknown";
+    if (!catGroups[cat]) catGroups[cat] = [];
+    catGroups[cat].push({ sym, r: trailingStats[sym]?.r || 0 });
+  }
+  for (const sym of syms) {
+    if (!scores[sym]) continue;
+    const cat = trailingStats[sym]?.c || "Unknown";
+    const group = catGroups[cat];
+    if (group.length < 2) { scores[sym].csRev = 0; continue; }
+    const catAvg = group.reduce((s, g) => s + g.r, 0) / group.length;
+    scores[sym].csRev = -((trailingStats[sym]?.r || 0) - catAvg);
   }
 
   // ── Cross-sectional percentile ranking (0-1) for each factor ──
-  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry"];
+  const factors = ["mom12_1", "mom6_1", "mom3_1", "tsmom", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
   const ranks = {};
 
   for (const f of factors) {
@@ -1432,8 +1640,11 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
   }
 
   // ── Composite factor score (weighted blend) ──
-  // Weights tuned for robustness: momentum strongest but diversified across all factors
-  const factorWeights = { mom12_1: 0.30, rev1m: 0.10, val: 0.15, qual: 0.15, lowvol: 0.15, carry: 0.15 };
+  // Use adaptive IC-based weights if available, otherwise hardcoded defaults
+  // Multi-horizon momentum (12/6/3) captures different phenomena: behavioral drift, sentiment, intermediate trend
+  // TSMOM (time-series momentum) is an absolute return signal — distinct from cross-sectional ranking
+  const defaultFactorWeights = { mom12_1: 0.15, mom6_1: 0.08, mom3_1: 0.05, tsmom: 0.10, rev1m: 0.08, val: 0.12, qual: 0.10, lowvol: 0.10, carry: 0.12, csRev: 0.10 };
+  const factorWeights = adaptiveWeights || defaultFactorWeights;
   for (const sym of syms) {
     let composite = 0;
     for (const [f, w] of Object.entries(factorWeights)) {
@@ -1458,7 +1669,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
  * @param {number} tau - uncertainty scaling (default 0.05)
  * @returns {number[]} Adjusted expected returns per candidate
  */
-function blackLittermanReturns(candidates, tau = 0.05) {
+function blackLittermanReturns(candidates, tau = 0.05, rfRate = RF) {
   const n = candidates.length;
   if (n === 0) return [];
 
@@ -1467,7 +1678,7 @@ function blackLittermanReturns(candidates, tau = 0.05) {
   const avgVol = candidates.reduce((s, c) => s + c.v, 0) / n;
   const eqReturns = candidates.map(c => {
     const beta = c.v / (avgVol || 15);
-    return RF + beta * (avgRet - RF);
+    return rfRate + beta * (avgRet - rfRate);
   });
 
   // Views: factor score implies a view on relative performance
@@ -1691,7 +1902,8 @@ function factorDiversificationScore(alloc, candidates, deployAmt) {
 
 // regimeCtx: { state5, acceleration, duration, transition, durationModel } or just a string
 // prevBest: optional previous allocation weights to warm-start from
-function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest) {
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest, rfRate, trailRetMatrix) {
+  const localRF = rfRate != null ? rfRate : RF;
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
   const numIterations = iterations || 6000;
@@ -1720,6 +1932,33 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   const [baseDefBonus, baseAggBonus, baseKellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
+
+  // ── Confidence scaling: scale tilt magnitude by HMM posterior probability ──
+  // 90%+ confident → full tilt (1.0). 55% barely classified → 51% of tilt.
+  // This makes tilts data-driven instead of full-blast on every regime detection.
+  const hmmProbs = regimeCtx?.hmmProbs;
+  const maxProb = hmmProbs ? Math.max(...hmmProbs) : 0.7; // fallback if no HMM
+  let confidenceScale = 0.3 + 0.7 * Math.min(1, (maxProb - 0.4) / 0.5);
+
+  // ── Absorption Ratio Amplifier (Kritzman et al. 2011) ──
+  // When cross-asset correlations are high (markets "tightly coupled"), a shock in
+  // any asset propagates to all. AR spikes preceded COVID crash, 2022 rate shock,
+  // and Aug 2024 unwind by 2-4 weeks — a leading indicator vs our coincident HMM.
+  // regimeCtx.arShift carries the standardized AR shift from the backtest loop.
+  const arShift = regimeCtx?.arShift ?? 0;
+  if (arShift > 1.0) {
+    // AR in top decile — markets are fragile, amplify defensive confidence by 1.3x
+    // This shifts effective regime one step toward risk-off
+    if (state5.includes("risk_off")) confidenceScale = Math.min(1.0, confidenceScale * 1.3);
+    else if (state5 === "neutral") confidenceScale *= 0.7; // reduce conviction in neutral (could turn bad)
+  } else if (arShift > 0.5) {
+    // AR elevated but not extreme — mild caution
+    if (state5.includes("risk_on")) confidenceScale *= 0.85; // temper bullish confidence
+  } else if (arShift < -0.5) {
+    // AR well below average — markets are well-diversified, safe to be more aggressive
+    if (state5.includes("risk_on")) confidenceScale = Math.min(1.0, confidenceScale * 1.15);
+  }
+
   const durationScale = Math.min(2.0, 0.5 + (duration / 12) * 1.5);
   let accelMod = 1.0;
   if (state5.includes("risk_off")) accelMod = acceleration < -0.15 ? 0.6 : acceleration > 0.15 ? 1.3 : 1.0;
@@ -1769,14 +2008,21 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const volMod = volSignal < 0 ? 0.85 : 1.0; // only dampen during expansion, never amplify
   const vixMod = vixInversion ? 0.7 : 1.0; // gentler than before (was 0.5)
 
-  const defBonus = baseDefBonus * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1.15 : 1.0);
+  const defBonus = baseDefBonus * confidenceScale * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1.15 : 1.0);
   // Entry bonus reaches aggressive categories in ANY state (including neutral after bear→neutral recovery)
-  const aggBonus = (baseAggBonus * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
-  const kellyMult = baseKellyMult;
+  const aggBonus = (baseAggBonus * confidenceScale * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
+  const kellyMult = baseKellyMult * (0.5 + 0.5 * confidenceScale);
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
-    if (state5 === "neutral" && entryBonus === 0) { regimeTilt[i] = 0; continue; }
+    if (state5 === "neutral" && entryBonus === 0) {
+      // Neutral regime: use acceleration direction for a small trend-following tilt
+      // instead of going silent. Negative accel = improving → slight risk-on. Positive = worsening → slight risk-off.
+      const neutralTilt = acceleration < -0.05 ? 0.04 : acceleration > 0.05 ? -0.04 : 0;
+      if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = -neutralTilt;
+      else if (AGGRESSIVE_CATS.has(c.c)) regimeTilt[i] = neutralTilt;
+      continue;
+    }
     if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = defBonus - (entryBonus > 0 ? entryBonus * 0.5 : 0);
     else if (AGGRESSIVE_CATS.has(c.c)) regimeTilt[i] = aggBonus;
     else regimeTilt[i] = entryBonus > 0 ? entryBonus * 0.3 : 0;
@@ -1786,7 +2032,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const hasFactors = candidates.some(c => c.factorScore != null);
   let blReturns = null;
   if (hasFactors) {
-    blReturns = blackLittermanReturns(candidates);
+    blReturns = blackLittermanReturns(candidates, 0.05, localRF);
   }
 
   // Pre-compute adjusted returns, vols as typed arrays
@@ -1825,9 +2071,30 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     relValSignals[i] = candidates[i].relValue || 0;
   }
 
+  // ── Pre-compute direct momentum signals (regime-aware) ──
+  // mom12_1 already computed by computeFactorScores(); here we create a direct
+  // per-candidate bonus/penalty that bypasses the BL blend for a purer momentum tilt.
+  const momSignal = new Float64Array(n);
+  if (hasFactors) {
+    // Collect mom12_1 ranks across candidates
+    const momRanks = candidates.map((c, i) => ({ i, rank: c.factorRanks?.mom12_1 ?? 0.5 }));
+    // Regime-aware momentum strength: strongest in Bull/Recovery, weakest in Crisis
+    let momScale = 1.0;
+    if (state5 === "strong_risk_on" || state5 === "mild_risk_on") momScale = 1.3;
+    else if (state5 === "neutral") momScale = 1.0;
+    else if (state5 === "mild_risk_off") momScale = 0.6;
+    else if (state5 === "strong_risk_off") momScale = 0.3; // momentum crashes in crisis
+    for (const { i, rank } of momRanks) {
+      // Top quartile: bonus +0.03 to +0.08; bottom quartile: penalty -0.02 to -0.05
+      if (rank >= 0.75) momSignal[i] = (0.03 + (rank - 0.75) * 0.20) * momScale;
+      else if (rank <= 0.25) momSignal[i] = (-0.02 - (0.25 - rank) * 0.12) * momScale;
+      // Middle 50%: no direct momentum signal (handled by BL blend already)
+    }
+  }
+
   // ── Pre-compute risk parity reference weights ──
   let rpWeights = null;
-  if (target === "risk_parity") {
+  if (target === "risk_parity" || target === "hybrid") {
     rpWeights = riskParityWeights(candidates, gc);
   }
 
@@ -1843,12 +2110,12 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const c = candidates[i];
     let levCap = 1.0;
     if (c.lev && Math.abs(c.lev) > 1) { levCap = c.lev < 0 ? 0.05 : Math.abs(c.lev) >= 3 ? 0.10 : 0.15; }
-    // Individual stock cap: max 15% per stock to limit idiosyncratic risk
-    if (c.type === "stock") levCap = Math.min(levCap, 0.15);
+    // Uniform 20% cap per position (stocks and ETFs treated equally)
+    levCap = Math.min(levCap, 0.20);
     if (!useKelly) { maxPct[i] = levCap; continue; }
     const sigSq = volArr[i] * volArr[i];
     if (sigSq <= 0) { maxPct[i] = levCap; continue; }
-    const fStar = 0.5 * ((adjRet[i] - RF) / 100) / sigSq;
+    const fStar = 0.5 * ((adjRet[i] - localRF) / 100) / sigSq;
     const adj = AGGRESSIVE_CATS.has(c.c) ? kellyMult : 1.0;
     maxPct[i] = Math.max(0.01, Math.min(fStar * adj, levCap));
   }
@@ -1890,12 +2157,30 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   for (let t = 0; t < numIterations; t++) {
-    // Position count distribution: favor 4-7 (sweet spot), explore 3 and 8-10
+    // Position count distribution: regime-adaptive concentration
+    // Bull/recovery: concentrate into fewer high-conviction bets (more alpha per position)
+    // Neutral: balanced diversification
+    // Bear/crisis: spread risk across more positions
     let numActive;
     const rnd = Math.random();
-    if (rnd < 0.10) numActive = 3;                                          // 10%: concentrated
-    else if (rnd < 0.70) numActive = 4 + Math.floor(Math.random() * 4);     // 60%: 4-7 sweet spot
-    else numActive = 8 + Math.floor(Math.random() * 3);                     // 30%: 8-10 diversified
+    const isRiskOn = state5.includes("risk_on");
+    const isRiskOff = state5.includes("risk_off");
+    if (isRiskOn) {
+      // Bull: favor 3-5 concentrated positions (capture winners)
+      if (rnd < 0.25) numActive = 3;                                        // 25%: concentrated
+      else if (rnd < 0.80) numActive = 4 + Math.floor(Math.random() * 2);   // 55%: 4-5 sweet spot
+      else numActive = 6 + Math.floor(Math.random() * 2);                   // 20%: 6-7 moderate
+    } else if (isRiskOff) {
+      // Bear: favor 8-12 diversified positions (reduce single-name risk)
+      if (rnd < 0.10) numActive = 5 + Math.floor(Math.random() * 2);        // 10%: moderate
+      else if (rnd < 0.60) numActive = 8 + Math.floor(Math.random() * 3);   // 50%: 8-10 diversified
+      else numActive = 10 + Math.floor(Math.random() * 3);                  // 40%: 10-12 max diversification
+    } else {
+      // Neutral: balanced — original distribution
+      if (rnd < 0.10) numActive = 3;                                        // 10%: concentrated
+      else if (rnd < 0.70) numActive = 4 + Math.floor(Math.random() * 4);   // 60%: 4-7 sweet spot
+      else numActive = 8 + Math.floor(Math.random() * 3);                   // 30%: 8-10 diversified
+    }
     numActive = Math.min(numActive, n);
 
     // Warm-start: 50% of iterations mutate the best-so-far, 50% random exploration
@@ -1938,7 +2223,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // Normalize + apply Kelly/leverage caps + hard 30% per-position cap
     // Two-pass: cap positions, then re-normalize the uncapped to fill the freed weight
     let allocSum2 = 0;
-    const POS_CAP = 0.30; // no single position > 30% of deployment
+    const POS_CAP = 0.20; // uniform 20% cap — stocks and ETFs treated equally
     for (let i = 0; i < n; i++) {
       let pct = ws[i] / wSum;
       if (pct > 0) pct = Math.min(pct, maxPct[i], POS_CAP);
@@ -1985,7 +2270,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
     // Score
     const var95 = vol * 1.645;
-    const sh = srMode === "var" ? (var95 > 0 ? (ret - RF) / var95 : 0) : srMode === "vol2" ? (vol > 0 ? (ret - RF) / (vol * vol / 100) : 0) : (vol > 0 ? (ret - RF) / vol : 0);
+    // Sharpe computed after CVaR so cvar mode can use it
+    let sh;
     const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
 
     let levPenalty = 0, levExposure = 0;
@@ -2007,14 +2293,6 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // HARD REJECT: fewer than 3 positions — no single-stock or 2-stock portfolios allowed
     if (activeCount < 3) continue;
 
-    // HARD CAP: enforce max 25% per individual stock AFTER normalization
-    let hadStockViolation = false;
-    for (let i = 0; i < n; i++) {
-      const wt = alloc[i] / (deployAmt || 1);
-      if (candidates[i].type === "stock" && wt > 0.25) hadStockViolation = true;
-    }
-    if (hadStockViolation) continue; // skip this iteration entirely
-
     // ── SECTOR CONCENTRATION: hard reject if any macro-sector exceeds limit ──
     // Use relaxed limit (75%) for small candidate pools (backtest) to avoid rejecting everything
     const sectorHardLimit = n <= 40 ? 0.75 : 0.60;
@@ -2029,16 +2307,12 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     }
     if (maxSectorWt > sectorHardLimit) continue; // reject over-concentrated portfolios
 
-    // Position count scoring: reward 4-7 sweet spot
-    let divScore;
-    if (activeCount === 3) divScore = -0.02;      // borderline — slight penalty
-    else if (activeCount <= 5) divScore = 0.04;    // sweet spot
-    else if (activeCount <= 7) divScore = 0.03;    // good diversification
-    else divScore = 0.01;                          // 8+: slight bonus
+    // Flat diversification: small bonus for ≥3 positions, no sweet-spot forcing
+    // Don't reward mediocre diversification that converges to market returns
+    const divScore = activeCount >= 3 ? 0.01 : -0.05;
 
-    // Single-position concentration penalty — progressive above 25%
-    // Even within the 30% hard cap, softer concentration is preferred
-    const concPenalty = maxSingleWt > 0.25 ? -0.20 * (maxSingleWt - 0.25) / 0.75 : 0;
+    // Only penalize exceeding the hard position cap, not conviction bets within it
+    const concPenalty = maxSingleWt > POS_CAP ? -0.15 * (maxSingleWt - POS_CAP) : 0;
 
     let sc;
     const divAdj = divScore + concPenalty;
@@ -2048,8 +2322,34 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // ── CVaR / Expected Shortfall: tail-risk-aware scoring ──
     let wtdSkew = 0;
     for (let i = 0; i < n; i++) wtdSkew += (alloc[i] / (deployAmt || 1)) * skewArr[i];
-    const cvar = computeCVaR(vol, wtdSkew);
-    const cvarPenalty = -0.03 * Math.max(0, cvar - 25); // penalize CVaR > 25%
+    const parametricCvar = computeCVaR(vol, wtdSkew);
+
+    // ── Empirical CVaR: actual worst-5% portfolio returns from trailing data ──
+    let empiricalCvar = 0;
+    if (srMode === "cvar" && trailRetMatrix && trailRetMatrix.length >= 60) {
+      // Compute portfolio return for each trailing day
+      const T = trailRetMatrix.length;
+      const portRets = new Float64Array(T);
+      for (let m = 0; m < T; m++) {
+        let pRet = 0;
+        for (let i = 0; i < n; i++) pRet += (alloc[i] / (deployAmt || 1)) * trailRetMatrix[m][i];
+        portRets[m] = pRet;
+      }
+      // Sort ascending (worst returns first)
+      portRets.sort();
+      // CVaR = average of worst 5% (e.g., 25 of 504 daily observations)
+      const tailCount = Math.max(3, Math.floor(T * 0.05));
+      let tailSum = 0;
+      for (let i = 0; i < tailCount; i++) tailSum += portRets[i];
+      // CVaR as annualized positive loss percentage (daily → annual via √252)
+      empiricalCvar = Math.abs(tailSum / tailCount) * Math.sqrt(252) * 100;
+    }
+    const cvar = srMode === "cvar" && empiricalCvar > 0 ? empiricalCvar : parametricCvar;
+
+    // ── Sharpe ratio (VaR or CVaR denominator) ──
+    if (srMode === "cvar") sh = cvar > 0 ? (ret - localRF) / cvar : 0;
+    else sh = var95 > 0 ? (ret - localRF) / var95 : 0; // default: VaR Sharpe
+    const cvarPenalty = -0.01 * Math.max(0, cvar - 35); // softer: only penalize extreme CVaR > 35%
 
     // ── Tail risk penalty: leverage + EM + high-vol concentration ──
     let emWeight = 0, highVolWeight = 0;
@@ -2071,38 +2371,92 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     for (let i = 0; i < n; i++) wtdSpyCorr += (alloc[i] / (deployAmt || 1)) * spyCorr[i];
     // Also add existing positions' SPY correlation
     for (let i = 0; i < nEx; i++) wtdSpyCorr += exW[i] * gc(itemCats[i], "US Large Cap");
-    const hasStocks = candidates.some(c => c.type === "stock");
-    const spyPenaltyScale = hasStocks ? 1.0 : 0.15; // minimize for ETF-only mode
+    const spyPenaltyScale = 0.5; // moderate SPY overlap penalty — differentiation matters but don't force exotic picks
     const spyPenalty = (wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0) * spyPenaltyScale;
 
-    // ── Factor diversification: reward balanced factor exposure ──
-    const factorDiv = hasFactors ? factorDiversificationScore(alloc, candidates, deployAmt) : 0;
+    // Factor diversification removed — was forcing neutral factor exposure and preventing
+    // tactical tilts toward working factors (e.g., momentum in trending markets)
+    const factorDiv = 0;
 
     // ── Relative value signal: bonus for undervalued-vs-peers positions ──
     let relValBonus = 0;
     for (let i = 0; i < n; i++) relValBonus += (alloc[i] / (deployAmt || 1)) * relValSignals[i];
 
+    // ── Direct momentum bonus: regime-aware tilt toward momentum winners ──
+    let momBonus = 0;
+    for (let i = 0; i < n; i++) momBonus += (alloc[i] / (deployAmt || 1)) * momSignal[i];
+
     // ── Dynamic vol targeting: scale expected return by vol scale factor ──
     const dynRet = ret * dynVolScale;
 
+    // ── Dynamic regime-based allocation alignment bonus ──
+    // Reward portfolios whose macro-sector weights fall within regime-appropriate ranges
+    let regimeAlignBonus = 0;
+    if (hasRegimeTilt && REGIME_ALLOCATION_RULES[state5]) {
+      const rules = REGIME_ALLOCATION_RULES[state5];
+      // Compute actual macro-sector group weights
+      let equityWt = 0, bondWt = 0, commodityWt = 0;
+      for (let i = 0; i < n; i++) {
+        const wt = alloc[i] / (deployAmt || 1);
+        if (wt < 0.01) continue;
+        const ms = macroSectors[i];
+        if (ms === "fixed-income") bondWt += wt;
+        else if (ms === "alternatives") commodityWt += wt;
+        else equityWt += wt; // equity-core, equity-growth, equity-satellite, sector-*, intl*
+      }
+      // Score: reward being within target range, penalize being outside
+      const checkRange = (actual, min, max) => {
+        if (actual >= min && actual <= max) return 0.02; // within range bonus
+        const dist = actual < min ? min - actual : actual - max;
+        return -dist * 0.15; // penalty proportional to distance from range
+      };
+      regimeAlignBonus = checkRange(equityWt, rules.equity[0], rules.equity[1])
+        + checkRange(bondWt, rules.bond[0], rules.bond[1])
+        + checkRange(commodityWt, rules.commodity[0], rules.commodity[1]);
+    }
+
     // Combined new penalties
     const newPenalties = cvarPenalty + tailRiskPenalty + sectorConcPenalty;
+    const alphaSignals = momBonus + regimeAlignBonus;
+    // Common signals used across strategies
+    // Regime bonus amplified 2x so it competes with Sharpe signal (0.6-1.2 range)
+    const commonSignals = regimeBonus * 2.0 + divAdj + spyPenalty + relValBonus + alphaSignals + newPenalties;
 
-    if (target === "risk_parity" && rpWeights) {
-      // Risk parity objective: minimize distance from equal-risk-contribution weights
+    if (target === "hybrid" && rpWeights) {
+      // Hybrid: risk-parity base + alpha tilts — best balance of stability and alpha
       let rpDist = 0;
-      for (let i = 0; i < n; i++) {
-        const actual = alloc[i] / (deployAmt || 1);
-        rpDist += (actual - rpWeights[i]) ** 2;
-      }
-      sc = -rpDist * 100 + sh * 0.1 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + newPenalties;
-    } else if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
-    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
-    else if (target === "max_return") {
-      const ddPenalty = srMode === "var" ? -0.08 * estMaxDD : srMode === "vol2" ? -0.04 * vol : -0.01 * vol;
-      sc = dynRet * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
+      for (let i = 0; i < n; i++) { const a = alloc[i] / (deployAmt || 1); rpDist += (a - rpWeights[i]) ** 2; }
+      // RP is a gentle preference (10x), Sharpe drives alpha (0.8x), momentum gets extra weight
+      sc = -rpDist * 10 + sh * 0.8 + momBonus * 0.5 + commonSignals;
+    } else if (target === "risk_parity" && rpWeights) {
+      // Risk Parity: equal risk contribution with meaningful alpha input
+      let rpDist = 0;
+      for (let i = 0; i < n; i++) { const a = alloc[i] / (deployAmt || 1); rpDist += (a - rpWeights[i]) ** 2; }
+      // Reduced RP dominance (50x, was 100x), increased Sharpe input (0.3, was 0.1)
+      sc = -rpDist * 50 + sh * 0.3 + commonSignals;
+    } else if (target === "max_sharpe") {
+      // Max Sharpe: primary alpha strategy — Sharpe ratio drives selection
+      // Add return floor: penalize portfolios with expected return below risk-free rate
+      const retFloorPenalty = ret < localRF ? -0.10 * (localRF - ret) : 0;
+      sc = sh + retFloorPenalty + volPenalty + levPenalty + commonSignals;
+    } else if (target === "min_vol") {
+      // Min Vol: minimum volatility WITH a return floor
+      // Without a return floor, this always picks 100% bonds. Reward exceeding RF+2%.
+      const minRetFloor = localRF + 2;
+      const retFloorBonus = ret > minRetFloor ? Math.min(0.15, (ret - minRetFloor) * 0.03) : -0.10 * (minRetFloor - ret);
+      sc = -vol * 0.8 + retFloorBonus + levPenalty + commonSignals;
+    } else if (target === "max_return") {
+      // Max Return: aggressive alpha pursuit with Sharpe safety net
+      // Regime-aware aggression: bull = full send, bear = tempered
+      const regimeRetMult = state5.includes("risk_on") ? 2.0 : state5.includes("risk_off") ? 1.0 : 1.5;
+      // Sharpe floor: don't pick 100% vol assets — need minimum risk-adjusted quality
+      const shFloor = sh < 0.2 ? -0.15 * (0.2 - sh) : 0;
+      const ddPenalty = -0.02 * estMaxDD;
+      sc = dynRet * regimeRetMult + shFloor + ddPenalty + volPenalty + levPenalty + commonSignals;
+    } else {
+      // Balanced (default): multi-objective — meaningful weight on return + Sharpe + drawdown
+      sc = sh * 0.6 + dynRet * 0.10 - estMaxDD * 0.03 + volPenalty + levPenalty + commonSignals;
     }
-    else sc = sh * .5 + dynRet * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + newPenalties;
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
@@ -2134,7 +2488,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   // Redistribute excess proportional to REMAINING HEADROOM (cap - current), not equally
   // This guarantees convergence: no position can be pushed over the cap by redistribution
   const finalTotal = filtered.reduce((s, r) => s + r.dollars, 0) || 1;
-  const maxPosDollars = finalTotal * 0.30;
+  const maxPosDollars = finalTotal * 0.20; // uniform 20% cap
   for (let pass = 0; pass < 5; pass++) {
     let excess = 0;
     filtered.forEach(r => {
@@ -3399,13 +3753,13 @@ export default function App() {
 
   const [tab, setTab] = useState("My Portfolio");
   const [sq, setSq] = useState(""); const [so, setSo] = useState(false); const [sc, setSc] = useState("All");
-  const [srMode, setSrMode] = useState("std"); // "std" | "var" | "vol2"
+  const [srMode, setSrMode] = useState("var"); // "var" (VaR Sharpe) | "cvar" (CVaR Sharpe)
   const [ot, setOt] = useState("max_sharpe");
   const [volTarget, setVolTarget] = useState(0);  // 0 = off, otherwise target vol %
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
   const [useRegime, setUseRegime] = useState(true); // Regime-adaptive toggle
   const [taxState, setTaxState] = useState("None"); // State for tax calc
-  const [includeStocks, setIncludeStocks] = useState("etf"); // "etf" | "stocks" | "both"
+  const [includeStocks, setIncludeStocks] = useState("both"); // always full universe (ETF + stocks)
   const [optResult, setOptResult] = useState(null);
   const [optRunning, setOptRunning] = useState(false);
   const [recPrices, setRecPrices] = useState({}); // cached live prices for optimizer recommendations
@@ -3430,6 +3784,11 @@ export default function App() {
   const [simRunning, setSimRunning] = useState(false);
   const [simProgress, setSimProgress] = useState("");
   const [simResult, setSimResult] = useState(null);
+  // ── Advanced algorithm controls ──
+  const [walkForward, setWalkForward] = useState(true); // Walk-forward backtesting (no look-ahead)
+  const [drawdownProtection, setDrawdownProtection] = useState(true); // Drawdown circuit breakers
+  const [weightingMethod, setWeightingMethod] = useState("score"); // "score" | "risk_parity" | "hybrid"
+  const [oosFraction, setOosFraction] = useState(0.3); // OOS split ratio (default 30%)
 
   // ── Regime state ──
   const [regimeData, setRegimeData] = useState(null);
@@ -3810,27 +4169,71 @@ export default function App() {
       "BND","AGG","TIP","IEF","HYG",
       // Commodity
       "GLD","SLV","DBC",
+      // Managed Futures (crisis alpha — uncorrelated trend-following)
+      "DBMF","KMLM","CTA",
       // Dividend
       "HDV","DGRO",
     ];
     const benchmarks = ["SPY"];
-    // For stocks: use historical S&P 500 top 30 by year (no survivorship bias)
-    const btStocks = (includeStocks === "stocks" || includeStocks === "both") ? SP500_ALL_TICKERS : [];
-    // In stocks-only mode, skip ETF universe (except benchmarks for comparison)
-    const btETFsFiltered = includeStocks === "stocks" ? [] : btETFs;
+    // Unified universe: always fetch both ETFs and stocks for maximum alpha opportunity
+    const allSymbols = [...new Set([...btETFs, ...benchmarks, ...SP500_ALL_TICKERS])];
 
-    const allSymbols = [...new Set([...btETFsFiltered, ...benchmarks, ...btStocks])];
-    setBtProgress(`Fetching ${allSymbols.length} symbols (2005-2025)...`);
+    // ── IndexedDB cache for historical price data ──
+    // Daily data for ~750 symbols is too large for localStorage (~50MB).
+    // IndexedDB has no practical limit. Cache key includes symbol list hash + date range.
+    const CACHE_DB_NAME = "portfolio_optimizer_cache";
+    const CACHE_STORE = "histData";
+    const CACHE_KEY = `hist_daily_2005_2025_v2_${allSymbols.length}`;
+
+    const openCacheDB = () => new Promise((resolve, reject) => {
+      const req = indexedDB.open(CACHE_DB_NAME, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(CACHE_STORE); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    const getCached = (db) => new Promise((resolve) => {
+      try {
+        const tx = db.transaction(CACHE_STORE, "readonly");
+        const store = tx.objectStore(CACHE_STORE);
+        const req = store.get(CACHE_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    });
+
+    const setCache = (db, data) => {
+      try {
+        const tx = db.transaction(CACHE_STORE, "readwrite");
+        tx.objectStore(CACHE_STORE).put(data, CACHE_KEY);
+      } catch { /* cache write failure is non-fatal */ }
+    };
 
     let histData = {};
+    let usedCache = false;
     try {
-      // Fetch in large batches — Yahoo Finance has no rate limit
-      for (let i = 0; i < allSymbols.length; i += 15) {
-        const batch = allSymbols.slice(i, i + 15);
-        setBtProgress(`Fetching batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
-        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31`);
-        const json = await resp.json();
-        if (json.data) Object.assign(histData, json.data);
+      const cacheDB = await openCacheDB();
+      const cached = await getCached(cacheDB);
+      if (cached && Object.keys(cached).length >= allSymbols.length * 0.8) {
+        // Cache hit — skip API calls entirely
+        histData = cached;
+        usedCache = true;
+        setBtProgress(`Loaded ${Object.keys(histData).length} symbols from cache (instant)`);
+      } else {
+        // Cache miss — fetch from API and store
+        setBtProgress(`Fetching ${allSymbols.length} symbols (2005-2025)...`);
+        for (let i = 0; i < allSymbols.length; i += 15) {
+          const batch = allSymbols.slice(i, i + 15);
+          setBtProgress(`Fetching daily data batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
+          const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31&interval=1d`);
+          const json = await resp.json();
+          if (json.data) Object.assign(histData, json.data);
+        }
+        // Store in IndexedDB for next run
+        if (Object.keys(histData).length > 10) {
+          setBtProgress(`Caching ${Object.keys(histData).length} symbols for instant future runs...`);
+          setCache(cacheDB, histData);
+        }
       }
     } catch (e) {
       setBtProgress("Error fetching historical data: " + e.message);
@@ -3843,20 +4246,17 @@ export default function App() {
       setBtRunning(false); return;
     }
 
-    setBtProgress(`Processing ${available.length} ETFs...`);
+    setBtProgress(`Processing ${available.length} symbols (daily data)...`);
 
-    // Build monthly returns for each symbol
-    // Pre-index monthly returns by date key for O(1) lookup
-    const monthlyReturns = {};
+    // Build daily returns for each symbol
+    // Pre-index by date key (YYYY-MM-DD) for O(1) lookup
     const returnsByDateSym = {};
     const allDateKeys = new Set();
     for (const sym of available) {
       const prices = histData[sym];
-      monthlyReturns[sym] = [];
       for (let i = 1; i < prices.length; i++) {
-        const dateKey = prices[i].date.slice(0, 7);
+        const dateKey = prices[i].date; // full YYYY-MM-DD
         const entry = { date: prices[i].date, ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close, close: prices[i].close };
-        monthlyReturns[sym].push(entry);
         if (!returnsByDateSym[dateKey]) returnsByDateSym[dateKey] = {};
         returnsByDateSym[dateKey][sym] = entry;
         allDateKeys.add(dateKey);
@@ -3864,12 +4264,16 @@ export default function App() {
     }
     const sortedDates = [...allDateKeys].sort();
     const dateToIdx = {}; sortedDates.forEach((d, i) => { dateToIdx[d] = i; });
+    // Trading days per year (~252) for annualization
+    const TRADING_DAYS_PER_YEAR = 252;
+    // Map each date to its month key (YYYY-MM) for regime data lookup
+    const dateToMonth = (d) => d.slice(0, 7);
 
-    // ═══ MONTHLY MONITORING WITH CONDITIONAL REBALANCING ═══
+    // ═══ DAILY MONITORING WITH CONDITIONAL REBALANCING ═══
     const startCash = btStartCash;
-    const optCurve = [{ date: "2006-01", value: startCash }];
-    const spyCurve = [{ date: "2006-01", value: startCash }];
-    const bal60Curve = [{ date: "2006-01", value: startCash }];
+    const optCurve = [{ date: "2006-01-01", value: startCash }];
+    const spyCurve = [{ date: "2006-01-01", value: startCash }];
+    const bal60Curve = [{ date: "2006-01-01", value: startCash }];
     let optValue = startCash, spyValue = startCash, bal60Value = startCash;
     let optAlloc = {};
     let costBasisMap = {}; // ticker → total dollar cost basis (actual purchase cost)
@@ -3877,6 +4281,8 @@ export default function App() {
     let costPerShareMap = {}; // ticker → average cost per share
     let posEstablishedMap = {}; // ticker → monthKey when position was first established/last increased
     let totalTaxPaid = 0, totalRebalances = 0;
+    let annualTaxSpent = 0, annualTaxYear = 0; // annual tax budget tracker
+    const TAX_BUDGET_PCT = 1.0; // max 1% of portfolio value in taxes per year
     let totalTaxSaved = 0; // tax saved via loss offsets
     let lossCarryover = 0; // unused losses carried forward to future periods
     let annualOrdinaryOffsetUsed = 0; // track $3k/year ordinary income offset
@@ -3889,12 +4295,19 @@ export default function App() {
     const isMedTax = btTaxRates.st > 30;
     const taxCooldownMonths = isHighTax ? 3 : 2; // high-tax: 3-month min, else 2
     const taxSignalThreshold = isHighTax ? 3 : 2; // high-tax: need 3 confirming signals, else 2
-    const taxHurdleFloor = isHighTax ? 2.5 : isMedTax ? 2.0 : 1.5; // scale floor with tax rate
+    const taxHurdleFloor = isHighTax ? 3.5 : isMedTax ? 3.0 : 2.5; // raised floor for daily data — trade less, let positions compound
     const rebalanceEvents = [];
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
-    // Only simulate months where SPY data actually exists
+    // Only simulate days where SPY data exists
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
-    const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
+    const simDates = sortedDates.filter(d => d >= "2006-01-01" && d <= "2025-12-31" && spyDates.has(d));
+    // Track last evaluated month to avoid re-evaluating the same month multiple times
+    let lastEvalMonth = null;
+    // Convert cooldown from months to trading days (~21 per month)
+    const taxCooldownDays = taxCooldownMonths * 21;
+    // ── Position-level trailing stop tracking ──
+    // Track peak price for each held position to detect single-position blowups
+    let positionPeakPrice = {}; // ticker → highest close price while held
 
     // ── Build regime-duration-return model from historical data ──
     // IMPORTANT: To avoid forward-looking bias, we build this INCREMENTALLY during the backtest.
@@ -3902,50 +4315,219 @@ export default function App() {
     // The model is rebuilt periodically (every 12 months) for efficiency.
     let regimeDurModel = null;
     let lastModelBuildDate = null;
+    let adaptiveFactorWeights = null; // rolling IC-based factor weights
+
+    // ── Drawdown control state ──
+    let ddPeak = startCash; // rolling portfolio peak value
+    let ddCounters = new Array(DRAWDOWN_LEVELS.length).fill(0); // confirmation counters per level
+    let ddActiveLevel = -1; // highest active drawdown level (-1 = normal)
+    let ddRecoveryMonths = 0; // months since drawdown ended (for gradual re-entry)
+    let ddEquityScale = 1.0; // current equity scaling factor (1.0 = no reduction)
+    let ddBaseAlloc = null; // ORIGINAL allocation from optimizer (before drawdown scaling)
+    const drawdownEvents = []; // track drawdown events for results
+
+    // ── Walk-forward trailing window size ──
+    // Walk-forward uses stricter rolling window (48 months) for more robust out-of-sample estimates
+    const wfTrailMonths = walkForward ? 48 : 12;
+    // Effective optimization target: override with hybrid when weightingMethod is set
+    const effectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
 
     for (let mi = 0; mi < simDates.length; mi++) {
-      const monthKey = simDates[mi];
-      const mIdx = dateToIdx[monthKey];
-      const mYear = parseInt(monthKey.slice(0, 4));
-      const mMonth = parseInt(monthKey.slice(5, 7)) - 1;
-      const monthData = returnsByDateSym[monthKey] || {};
+      const dateKey = simDates[mi];
+      const mIdx = dateToIdx[dateKey];
+      const monthKey = dateToMonth(dateKey); // YYYY-MM for regime lookup
+      const mYear = parseInt(dateKey.slice(0, 4));
+      const mMonth = parseInt(dateKey.slice(5, 7)) - 1;
+      const dayData = returnsByDateSym[dateKey] || {};
+      // Declare regime variables BEFORE the try block so they're available throughout
+      let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
+      let btDuration = 0, btTransition = null, regimeChanged = false;
       try {
 
-      // Step 1: Apply returns
+      // Step 1: Apply daily returns
       if (Object.keys(optAlloc).length > 0) {
-        let optMonthRet = 0;
+        let optDayRet = 0;
         for (const [sym, wt] of Object.entries(optAlloc)) {
-          const md = monthData[sym];
-          if (md) optMonthRet += wt * md.ret;
+          const md = dayData[sym];
+          if (md) optDayRet += wt * md.ret;
         }
-        optValue *= (1 + optMonthRet);
+        optValue *= (1 + optDayRet);
       }
-      const spyMd = monthData["SPY"];
+      const spyMd = dayData["SPY"];
       if (spyMd) spyValue *= (1 + spyMd.ret);
-      bal60Value *= (1 + 0.6 * (monthData["VTI"]?.ret || 0) + 0.4 * (monthData["BND"]?.ret || 0));
-      optCurve.push({ date: monthKey, value: optValue });
-      spyCurve.push({ date: monthKey, value: spyValue });
-      bal60Curve.push({ date: monthKey, value: bal60Value });
+      bal60Value *= (1 + 0.6 * (dayData["VTI"]?.ret || 0) + 0.4 * (dayData["BND"]?.ret || 0));
+      // ── Update position peak prices for trailing stop detection ──
+      for (const sym of Object.keys(optAlloc)) {
+        const closePrice = dayData[sym]?.close;
+        if (closePrice) positionPeakPrice[sym] = Math.max(positionPeakPrice[sym] || 0, closePrice);
+      }
+      // Record curve at daily granularity (sampled to ~monthly for chart performance)
+      // Always push last trading day of each month + every 5th day for drawdown precision
+      const isMonthEnd = mi + 1 >= simDates.length || dateToMonth(simDates[mi + 1]) !== monthKey;
+      if (isMonthEnd || mi % 5 === 0) {
+        optCurve.push({ date: dateKey, value: optValue });
+        spyCurve.push({ date: dateKey, value: spyValue });
+        bal60Curve.push({ date: dateKey, value: bal60Value });
+      }
+
+      // ── Drawdown Controls with Reversal Delay (Regime-Aware) ──
+      // KEY: Always apply the scale to ddBaseAlloc (the ORIGINAL optimizer allocation).
+      // REGIME-AWARE: Don't trigger new drawdown levels during confirmed recovery/bull.
+      // Drawdowns during regime-confirmed rallies are typically V-shaped — selling low
+      // and buying back higher destroys alpha. Only trigger when regime confirms stress.
+      const ddRegimeAllowsTrigger = !btState5 || btState5 === "neutral" ||
+        btState5.includes("risk_off"); // only trigger in neutral, bear, or unknown
+      if (drawdownProtection && Object.keys(optAlloc).length > 0) {
+        // Save base allocation from optimizer if not already saved
+        if (!ddBaseAlloc) ddBaseAlloc = { ...optAlloc };
+
+        if (optValue > ddPeak) ddPeak = optValue;
+        const currentDD = (ddPeak - optValue) / ddPeak; // 0 to 1
+
+        // Update confirmation counters
+        for (let lvl = 0; lvl < DRAWDOWN_LEVELS.length; lvl++) {
+          if (currentDD >= DRAWDOWN_LEVELS[lvl].threshold) {
+            ddCounters[lvl]++;
+          } else {
+            ddCounters[lvl] = 0; // reset if recovered above this level
+          }
+        }
+
+        // Find highest CONFIRMED level (counter >= required confirmation in trading days)
+        // confirmationMonths × 21 trading days per month
+        let confirmedLevel = -1;
+        for (let lvl = DRAWDOWN_LEVELS.length - 1; lvl >= 0; lvl--) {
+          if (ddCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths * 21) {
+            confirmedLevel = lvl; break;
+          }
+        }
+
+        // Update equity scale when a new level is confirmed AND regime allows it
+        // In bull/recovery regimes, only the most severe level (25%+ immediate) triggers
+        if (confirmedLevel >= 0 && confirmedLevel > ddActiveLevel && (ddRegimeAllowsTrigger || confirmedLevel >= DRAWDOWN_LEVELS.length - 1)) {
+          ddEquityScale = 1.0 - DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
+          ddActiveLevel = confirmedLevel;
+          ddRecoveryMonths = 0;
+          drawdownEvents.push({ date: monthKey, type: "TRIGGER", level: confirmedLevel,
+            drawdown: +(currentDD * 100).toFixed(1), equityScale: +ddEquityScale.toFixed(2),
+            portfolioValue: Math.round(optValue) });
+        }
+
+        // Recovery: gradual re-entry with hysteresis
+        if (ddActiveLevel >= 0) {
+          const activeThreshold = DRAWDOWN_LEVELS[ddActiveLevel].threshold;
+          if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
+            ddRecoveryMonths++;
+            // Linear re-entry over ~63 trading days (3 months) back to full equity
+            ddEquityScale = Math.min(1.0, ddEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[ddActiveLevel].equityReduction)) / 63);
+            if (ddEquityScale >= 0.98) {
+              ddEquityScale = 1.0;
+              ddActiveLevel = -1;
+              ddRecoveryMonths = 0;
+              ddCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
+              drawdownEvents.push({ date: monthKey, type: "RECOVERED",
+                drawdown: +(currentDD * 100).toFixed(1), portfolioValue: Math.round(optValue) });
+            }
+          } else {
+            ddRecoveryMonths = 0; // still in drawdown, reset recovery counter
+          }
+        }
+
+        // Apply the equity scale to the BASE allocation (not the already-scaled one)
+        if (ddEquityScale < 1.0 && ddBaseAlloc) {
+          const scaledAlloc = {};
+          let equityReduced = 0;
+          for (const [sym, wt] of Object.entries(ddBaseAlloc)) {
+            const db = etfDbMap[sym];
+            const ms = MACRO_SECTOR_MAP[db?.c] || "other";
+            if (ms === "fixed-income" || ms === "alternatives") {
+              scaledAlloc[sym] = wt;
+            } else {
+              scaledAlloc[sym] = wt * ddEquityScale;
+              equityReduced += wt * (1 - ddEquityScale);
+            }
+          }
+          // Shift freed equity to the largest bond holding (or BND)
+          const bondHolding = Object.keys(scaledAlloc).find(s => {
+            const db = etfDbMap[s];
+            return MACRO_SECTOR_MAP[db?.c] === "fixed-income";
+          });
+          if (bondHolding) scaledAlloc[bondHolding] = (scaledAlloc[bondHolding] || 0) + equityReduced;
+          else if (equityReduced > 0.01) scaledAlloc["BND"] = (scaledAlloc["BND"] || 0) + equityReduced;
+          // Re-normalize
+          const totalWt = Object.values(scaledAlloc).reduce((s, w) => s + w, 0);
+          if (totalWt > 0) for (const sym of Object.keys(scaledAlloc)) scaledAlloc[sym] /= totalWt;
+          optAlloc = scaledAlloc;
+        } else if (ddEquityScale >= 1.0 && ddBaseAlloc) {
+          // Fully recovered — restore original allocation
+          optAlloc = { ...ddBaseAlloc };
+        }
+      }
 
       // Step 2: Pre-screen
       const prevTickers = Object.keys(optAlloc);
       const isFirstAllocation = prevTickers.length === 0;
       const monthsSinceRebal = lastRebalanceMonth ? (mIdx - dateToIdx[lastRebalanceMonth]) : 999;
-      let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
-      let btDuration = 0, btTransition = null, regimeChanged = false;
+      // btRegime, btState5, etc. declared before try block (above) to avoid TDZ
+      // Dynamic risk-free rate from 10Y Treasury yield at this date
+      const dynamicRF = historicalRegimes?.[monthKey]?.dgs10 ?? RF;
       if (useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
         if (regData) {
           btState5 = regData.state5 || null; btRegimeScore = regData.score; btAcceleration = regData.acceleration ?? null;
           const regime3 = regData.regime; btDuration = 1;
-          for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
-            const prev = historicalRegimes[sortedDates[mIdx - lb]];
-            if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
+          // Walk back by MONTH (regime data is monthly) to compute duration
+          { const curMonthNum = mYear * 12 + mMonth;
+            for (let lb = 1; lb <= 36; lb++) {
+              const prevM = curMonthNum - lb;
+              const prevMk = `${Math.floor(prevM / 12)}-${String(prevM % 12 + 1).padStart(2, "0")}`;
+              const prev = historicalRegimes[prevMk];
+              if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
+            }
+          }
+          // ── Lightweight Absorption Ratio approximation ──
+          // Compute average pairwise correlation of major sector ETFs over trailing 63 days.
+          // High avg corr → markets tightly coupled → fragile (AR high).
+          // This is a leading indicator: AR spikes 2-4 weeks before crashes.
+          let btArShift = 0;
+          { const arSyms = ["SPY","QQQ","IWM","XLK","XLF","XLV","XLE","GLD","BND","VEA","HYG"];
+            const arWindow = Math.min(63, mIdx);
+            if (arWindow >= 21) {
+              const arRets = {};
+              for (const s of arSyms) {
+                const rets = [];
+                for (let ad = Math.max(0, mIdx - arWindow); ad < mIdx; ad++) {
+                  rets.push(returnsByDateSym[sortedDates[ad]]?.[s]?.ret || 0);
+                }
+                arRets[s] = rets;
+              }
+              // Average pairwise correlation
+              let corrSum = 0, corrCount = 0;
+              const arKeys = Object.keys(arRets);
+              for (let ai = 0; ai < arKeys.length; ai++) {
+                for (let aj = ai + 1; aj < arKeys.length; aj++) {
+                  const r1 = arRets[arKeys[ai]], r2 = arRets[arKeys[aj]];
+                  const n = r1.length;
+                  const m1 = r1.reduce((a, b) => a + b, 0) / n, m2 = r2.reduce((a, b) => a + b, 0) / n;
+                  let cov = 0, v1 = 0, v2 = 0;
+                  for (let k = 0; k < n; k++) { cov += (r1[k] - m1) * (r2[k] - m2); v1 += (r1[k] - m1) ** 2; v2 += (r2[k] - m2) ** 2; }
+                  const denom = Math.sqrt(v1 * v2);
+                  if (denom > 0) { corrSum += cov / denom; corrCount++; }
+                }
+              }
+              if (corrCount > 0) {
+                const avgCorr = corrSum / corrCount;
+                // Typical avg pairwise corr: ~0.3 normal, ~0.5 stressed, ~0.7+ crisis
+                // Convert to standardized shift: (avgCorr - 0.35) / 0.15
+                btArShift = (avgCorr - 0.35) / 0.15;
+              }
+            }
           }
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
             threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx),
             volSignal: regData?.volSignal || 0,
-            vixInversion: regData?.vixInversion || false };
+            vixInversion: regData?.vixInversion || false,
+            arShift: btArShift };
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
 
           // ── HMM ensemble overlay (conservative fusion, same logic as live optimizer) ──
@@ -3958,91 +4540,184 @@ export default function App() {
               const fredRisk = riskOrder.indexOf(fredState5);
               const hmmRisk = riskOrder.indexOf(hmmState5);
               if (fredRisk >= 0 && hmmRisk >= 0) {
-                btRegime.state5 = riskOrder[Math.min(fredRisk, hmmRisk)];
+                // Adaptive fusion: when both agree on direction, use the STRONGER signal
+                // When they disagree, use the more defensive (conservative)
+                const bothRiskOn = fredRisk >= 3 && hmmRisk >= 3; // both mild_risk_on or stronger
+                const bothRiskOff = fredRisk <= 1 && hmmRisk <= 1; // both mild_risk_off or stronger
+                const fusedIdx = (bothRiskOn || bothRiskOff) ? Math.max(fredRisk, hmmRisk) : Math.min(fredRisk, hmmRisk);
+                btRegime.state5 = riskOrder[fusedIdx];
               }
               btRegime.hmmState5 = hmmState5;
               btRegime.hmmProbs = ensProbs;
-              // Detect regime change from HMM perspective too
-              const prevMonth = mi > 0 ? simDates[mi - 1] : null;
-              if (prevMonth && btHmmEnsembleMap[prevMonth]) {
-                const prevHmmState = hmmToState5(btHmmEnsembleMap[prevMonth]);
+              // Detect regime change from HMM perspective too (compare current month to prev month)
+              const curMonthNum2 = mYear * 12 + mMonth;
+              const prevMonthKey = `${Math.floor((curMonthNum2 - 1) / 12)}-${String((curMonthNum2 - 1) % 12 + 1).padStart(2, "0")}`;
+              if (btHmmEnsembleMap[prevMonthKey]) {
+                const prevHmmState = hmmToState5(btHmmEnsembleMap[prevMonthKey]);
                 if (prevHmmState !== hmmState5) regimeChanged = true;
               }
           }
         }
       }
-      // ── Tax-aware signal-driven rebalance triggers ──
-      // High-tax states need stronger confirmation to justify the tax drag
+      // ── Rebalance Trigger Engine (daily monitoring, deliberate rebalancing) ──
+      // With daily data, signals fire more frequently. The engine must be more
+      // selective to avoid excessive trading that erodes alpha through tax drag
+      // and transaction costs. Daily monitoring is for DRAWDOWN only.
+      // Rebalance evaluation happens at month boundaries with strict gating.
+      const isNewMonth = monthKey !== lastEvalMonth;
+      if (isNewMonth) lastEvalMonth = monthKey;
+
       let shouldEvaluate = isFirstAllocation;
 
-      if (!shouldEvaluate && useRegime && historicalRegimes) {
+      if (!shouldEvaluate && isNewMonth && useRegime && historicalRegimes) {
         const regData = historicalRegimes[monthKey];
 
-        // Regime change is strong enough to trigger alone (even in high-tax states)
-        if (regimeChanged) shouldEvaluate = true;
+        // ── Gate 1: Regime change — only if persistent (not a 1-month flicker) ──
+        // Require the regime to have been different for at least 2 consecutive months
+        // to filter out noise from monthly FRED data revisions
+        if (regimeChanged && btDuration >= 2) shouldEvaluate = true;
 
-        // Three-stage pattern prediction: fires alone if confidence >= 55%
+        // ── Gate 2: Three-stage pattern prediction — only high confidence ──
         if (!shouldEvaluate && !isFirstAllocation) {
-          const threeStagePredict = computeThreeStagePredict(historicalRegimes, sortedDates, mIdx);
-          if (threeStagePredict?.shouldTrigger && monthsSinceRebal >= taxCooldownMonths) {
+          const regEntries = Object.keys(historicalRegimes).sort();
+          const regMonthIdx = regEntries.indexOf(monthKey);
+          const threeStagePredict = regMonthIdx >= 0 ? computeThreeStagePredict(historicalRegimes, regEntries, regMonthIdx) : null;
+          // Raised confidence threshold from 55% to 65% for daily mode
+          if (threeStagePredict?.shouldTrigger && threeStagePredict.confidence >= 0.90 && monthsSinceRebal >= taxCooldownDays) {
             shouldEvaluate = true;
-            // Store for logging in rebalance events
             if (btRegime) btRegime.threeStagePredict = threeStagePredict;
           }
         }
 
-        // For other signals, count confirmations — threshold scales with tax rate
+        // ── Gate 3: Multi-signal confirmation — require MORE signals with daily data ──
         if (!shouldEvaluate) {
           let signalCount = 0;
 
-          // Signal 1: Stress acceleration crossover
-          if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.5) signalCount++;
+          // Signal 1: Stress acceleration (raised threshold from 0.5 to 0.8)
+          if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.8) signalCount++;
 
-          // Signal 2: Volatility regime shift (only meaningful transitions)
-          if (mi > 0) {
-            const prevReg = historicalRegimes[simDates[mi - 1]];
+          // Signal 2: Volatility regime shift (only dramatic transitions)
+          { const prevMk = `${Math.floor((mYear * 12 + mMonth - 1) / 12)}-${String((mYear * 12 + mMonth - 1) % 12 + 1).padStart(2, "0")}`;
+            const prevReg = historicalRegimes[prevMk];
             const volShift = regData?.volRegime !== prevReg?.volRegime;
             const meaningfulShift = volShift && (
               (prevReg?.volRegime === "compression" && regData?.volRegime === "expansion") ||
-              (prevReg?.volRegime === "normal" && regData?.volRegime === "elevated") ||
-              (prevReg?.volRegime === "elevated" && regData?.volRegime === "normal")
-            );
+              (prevReg?.volRegime === "normal" && regData?.volRegime === "elevated")
+            ); // removed elevated→normal (not urgent enough to trade on)
             if (meaningfulShift) signalCount++;
           }
 
-          // Signal 3: VIX inversion
+          // Signal 3: VIX inversion (keep — this is a strong signal)
           if (regData?.vixInversion) signalCount++;
 
-          // Tax-aware threshold: high-tax states need 3 signals, others need 2
-          if (signalCount >= taxSignalThreshold) shouldEvaluate = true;
+          // Raised threshold: need 3 signals regardless of tax state
+          if (signalCount >= 3) shouldEvaluate = true;
         }
 
-        // Quarterly fallback (cooldown scales with tax rate)
-        if (!shouldEvaluate && mMonth % 3 === 0 && monthsSinceRebal >= taxCooldownMonths) shouldEvaluate = true;
-      } else if (!shouldEvaluate) {
-        if (mMonth % 3 === 0) shouldEvaluate = true;
+        // ── Gate 4: Semi-annual fallback ──
+        if (!shouldEvaluate && mMonth % 6 === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
+
+        // ── Gate 5: Monthly drift check ──
+        // If any position has drifted >5% from target weight, evaluate rebalance.
+        // This catches organic drift (winners growing, losers shrinking) without waiting
+        // for a regime signal. SPY auto-rebalances via market-cap weighting — we should too.
+        if (!shouldEvaluate && isNewMonth && monthsSinceRebal >= 42 && lastBestWeights) {
+          let maxDrift = 0;
+          for (const [ticker, targetWt] of Object.entries(lastBestWeights)) {
+            const actualWt = optAlloc[ticker] || 0;
+            maxDrift = Math.max(maxDrift, Math.abs(actualWt - targetWt));
+          }
+          if (maxDrift > 0.05) shouldEvaluate = true; // >5% drift in any position
+        }
+      } else if (!shouldEvaluate && isNewMonth) {
+        // No regime data: semi-annual fallback
+        if (mMonth % 6 === 0) shouldEvaluate = true;
       }
 
-      // Tax-aware minimum cooldown between rebalances
-      if (!isFirstAllocation && monthsSinceRebal < taxCooldownMonths) shouldEvaluate = false;
+      // ── Minimum cooldown: 3 months (63 trading days) regardless of tax state ──
+      // EXCEPTION: Emergency drawdown override — if portfolio is down >15% from peak,
+      // bypass the cooldown. In a crash (Mar 2020, Oct 2008), 3 months of waiting destroys capital.
+      const currentDDFromPeak = ddPeak > 0 ? (ddPeak - optValue) / ddPeak : 0;
+      const isEmergencyDD = currentDDFromPeak >= 0.15;
+      const minCooldownDays = Math.max(taxCooldownDays, 63);
+      if (!isFirstAllocation && monthsSinceRebal < minCooldownDays && !isEmergencyDD) shouldEvaluate = false;
+
+      // ── Gate 6: Position-level trailing stop ──
+      // Portfolio-level drawdown can mask single-position blowups (e.g., -40% in one stock
+      // while portfolio is only -8%). Force rebalance evaluation if any position drops >25%
+      // from its peak weight-adjusted value.
+      if (!shouldEvaluate && !isFirstAllocation && Object.keys(optAlloc).length > 0) {
+        for (const [sym, wt] of Object.entries(optAlloc)) {
+          if (wt < 0.03) continue; // ignore tiny positions
+          const currentPrice = dayData[sym]?.close;
+          if (!currentPrice || !positionPeakPrice[sym]) continue;
+          const posDDFromPeak = (positionPeakPrice[sym] - currentPrice) / positionPeakPrice[sym];
+          if (posDDFromPeak >= 0.25) {
+            shouldEvaluate = true;
+            break;
+          }
+        }
+      }
+
+      // ── Annual tax budget: don't rebalance if we've already spent >1% of portfolio in taxes this year ──
+      if (mYear !== annualTaxYear) { annualTaxSpent = 0; annualTaxYear = mYear; }
+      if (!isFirstAllocation && annualTaxSpent > optValue * TAX_BUDGET_PCT / 100) shouldEvaluate = false;
 
       if (!shouldEvaluate) continue;
       // Yield to UI every evaluation to prevent freeze
-      setBtProgress(`Evaluating ${monthKey}...`);
+      setBtProgress(`Evaluating ${dateKey}...`);
       await new Promise(r => setTimeout(r, 0));
 
       // Step 3: Trailing stats with RECENCY WEIGHTING + RETURN SHRINKAGE
-      // Recent months matter more than old months to avoid momentum whipsaw
-      // (e.g., Jan 2021 still seeing the March-Dec 2020 rocket with equal weight)
+      // All windows now in trading days (~252/year, ~21/month)
+      // ── Vol-derived momentum decay from trailing SPY vol (1 year of daily data) ──
+      let trailingSPYVol = 15;
+      { const spyRets = [];
+        for (let rv = Math.max(0, mIdx - TRADING_DAYS_PER_YEAR); rv < mIdx; rv++) {
+          const r = returnsByDateSym[sortedDates[rv]]?.["SPY"];
+          if (r) spyRets.push(r.ret);
+        }
+        if (spyRets.length >= 60) {
+          const avg = spyRets.reduce((s, r) => s + r, 0) / spyRets.length;
+          trailingSPYVol = Math.sqrt(spyRets.reduce((s, r) => s + (r - avg) ** 2, 0) / spyRets.length) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
+        }
+      }
+      const momDecay = Math.max(0.02, Math.min(0.12, 0.13 - trailingSPYVol * 0.003));
+
+      // ── Adaptive trailing window (in trading days) ──
+      const regData = historicalRegimes?.[monthKey];
+      const volRegime = regData?.volRegime || "normal";
+      const adaptiveTrailDays = walkForward
+        ? (volRegime === "normal" || volRegime === "compression" ? 504 : 1008) // 24mo or 48mo in trading days
+        : TRADING_DAYS_PER_YEAR; // 1 year
+
+      // ── Adaptive shrinkage: scan raw returns (1 year of daily data, annualized) ──
+      const rawReturnsForShrink = [];
+      const quickTrailStart = Math.max(0, mIdx - TRADING_DAYS_PER_YEAR);
+      for (const sym of available) {
+        let qWR = 0, qW = 0, qCnt = 0;
+        for (let ti = quickTrailStart; ti < mIdx; ti++) {
+          const e = returnsByDateSym[sortedDates[ti]]?.[sym];
+          if (e) { const age = mIdx - 1 - ti; const w = Math.exp(-momDecay * age); qWR += w * e.ret; qW += w; qCnt++; }
+        }
+        if (qCnt >= 60) rawReturnsForShrink.push(Math.abs((qWR / qW) * TRADING_DAYS_PER_YEAR * 100));
+      }
+      // Compute adaptive shrinkage thresholds from return distribution
+      const shrinkParams = rawReturnsForShrink.length >= 20 ? (() => {
+        const sorted = rawReturnsForShrink.sort((a, b) => a - b);
+        const p = (arr, pct) => arr[Math.floor(arr.length * pct / 100)] || arr[arr.length - 1];
+        return { threshold: Math.max(15, p(sorted, 90)), hardCap: Math.max(40, p(sorted, 98)) };
+      })() : null;
+
       const trailingStats = {};
-      const trailStart = Math.max(0, mIdx - 12);
+      const trailStart = Math.max(0, mIdx - adaptiveTrailDays);
       for (const sym of available) {
         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
         for (let ti = trailStart; ti < mIdx; ti++) {
           const entry = returnsByDateSym[sortedDates[ti]]?.[sym];
           if (entry) {
             const age = mIdx - 1 - ti;
-            const w = Math.exp(-0.05 * age);
+            const w = Math.exp(-momDecay * age);
             sumWRet += w * entry.ret;
             sumW += w;
             sumRet += entry.ret;
@@ -4050,13 +4725,15 @@ export default function App() {
             count++;
           }
         }
-        if (count < 6) continue;
-        const wAvgMo = sumWRet / sumW;
-        const rawR = wAvgMo * 12 * 100;
+        if (count < 60) continue; // need at least ~3 months of daily data
+        const wAvgDay = sumWRet / sumW;
+        // Annualize: daily weighted avg return × 252 trading days
+        const rawR = wAvgDay * TRADING_DAYS_PER_YEAR * 100;
         const db = etfDbMap[sym];
         const isStk = db?.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk);
-        const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
+        const shrunkR = shrinkReturn(rawR, isStk, btState5, shrinkParams);
+        // Annualize daily vol: std(daily returns) × sqrt(252)
+        const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100, 1);
         trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: db?.d || 0, lev: db?.lev || null, type: db?.type || "etf", ipo: db?.ipo };
       }
       const isBullish = btState5 && (btState5.includes("risk_on"));
@@ -4064,8 +4741,24 @@ export default function App() {
       // In bear/neutral: relax to -80% so crash recovery candidates remain accessible.
       const returnFloor = isBullish ? -50 : -80;
 
-      // ── Compute multi-factor scores ──
-      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
+      // ── Compute multi-factor scores (with adaptive IC-based weights if available) ──
+      // Use 252 trading days lookback for daily data
+      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveFactorWeights, TRADING_DAYS_PER_YEAR);
+
+      // ── Second-pass shrinkage: let high-quality-momentum winners ride in bull regimes ──
+      if (isBullish) {
+        for (const sym of Object.keys(trailingStats)) {
+          const ts = trailingStats[sym];
+          if (ts.factorScore > 0.7) {
+            // Re-compute with quality boost — only makes returns LESS shrunk (never more)
+            const db = etfDbMap[sym];
+            const rawR = ts.r; // already shrunk once — re-shrink from original would be ideal
+            // Approximate: boost the existing return toward what it would be with less shrinkage
+            const boostFactor = 1.0 + (ts.factorScore - 0.7) * 0.5; // up to 15% boost at score=1.0
+            ts.r = ts.r * boostFactor;
+          }
+        }
+      }
 
       // ── Compute relative value signals ──
       const relValSignals = computeRelativeValue(returnsByDateSym, sortedDates, mIdx, trailingStats);
@@ -4076,55 +4769,85 @@ export default function App() {
       // ── Compute realized portfolio vol for dynamic vol targeting ──
       if (btRegime && Object.keys(optAlloc).length > 0) {
         let portVarSum = 0;
+        // Compute realized portfolio vol from trailing ~126 trading days (6 months) of daily returns
         const recentRets = [];
-        for (let rv = Math.max(0, mIdx - 6); rv < mIdx; rv++) {
+        for (let rv = Math.max(0, mIdx - 126); rv < mIdx; rv++) {
           const md = returnsByDateSym[sortedDates[rv]];
           if (!md) continue;
-          let mRet = 0;
+          let dRet = 0;
           for (const [sym, wt] of Object.entries(optAlloc)) {
-            if (md[sym]) mRet += wt * md[sym].ret;
+            if (md[sym]) dRet += wt * md[sym].ret;
           }
-          recentRets.push(mRet);
+          recentRets.push(dRet);
         }
-        if (recentRets.length >= 3) {
+        if (recentRets.length >= 30) {
           const rm = recentRets.reduce((a, b) => a + b, 0) / recentRets.length;
           const rv = recentRets.reduce((a, r) => a + (r - rm) ** 2, 0) / recentRets.length;
-          btRegime.realizedVol = Math.sqrt(rv) * Math.sqrt(12) * 100; // annualized
+          btRegime.realizedVol = Math.sqrt(rv) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
         }
       }
 
       const allCandidates = Object.values(trailingStats).filter(s => {
-        if (s.t === "SPY" || s.v <= 0 || s.r <= returnFloor) return false;
-        // For stocks: only include if it was a sector leader for this year
-        const db = etfDbMap[s.t];
-        if (db?.type === "stock") {
-          const yearStocks = getStocksForYear(mYear);
-          if (!yearStocks.includes(s.t)) return false;
-        }
+        // SPY allowed as a position — the optimizer can hold it and tilt around it
+        if (s.v <= 0 || s.r <= returnFloor) return false;
         return true;
       });
-      // ── Tiered candidate selection ──
-      // Sort by blended score: 60% Sharpe-like + 40% composite factor score
-      // This diversifies the signal away from pure momentum
-      const sortScore = (s) => {
-        const sharpe = (s.r - 4) / (s.v || 1);
-        const factor = s.factorScore ?? 0.5;
-        return sharpe * 0.60 + factor * 3.0 * 0.40; // scale factor to comparable range
-      };
-      // Bull markets: top 50 by blended score — momentum + factor quality
-      // Bear/neutral: ALL candidates — diversification matters most
-      let candidates;
-      if (isBullish) {
-        candidates = allCandidates.sort((a, b) => sortScore(b) - sortScore(a)).slice(0, 50);
-      } else {
-        const sorted = allCandidates.sort((a, b) => sortScore(b) - sortScore(a));
-        candidates = [...sorted]; // all candidates
+
+      // ── Trend filter: 200-day moving average ──
+      // One of the most robust alpha signals in quantitative finance.
+      // In bear/neutral: exclude assets below 200-day MA (falling knives).
+      // In bull: give bonus to assets above their 200-day MA (ride trends).
+      const trendSignals = {};
+      for (const s of allCandidates) {
+        const sym = s.t;
+        // Compute 200-day MA from daily close prices
+        let sumClose = 0, countClose = 0;
+        for (let td = Math.max(0, mIdx - 200); td < mIdx; td++) {
+          const e = returnsByDateSym[sortedDates[td]]?.[sym];
+          if (e && e.close) { sumClose += e.close; countClose++; }
+        }
+        if (countClose >= 100) {
+          const ma200 = sumClose / countClose;
+          const currentClose = returnsByDateSym[sortedDates[mIdx - 1]]?.[sym]?.close;
+          if (currentClose) {
+            const aboveMA = currentClose > ma200;
+            const distFromMA = (currentClose - ma200) / ma200; // % distance from MA
+            trendSignals[sym] = { aboveMA, distFromMA };
+          }
+        }
       }
+
+      // ── Tiered candidate selection ──
+      // Sort by blended score: 55% Sharpe-like + 35% factor + 10% trend
+      // Uses dynamic RF instead of hardcoded 4% for accurate risk-adjusted ranking
+      const sortScore = (s) => {
+        const sharpe = (s.r - dynamicRF * 100) / (s.v || 1);
+        const factor = s.factorScore ?? 0.5;
+        const trend = trendSignals[s.t];
+        // Trend bonus: +0.5 if above MA, -0.3 if below in bear/neutral (penalize falling knives)
+        let trendScore = 0;
+        if (trend) {
+          if (trend.aboveMA) trendScore = 0.5 + Math.min(0.5, trend.distFromMA * 2); // up to +1.0
+          else if (!isBullish) trendScore = -0.3 - Math.min(0.7, Math.abs(trend.distFromMA) * 2); // down to -1.0
+          else trendScore = -0.1; // mild penalty in bull (allow dip-buying)
+        }
+        return sharpe * 0.55 + factor * 3.0 * 0.35 + trendScore * 0.10;
+      };
+      // In bear/neutral regimes: hard-filter assets far below 200-day MA (>15% below)
+      // These are falling knives — let them find a bottom first
+      const trendFiltered = isBullish ? allCandidates : allCandidates.filter(s => {
+        const trend = trendSignals[s.t];
+        if (!trend) return true; // no trend data → keep
+        return trend.distFromMA > -0.15; // exclude if >15% below 200-day MA
+      });
+      // Pre-filter to top 60 by blended score, then give optimizer 2000 iterations
+      // 750 assets × 300 iterations = throwing darts in the dark
+      // 60 assets × 2000 iterations = thorough search of the best candidates
+      const candidates = trendFiltered.sort((a, b) => sortScore(b) - sortScore(a)).slice(0, 60);
       if (candidates.length < 3) continue;
 
-      // Scale iterations to candidate pool: more candidates → more iterations needed for coverage
-      const btIterations = candidates.length > 80 ? 600 : candidates.length > 40 ? 400 : 300;
-      setBtProgress(`${monthKey}: ${isBullish ? "bull" : "bear/neutral"} → ${candidates.length} candidates, ${btIterations} iterations`);
+      const btIterations = 2000;
+      setBtProgress(`${dateKey}: ${isBullish ? "bull" : "bear/neutral"} → ${allCandidates.length}→${candidates.length} candidates, ${btIterations} iterations`);
 
       // Rebuild regime-duration model periodically (every 12 months) using only PAST data
       // This prevents forward-looking bias: the model at 2008-10 only knows data up to 2007-10
@@ -4133,6 +4856,8 @@ export default function App() {
         if (cutoffIdx > 24) {
           regimeDurModel = buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym, cutoffIdx);
           lastModelBuildDate = monthKey;
+          // Also recompute adaptive factor weights (rolling IC)
+          adaptiveFactorWeights = computeAdaptiveFactorWeights(returnsByDateSym, sortedDates, mIdx, etfDbMap, 36);
         }
       }
 
@@ -4164,6 +4889,25 @@ export default function App() {
 
       // Step 4: Optimizer (btIterations scaled to candidate pool size)
       // Build warm-start weights: map previous best allocation to current candidate indices
+      // ── Pre-compute trailing return matrix for empirical CVaR ──
+      // Uses daily returns (~504 trading days = 2 years) for robust tail estimation.
+      // With 504 observations, worst 5% = 25 data points — statistically meaningful.
+      let trailRetMatrix = null;
+      if (srMode === "cvar") {
+        const trailDays = Math.min(504, mIdx); // ~2 years of trading days
+        const rows = [];
+        for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
+          const row = new Float64Array(candidates.length);
+          let hasData = false;
+          for (let ci = 0; ci < candidates.length; ci++) {
+            const e = returnsByDateSym[sortedDates[td]]?.[candidates[ci].t];
+            if (e) { row[ci] = e.ret; hasData = true; }
+          }
+          if (hasData) rows.push(row);
+        }
+        if (rows.length >= 60) trailRetMatrix = rows; // need at least ~3 months of daily data
+      }
+
       let warmWeights = null;
       if (lastBestWeights) {
         warmWeights = new Float64Array(candidates.length);
@@ -4171,13 +4915,51 @@ export default function App() {
           warmWeights[i] = lastBestWeights[candidates[i].t] || 0;
         }
       }
-      const result = optimizeCash([], optValue, 0, candidates, ot, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights);
+      const result = optimizeCash([], optValue, 0, candidates, effectiveOT, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights, dynamicRF, trailRetMatrix);
       if (!result || result.length === 0) continue;
       // Save best weights for warm-starting next evaluation
       lastBestWeights = {};
       result.forEach(r => { lastBestWeights[r.ticker] = r.dollars / (optValue || 1); });
       const newAlloc = {}; const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
       result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDeployed; });
+
+      // ── Volatility Scaling (Moreira & Muir 2017) ──
+      // Scale portfolio exposure inversely to recent realized volatility.
+      // When vol is high, reduce exposure (shift to cash/bonds); when low, stay fully invested.
+      // This improves risk-adjusted returns because high-vol periods have worse return/risk.
+      if (volTarget > 0 && Object.keys(newAlloc).length > 0) {
+        // Compute realized portfolio vol from trailing ~63 trading days (3 months)
+        const volLookback = Math.min(63, mIdx);
+        const portDailyRets = [];
+        for (let vd = Math.max(0, mIdx - volLookback); vd < mIdx; vd++) {
+          const md = returnsByDateSym[sortedDates[vd]];
+          if (!md) continue;
+          let dRet = 0;
+          for (const [sym, wt] of Object.entries(newAlloc)) {
+            if (md[sym]) dRet += wt * md[sym].ret;
+          }
+          portDailyRets.push(dRet);
+        }
+        if (portDailyRets.length >= 21) {
+          const pMean = portDailyRets.reduce((a, b) => a + b, 0) / portDailyRets.length;
+          const pVar = portDailyRets.reduce((a, r) => a + (r - pMean) ** 2, 0) / portDailyRets.length;
+          const realizedVol = Math.sqrt(pVar) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100; // annualized %
+          if (realizedVol > 0) {
+            // Scale = target_vol / realized_vol, capped at [0.5, 1.5] to avoid extreme leverage/deleveraging
+            const volScale = Math.max(0.5, Math.min(1.5, volTarget / realizedVol));
+            if (Math.abs(volScale - 1.0) > 0.05) { // only scale if >5% deviation
+              for (const sym of Object.keys(newAlloc)) newAlloc[sym] *= volScale;
+              // Re-normalize (excess goes to implicit cash position which costs nothing)
+              const totalWtAfterScale = Object.values(newAlloc).reduce((s, w) => s + w, 0);
+              if (totalWtAfterScale > 0 && totalWtAfterScale < 1.0) {
+                // Reduced exposure — the gap is "cash" (no action needed, weights < 1.0 is fine)
+              } else if (totalWtAfterScale > 1.0) {
+                for (const sym of Object.keys(newAlloc)) newAlloc[sym] /= totalWtAfterScale;
+              }
+            }
+          }
+        }
+      }
 
       // Step 5: Compare
       const prevAlloc = { ...optAlloc }; const spyExpRet = trailingStats["SPY"]?.r || 10;
@@ -4186,7 +4968,7 @@ export default function App() {
 
       // Step 6: Tax cost with loss offset
       const allTkrs = [...new Set([...prevTickers, ...Object.keys(newAlloc)])];
-      const monthPrices = returnsByDateSym[monthKey] || {};
+      const monthPrices = returnsByDateSym[dateKey] || {};
       const trades = allTkrs.map(ticker => {
         const ow = prevAlloc[ticker] || 0, nw = newAlloc[ticker] || 0, ch = nw - ow;
         if (Math.abs(ch) < 0.005) return null;
@@ -4230,9 +5012,10 @@ export default function App() {
         const positionCostBasis = costBasisMap[ticker] || 0;
         const soldCostBasis = positionCostBasis * proportionSold;
         const gl = sellProceeds - soldCostBasis;
-        // Per-position holding period: months since position was established
+        // Per-position holding period: convert trading days to months (~21 trading days/month)
         const estMonth = posEstablishedMap[ticker];
-        const posHoldingMonths = estMonth ? (dateToIdx[monthKey] - dateToIdx[estMonth]) : monthsSinceRebal;
+        const posHoldingDays = estMonth ? (dateToIdx[dateKey] - (dateToIdx[estMonth] || 0)) : monthsSinceRebal;
+        const posHoldingMonths = Math.floor(posHoldingDays / 21);
         const isLongTerm = posHoldingMonths >= 12;
         if (gl > 0) { grossGains += gl; if (isLongTerm) ltGains += gl; else stGains += gl; }
         else grossLosses += Math.abs(gl);
@@ -4287,7 +5070,7 @@ export default function App() {
       for (const ticker of prevTickers) {
         const estMonth = posEstablishedMap[ticker];
         if (estMonth) {
-          const holdingMonths = dateToIdx[monthKey] - dateToIdx[estMonth];
+          const holdingMonths = Math.floor((dateToIdx[dateKey] - (dateToIdx[estMonth] || 0)) / 21);
           // If 9-11 months held (close to LT), add significant hurdle penalty for selling
           if (holdingMonths >= 9 && holdingMonths < 12) {
             const wt = prevAlloc[ticker] || 0;
@@ -4305,7 +5088,15 @@ export default function App() {
         curAlpha > 3 ? tcPct * 2.0 :
         curAlpha < -2 ? tcPct * 0.8 :
         tcPct * 1.2;
-      const minFloor = isFirstAllocation ? -999 : taxHurdleFloor; // scales with tax rate
+      // ── Regime-adaptive hurdle floor ──
+      // Risk-off: lower floor to allow defensive rotations (1.0-1.5%)
+      // Neutral: standard floor (2.5-3.5%)
+      // Risk-on: raise floor to stay invested, avoid overtrading (3.5-5.0%)
+      const btIsRiskOff = btState5 && btState5.includes("risk_off");
+      const btIsRiskOn = btState5 && btState5.includes("risk_on");
+      const regimeFloorMult = btIsRiskOff ? 0.45 : btIsRiskOn ? 1.35 : 1.0;
+      const adaptiveFloor = taxHurdleFloor * regimeFloorMult;
+      const minFloor = isFirstAllocation ? -999 : adaptiveFloor;
       const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01 + txCostPct + ltProximityBonus;
 
       if (isFirstAllocation || retImp > hurdle) {
@@ -4314,7 +5105,7 @@ export default function App() {
 
         // ── Update cost basis, shares, and cost-per-share maps ──
         const newCostBasis = {}, newShares = {}, newCostPerShare = {}, newPosEstablished = {};
-        const monthPrices2 = returnsByDateSym[monthKey] || {};
+        const monthPrices2 = returnsByDateSym[dateKey] || {};
         for (const [ticker, newWt] of Object.entries(newAlloc)) {
           if (newWt <= 0.005) continue;
           const closePrice = monthPrices2[ticker]?.close || 0;
@@ -4325,14 +5116,14 @@ export default function App() {
             newCostBasis[ticker] = dollars;
             newShares[ticker] = closePrice > 0 ? dollars / closePrice : 0;
             newCostPerShare[ticker] = closePrice;
-            newPosEstablished[ticker] = monthKey; // track when position was established
+            newPosEstablished[ticker] = dateKey; // track when position was established
           } else if (newWt <= oldWt) {
             // Reduced/kept position: proportional
             const proportionKept = newWt / oldWt;
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) * proportionKept;
             newShares[ticker] = (sharesMap[ticker] || 0) * proportionKept;
             newCostPerShare[ticker] = costPerShareMap[ticker] || closePrice;
-            newPosEstablished[ticker] = posEstablishedMap[ticker] || monthKey; // preserve original establishment date
+            newPosEstablished[ticker] = posEstablishedMap[ticker] || dateKey; // preserve original establishment date
           } else {
             // Increased position: old basis + new at current price
             const addedWt = newWt - oldWt;
@@ -4343,20 +5134,30 @@ export default function App() {
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) + addedDollars;
             newShares[ticker] = totalShares;
             newCostPerShare[ticker] = totalShares > 0 ? newCostBasis[ticker] / totalShares : closePrice;
-            newPosEstablished[ticker] = monthKey; // reset establishment date (new lot at higher cost)
+            newPosEstablished[ticker] = dateKey; // reset establishment date (new lot at higher cost)
           }
         }
 
-        optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = monthKey;
+        optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = dateKey;
+        annualTaxSpent += estTC; // track against annual tax budget
+        ddBaseAlloc = { ...newAlloc }; // reset drawdown base to fresh optimizer output
+        ddPeak = Math.max(ddPeak, optValue); // update peak after rebalance
+        // Reset position peak prices: keep peaks for held positions, set current price for new ones
+        const newPeaks = {};
+        for (const sym of Object.keys(newAlloc)) {
+          const currentClose = dayData[sym]?.close;
+          newPeaks[sym] = Math.max(positionPeakPrice[sym] || 0, currentClose || 0);
+        }
+        positionPeakPrice = newPeaks;
         costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
         lossCarryover = newCarryover;
-        rebalanceEvents.push({ date: monthKey, decision: "REBALANCE", holdings: result.map(r => {
+        rebalanceEvents.push({ date: dateKey, decision: "REBALANCE", holdings: result.map(r => {
           const wt = newAlloc[r.ticker] || 0;
           const posValue = Math.round(wt * optValue);
           const posCostBasis = Math.round(newCostBasis[r.ticker] || 0);
           const gl = posValue - posCostBasis;
           const glPct = posCostBasis > 0 ? ((posValue / posCostBasis) - 1) * 100 : 0;
-          return { ticker: r.ticker, name: r.name, cat: r.cat, weight: +(wt * 100).toFixed(1), dollars: posValue, costBasis: posCostBasis, gl: Math.round(gl), glPct: +glPct.toFixed(1) };
+          return { ticker: r.ticker, name: r.name, cat: r.cat, isStock: r.isStock || false, weight: +(wt * 100).toFixed(1), dollars: posValue, costBasis: posCostBasis, gl: Math.round(gl), glPct: +glPct.toFixed(1) };
         }).filter(h => h.weight > 0).sort((a, b) => b.weight - a.weight), trades,
           taxPaid: Math.round(estTC), grossTax: Math.round(grossTax), taxSaved: Math.round(taxSaved),
           grossGains: Math.round(grossGains), grossLosses: Math.round(grossLosses), realizedGains: Math.round(netGains),
@@ -4407,6 +5208,53 @@ export default function App() {
       const allEventsToDate = rebalanceEvents.filter(e => e.date <= `${year}-12`);
       const latestAlloc = allEventsToDate.length > 0 ? allEventsToDate[allEventsToDate.length - 1] : null;
 
+      // ── Compute accurate year-end holdings with drifted weights ──
+      // Holdings weights drift between rebalances as prices move.
+      // Compute actual year-end weights by applying monthly returns since rebalance.
+      // Find last trading day of this year in the daily data
+      let yearEndDateKey = null;
+      const yearPrefix = String(year);
+      for (let di = sortedDates.length - 1; di >= 0; di--) {
+        if (sortedDates[di].startsWith(yearPrefix)) { yearEndDateKey = sortedDates[di]; break; }
+      }
+      const yearEndPrices = yearEndDateKey ? returnsByDateSym[yearEndDateKey] : {};
+
+      const yearEndHoldings = [];
+      if (latestAlloc?.holdings) {
+        const rebalDate = latestAlloc.date; // e.g. "2021-03"
+        // Compute growth factor for each holding from rebalance to year-end
+        const holdingsWithGrowth = latestAlloc.holdings.map(h => {
+          let growthFactor = 1.0;
+          // Walk from the month after rebalance to year-end, compounding returns
+          const rebalIdx = dateToIdx[rebalDate] || 0;
+          const yearEndIdx = yearEndDateKey ? dateToIdx[yearEndDateKey] : rebalIdx;
+          for (let di = rebalIdx + 1; di <= yearEndIdx; di++) {
+            const dk = sortedDates[di];
+            if (!dk) break;
+            const md = returnsByDateSym[dk]?.[h.ticker];
+            if (md) growthFactor *= (1 + md.ret);
+          }
+          const yearEndClose = yearEndPrices[h.ticker]?.close || null;
+          return { ...h, growthFactor, yearEndPrice: yearEndClose };
+        });
+
+        // Compute drifted weights: original weight × growth, then normalize
+        let totalDriftedWt = 0;
+        for (const h of holdingsWithGrowth) {
+          h.driftedWt = (h.weight / 100) * h.growthFactor;
+          totalDriftedWt += h.driftedWt;
+        }
+        // Year-end MV: drifted proportion × actual year-end portfolio value
+        for (const h of holdingsWithGrowth) {
+          const actualWt = totalDriftedWt > 0 ? h.driftedWt / totalDriftedWt : h.weight / 100;
+          h.yearEndMV = Math.round(actualWt * optYearEnd);
+          h.yearEndWeight = +(actualWt * 100).toFixed(1);
+          h.yearEndGL = h.costBasis > 0 ? h.yearEndMV - h.costBasis : null;
+          h.yearEndGLPct = h.costBasis > 0 ? ((h.yearEndMV / h.costBasis) - 1) * 100 : null;
+          yearEndHoldings.push(h);
+        }
+      }
+
       // Get regime at year-end from actual FRED data (independent of random rebalance timing)
       let yearEndState5 = null, yearEndRegimeScore = null, yearEndAcceleration = null, yearEndDuration = 0, yearEndTransition = null;
       if (historicalRegimes) {
@@ -4436,11 +5284,12 @@ export default function App() {
 
       annualResults.push({
         year,
+        isOOS: false, // will be updated after split point is computed
         optRet: optYearStart > 0 ? ((optYearEnd - optYearStart) / optYearStart * 100) : 0,
         spyRet: spyYearStart > 0 ? ((spyYearEnd - spyYearStart) / spyYearStart * 100) : 0,
         bal60Ret: bal60YearStart > 0 ? ((bal60YearEnd - bal60YearStart) / bal60YearStart * 100) : 0,
         alloc: { ...optAlloc },
-        holdings: latestAlloc?.holdings || [],
+        holdings: yearEndHoldings.length > 0 ? yearEndHoldings : (latestAlloc?.holdings || []),
         trades: yearEvents.flatMap(e => e.trades || []),
         portfolioValue: Math.round(optYearEnd),
         taxPaid: Math.round(yearTaxPaid),
@@ -4489,19 +5338,78 @@ export default function App() {
       return maxDD * 100;
     };
 
-    // Volatility from monthly returns
+    // Volatility from curve returns (auto-detect frequency from data spacing)
     const calcVol = (curve) => {
       const rets = [];
       for (let i = 1; i < curve.length; i++) rets.push(curve[i].value / curve[i-1].value - 1);
       if (rets.length < 2) return 0;
       const avg = rets.reduce((s, r) => s + r, 0) / rets.length;
       const v = rets.reduce((s, r) => s + (r - avg) ** 2, 0) / (rets.length - 1);
-      return Math.sqrt(v) * Math.sqrt(12) * 100;
+      // Estimate periods per year from data density
+      const numYears = curve.length > 1 ? (new Date(curve[curve.length-1].date) - new Date(curve[0].date)) / (365.25 * 86400000) : 1;
+      const periodsPerYear = numYears > 0 ? rets.length / numYears : 12;
+      return Math.sqrt(v) * Math.sqrt(periodsPerYear) * 100;
     };
 
     const optVol = calcVol(optCurve);
     const spyVol = calcVol(spyCurve);
     const bal60Vol = calcVol(bal60Curve);
+
+    // ── 80/20 In-Sample / Out-of-Sample Split ──
+    const OOS_FRACTION = oosFraction;
+    const splitIdx = Math.floor(simYears.length * (1 - OOS_FRACTION));
+    const splitYear = simYears[splitIdx] || simYears[simYears.length - 1];
+    const splitDate = `${splitYear}-01`;
+
+    // Tag annual results
+    for (const ar of annualResults) ar.isOOS = ar.year >= splitYear;
+
+    // Helper: compute metrics for a curve segment
+    const segmentMetrics = (curve, startVal, numYrs) => {
+      if (!curve.length || numYrs <= 0) return { final: startVal, cagr: 0, vol: 0, dd: 0, sharpe: 0 };
+      const endVal = curve[curve.length - 1].value;
+      const cagr = (Math.pow(Math.max(0, endVal) / Math.max(1, startVal), 1 / numYrs) - 1) * 100;
+      const vol = calcVol(curve);
+      const dd = calcDD(curve);
+      const sharpe = vol > 0 ? (cagr - RF) / vol : 0;
+      return { final: endVal, cagr, vol, dd, sharpe };
+    };
+
+    // Split curves at boundary
+    const isOptCurve = optCurve.filter(p => p.date < splitDate);
+    const oosOptCurve = optCurve.filter(p => p.date >= splitDate);
+    const isSpyCurve = spyCurve.filter(p => p.date < splitDate);
+    const oosSpyCurve = spyCurve.filter(p => p.date >= splitDate);
+    const isBal60Curve = bal60Curve.filter(p => p.date < splitDate);
+    const oosBal60Curve = bal60Curve.filter(p => p.date >= splitDate);
+
+    const isYears = splitIdx;
+    const oosYears = simYears.length - splitIdx;
+
+    // Prepend the last IS point to OOS curves so vol/dd calculations have a starting reference
+    const lastISopt = isOptCurve.length > 0 ? isOptCurve[isOptCurve.length - 1] : { value: startCash };
+    const lastISspy = isSpyCurve.length > 0 ? isSpyCurve[isSpyCurve.length - 1] : { value: startCash };
+    const lastISbal = isBal60Curve.length > 0 ? isBal60Curve[isBal60Curve.length - 1] : { value: startCash };
+    const oosOptFull = [lastISopt, ...oosOptCurve];
+    const oosSpyFull = [lastISspy, ...oosSpyCurve];
+    const oosBal60Full = [lastISbal, ...oosBal60Curve];
+
+    const oosAnalysis = {
+      splitYear,
+      splitDate,
+      isYears,
+      oosYears,
+      is: {
+        opt: segmentMetrics(isOptCurve, startCash, isYears),
+        spy: segmentMetrics(isSpyCurve, startCash, isYears),
+        bal60: segmentMetrics(isBal60Curve, startCash, isYears),
+      },
+      oos: {
+        opt: segmentMetrics(oosOptFull, lastISopt.value, oosYears),
+        spy: segmentMetrics(oosSpyFull, lastISspy.value, oosYears),
+        bal60: segmentMetrics(oosBal60Full, lastISbal.value, oosYears),
+      },
+    };
 
     setBtResult({
       curves: { opt: optCurve, spy: spyCurve, bal60: bal60Curve },
@@ -4513,6 +5421,7 @@ export default function App() {
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
+      oosAnalysis,
       regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (incremental, no look-ahead)" : "FRED (12-series, 5-state, daily EMA)") : "Proxy (SPY momentum/vol)",
       regimeDurationModel: regimeDurModel ? true : false,
       tax: {
@@ -4526,9 +5435,17 @@ export default function App() {
         holds: (simDates.length - totalRebalances),
         rebalanceEvents,
       },
+      drawdown: {
+        enabled: drawdownProtection,
+        events: drawdownEvents,
+        triggerCount: drawdownEvents.filter(e => e.type === "TRIGGER").length,
+        recoveryCount: drawdownEvents.filter(e => e.type === "RECOVERED").length,
+      },
+      walkForward,
+      weightingMethod,
     });
     setBtProgress(""); setBtRunning(false);
-  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash]);
+  }, [ot, srMode, volTarget, useKelly, useRegime, taxState, includeStocks, btStartCash, walkForward, drawdownProtection, weightingMethod, oosFraction]);
 
   // ═══ SIMULATION: Run backtest N times to measure win rate vs SPY ═══
   const runSimulation = useCallback(async () => {
@@ -4542,19 +5459,38 @@ export default function App() {
     const btETFs = [
       "SPY","VTI","QQQ","IWM","SCHD","SCHG","SCHF","VEA","VWO","EFA","MCHI",
       "XLK","XLF","XLV","XLE","XLU","XLRE","SOXX","ARKK","ICLN",
-      "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","HDV","DGRO",
+      "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","DBMF","KMLM","CTA","HDV","DGRO",
     ];
-    const btStocks = (includeStocks === "stocks" || includeStocks === "both") ? SP500_ALL_TICKERS : [];
-    const allSymbols = [...new Set([...btETFs, "SPY", ...btStocks])];
+    // Unified universe: always fetch both ETFs and stocks
+    const allSymbols = [...new Set([...btETFs, "SPY", ...SP500_ALL_TICKERS])];
 
-    setSimProgress(`Fetching ${allSymbols.length} symbols...`);
+    setSimProgress(`Loading ${allSymbols.length} symbols...`);
     let histData = {};
     try {
-      for (let i = 0; i < allSymbols.length; i += 15) {
-        const batch = allSymbols.slice(i, i + 15);
-        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31`);
-        const json = await resp.json();
-        if (json.data) Object.assign(histData, json.data);
+      // Try IndexedDB cache first (same cache as backtest)
+      const CACHE_DB_NAME = "portfolio_optimizer_cache";
+      const CACHE_STORE = "histData";
+      const CACHE_KEY = `hist_daily_2005_2025_v2_${allSymbols.length}`;
+      const cacheDB = await new Promise((resolve, reject) => {
+        const req = indexedDB.open(CACHE_DB_NAME, 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore(CACHE_STORE); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const cached = await new Promise((resolve) => {
+        try { const tx = cacheDB.transaction(CACHE_STORE, "readonly"); const req = tx.objectStore(CACHE_STORE).get(CACHE_KEY); req.onsuccess = () => resolve(req.result || null); req.onerror = () => resolve(null); } catch { resolve(null); }
+      });
+      if (cached && Object.keys(cached).length >= allSymbols.length * 0.8) {
+        histData = cached;
+        setSimProgress(`Loaded ${Object.keys(histData).length} symbols from cache`);
+      } else {
+        for (let i = 0; i < allSymbols.length; i += 15) {
+          const batch = allSymbols.slice(i, i + 15);
+          setSimProgress(`Fetching batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}...`);
+          const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31&interval=1d`);
+          const json = await resp.json();
+          if (json.data) Object.assign(histData, json.data);
+        }
       }
     } catch (e) { setSimProgress("Error: " + e.message); setSimRunning(false); return; }
 
@@ -4567,7 +5503,7 @@ export default function App() {
     for (const sym of available) {
       const prices = histData[sym];
       for (let i = 1; i < prices.length; i++) {
-        const dk = prices[i].date.slice(0, 7);
+        const dk = prices[i].date; // use full daily date (match backtest)
         const entry = { ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close };
         if (!returnsByDateSym[dk]) returnsByDateSym[dk] = {};
         returnsByDateSym[dk][sym] = entry;
@@ -4577,7 +5513,7 @@ export default function App() {
     const sortedDates = [...allDateKeys].sort();
     const dateToIdx = {}; sortedDates.forEach((d, i) => { dateToIdx[d] = i; });
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
-    const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
+    const simDates = sortedDates.filter(d => d >= "2006-01-01" && d <= "2025-12-31" && spyDates.has(d));
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
 
     // Compute SPY final value and track SPY max drawdown + monthly returns
@@ -4647,6 +5583,7 @@ export default function App() {
       let optValue = startCash;
       let optAlloc = {};
       let lastRebalMonth = null;
+      let simLastBestWeights = null; // warm-start weights for optimizer
       let simTaxPaid = 0;
       let simLossCarry = 0;
       let simCostBasis = {}; // ticker → actual dollar cost basis
@@ -4657,9 +5594,13 @@ export default function App() {
       const simHighTax = simTaxRates.st > 40;
       const simCooldown = simHighTax ? 3 : 2;
       const simSigThreshold = simHighTax ? 3 : 2;
-      const simHurdleFloor = simHighTax ? 2.5 : simTaxRates.st > 30 ? 2.0 : 1.5;
+      const simHurdleFloor = simHighTax ? 3.5 : simTaxRates.st > 30 ? 3.0 : 2.5; // match backtest hurdle floors
       let simPeak = startCash, simMaxDD = 0;
       const simMonthlyRets = [];
+      // Drawdown protection state for simulation
+      let simDDCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
+      let simDDActiveLevel = -1, simDDEquityScale = 1.0, SimDDRecoveryMonths = 0;
+      let simDDBaseAlloc = null;
 
       for (let mi = 0; mi < simDates.length; mi++) {
         const monthKey = simDates[mi];
@@ -4683,48 +5624,133 @@ export default function App() {
           simMonthlyRets.push(0);
         }
 
+        // ── Drawdown protection (matches main backtest) ──
+        if (drawdownProtection && Object.keys(optAlloc).length > 0) {
+          if (!simDDBaseAlloc) simDDBaseAlloc = { ...optAlloc };
+          const currentDD = simPeak > 0 ? (simPeak - optValue) / simPeak : 0;
+          for (let lvl = 0; lvl < DRAWDOWN_LEVELS.length; lvl++) {
+            if (currentDD >= DRAWDOWN_LEVELS[lvl].threshold) simDDCounters[lvl]++;
+            else simDDCounters[lvl] = 0;
+          }
+          let confirmedLevel = -1;
+          for (let lvl = DRAWDOWN_LEVELS.length - 1; lvl >= 0; lvl--) {
+            // Match backtest: confirmationMonths × 21 trading days (was just confirmationMonths)
+            if (simDDCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths * 21) { confirmedLevel = lvl; break; }
+          }
+          if (confirmedLevel >= 0 && confirmedLevel > simDDActiveLevel) {
+            simDDEquityScale = 1.0 - DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
+            simDDActiveLevel = confirmedLevel;
+            SimDDRecoveryMonths = 0;
+          }
+          if (simDDActiveLevel >= 0) {
+            const activeThreshold = DRAWDOWN_LEVELS[simDDActiveLevel].threshold;
+            if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
+              SimDDRecoveryMonths++;
+              simDDEquityScale = Math.min(1.0, simDDEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[simDDActiveLevel].equityReduction)) / 63);
+              if (simDDEquityScale >= 0.98) {
+                simDDEquityScale = 1.0; simDDActiveLevel = -1; SimDDRecoveryMonths = 0;
+                simDDCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
+              }
+            } else { SimDDRecoveryMonths = 0; }
+          }
+          if (simDDEquityScale < 1.0 && simDDBaseAlloc) {
+            const sa = {}; let eqRed = 0;
+            for (const [sym, wt] of Object.entries(simDDBaseAlloc)) {
+              const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
+              if (ms === "fixed-income" || ms === "alternatives") sa[sym] = wt;
+              else { sa[sym] = wt * simDDEquityScale; eqRed += wt * (1 - simDDEquityScale); }
+            }
+            const bh = Object.keys(sa).find(s => MACRO_SECTOR_MAP[etfDbMap[s]?.c] === "fixed-income");
+            if (bh) sa[bh] = (sa[bh] || 0) + eqRed;
+            else if (eqRed > 0.01) sa["BND"] = (sa["BND"] || 0) + eqRed;
+            const tw = Object.values(sa).reduce((s, w) => s + w, 0);
+            if (tw > 0) for (const sym of Object.keys(sa)) sa[sym] /= tw;
+            optAlloc = sa;
+          } else if (simDDEquityScale >= 1.0 && simDDBaseAlloc) {
+            optAlloc = { ...simDDBaseAlloc };
+          }
+        }
+
         // Tax-aware signal-driven rebalance triggers (matches main backtest)
         const prevTickers = Object.keys(optAlloc);
         const isFirst = prevTickers.length === 0;
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
 
+        // Rebalance triggers matching backtest's tighter gates
         let shouldEval = isFirst;
         if (!shouldEval && simHistRegimes) {
           const rd = simHistRegimes[monthKey];
+          // Gate 1: Regime change — require 2+ months persistence
           if (mi > 0) {
             const prevRd = simHistRegimes[simDates[mi - 1]];
-            if (prevRd && rd && prevRd.regime !== rd.regime) shouldEval = true;
+            if (prevRd && rd && prevRd.regime !== rd.regime) {
+              // Check duration >= 2
+              let simDur = 1;
+              for (let lb = 2; lb <= 36 && mi - lb >= 0; lb++) {
+                const prev2 = simHistRegimes[simDates[mi - lb]];
+                if (prev2 && prev2.regime === rd.regime) simDur++; else break;
+              }
+              if (simDur >= 2) shouldEval = true;
+            }
           }
+          // Gate 2: Multi-signal — require 3 confirming signals
           if (!shouldEval && rd) {
             let sigCount = 0;
-            if (Math.abs(rd.stressAcceleration || 0) >= 0.5) sigCount++;
+            if (Math.abs(rd.stressAcceleration || 0) >= 0.8) sigCount++;
             if (rd.vixInversion) sigCount++;
             if (mi > 0) {
               const prevRd = simHistRegimes[simDates[mi - 1]];
               const volShift = rd.volRegime !== prevRd?.volRegime;
               if (volShift && ((prevRd?.volRegime === "compression" && rd.volRegime === "expansion") ||
-                  (prevRd?.volRegime === "normal" && rd.volRegime === "elevated") ||
-                  (prevRd?.volRegime === "elevated" && rd.volRegime === "normal"))) sigCount++;
+                  (prevRd?.volRegime === "normal" && rd.volRegime === "elevated"))) sigCount++;
             }
-            if (sigCount >= simSigThreshold) shouldEval = true;
+            if (sigCount >= 3) shouldEval = true;
           }
-          if (!shouldEval && mMonth % 3 === 0 && mSinceRebal >= simCooldown) shouldEval = true;
+          // Semi-annual fallback (matching backtest)
+          if (!shouldEval && mMonth % 6 === 0 && mSinceRebal >= simCooldown) shouldEval = true;
         } else if (!shouldEval) {
-          if (mMonth % 3 === 0) shouldEval = true;
+          if (mMonth % 6 === 0) shouldEval = true;
         }
-        if (!isFirst && mSinceRebal < simCooldown) shouldEval = false;
+        // Minimum 63 trading day cooldown (matching backtest)
+        const simMinCooldown = Math.max(simCooldown, 63);
+        if (!isFirst && mSinceRebal < simMinCooldown) shouldEval = false;
         if (!shouldEval) continue;
 
         // Trailing stats with recency weighting + shrinkage (matches main backtest)
+        // Use regime-aware decay and adaptive trailing window
+        const simRd = simHistRegimes?.[monthKey];
+        const simState5 = (() => {
+          if (!simRd) return "neutral";
+          let s5 = simRd.state5 || "neutral";
+          if (simHmmEnsembleMap[monthKey]) {
+            const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
+            const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
+            const fR = ro.indexOf(s5), hR = ro.indexOf(hmmS5);
+            if (fR >= 0 && hR >= 0) s5 = ro[Math.min(fR, hR)];
+          }
+          return s5;
+        })();
+        // Vol-derived momentum decay (matches backtest)
+        let simSPYVol = 15;
+        { const sr = [];
+          for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) { const r = returnsByDateSym[sortedDates[rv]]?.["SPY"]; if (r) sr.push(r.ret); }
+          if (sr.length >= 6) { const a = sr.reduce((s, r) => s + r, 0) / sr.length; simSPYVol = Math.sqrt(sr.reduce((s, r) => s + (r - a) ** 2, 0) / sr.length) * Math.sqrt(12) * 100; }
+        }
+        const simMomDecay = Math.max(0.02, Math.min(0.12, 0.13 - simSPYVol * 0.003));
+        const simVolRegime = simRd?.volRegime || "normal";
+        const simTrailMonths = walkForward
+          ? (simVolRegime === "normal" || simVolRegime === "compression" ? 24 : 48)
+          : 12;
+
         const trailingStats = {};
-        const trailStart = Math.max(0, mIdx - 12);
+        const trailStart = Math.max(0, mIdx - simTrailMonths);
         for (const sym of available) {
           let sWR = 0, sW = 0, sR = 0, sR2 = 0, cnt = 0;
           for (let ti = trailStart; ti < mIdx; ti++) {
             const e = returnsByDateSym[sortedDates[ti]]?.[sym];
             if (e) {
               const age = mIdx - 1 - ti;
-              const w = Math.exp(-0.05 * age);
+              const w = Math.exp(-simMomDecay * age);
               sWR += w * e.ret; sW += w;
               sR += e.ret; sR2 += e.ret * e.ret; cnt++;
             }
@@ -4732,27 +5758,54 @@ export default function App() {
           if (cnt < 6) continue;
           const db = etfDbMap[sym];
           const rawR = (sWR / sW) * 12 * 100;
-          const shrunkR = shrinkReturn(rawR, db?.type === "stock");
+          const shrunkR = shrinkReturn(rawR, db?.type === "stock", simState5);
           const vol = Math.max(Math.sqrt(Math.max(0, sR2 / cnt - (sR/cnt) ** 2)) * Math.sqrt(12) * 100, 1);
           trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null, type: db?.type || "etf" };
         }
 
-        const cands = Object.values(trailingStats).filter(s => {
-          if (s.t === "SPY" || s.v <= 0 || s.r <= -50) return false;
-          const db = etfDbMap[s.t];
-          if (db?.type === "stock") {
-            const yearStocks = getStocksForYear(mYear);
-            if (!yearStocks.includes(s.t)) return false;
-          }
-          return true;
-        }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 30);
-
-        // Factor scoring for simulation candidates (lightweight)
+        // Factor scoring (matching backtest — with adaptive weights if available)
         if (mIdx > 12) computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
 
-        // Keep all top 30 candidates — Monte Carlo randomness comes from optimizer stochastic search
-        // Add slight noise to return estimates to model forecast uncertainty (±5%)
-        for (const c of cands) c.r *= (1 + (Math.random() - 0.5) * 0.1);
+        // Relative value signals (matching backtest)
+        const simRelVal = computeRelativeValue(returnsByDateSym, sortedDates, mIdx, trailingStats);
+        for (const sym of Object.keys(trailingStats)) trailingStats[sym].relValue = simRelVal[sym] || 0;
+
+        // All candidates — no cap (matching backtest)
+        const isBullishSim = simState5?.includes("risk_on");
+        const simReturnFloor = isBullishSim ? -50 : -80;
+        // ── Trend filter (matching backtest): 200-day MA ──
+        const simTrendSignals = {};
+        const simAllCands = Object.values(trailingStats).filter(s => s.v > 0 && s.r > simReturnFloor);
+        for (const s of simAllCands) {
+          let sc = 0, cc = 0;
+          for (let td = Math.max(0, mIdx - 200); td < mIdx; td++) {
+            const e = returnsByDateSym[sortedDates[td]]?.[s.t];
+            if (e && e.close) { sc += e.close; cc++; }
+          }
+          if (cc >= 100) {
+            const ma = sc / cc;
+            const cur = returnsByDateSym[sortedDates[mIdx - 1]]?.[s.t]?.close;
+            if (cur) simTrendSignals[s.t] = { aboveMA: cur > ma, distFromMA: (cur - ma) / ma };
+          }
+        }
+        const simDynamicRF2 = simHistRegimes?.[monthKey]?.dgs10 ?? RF;
+        const simSortScore = (s) => {
+          const sh = (s.r - simDynamicRF2 * 100) / (s.v || 1);
+          const f = s.factorScore ?? 0.5;
+          const tr = simTrendSignals[s.t];
+          let ts = 0;
+          if (tr) {
+            if (tr.aboveMA) ts = 0.5 + Math.min(0.5, tr.distFromMA * 2);
+            else if (!isBullishSim) ts = -0.3 - Math.min(0.7, Math.abs(tr.distFromMA) * 2);
+            else ts = -0.1;
+          }
+          return sh * 0.55 + f * 3.0 * 0.35 + ts * 0.10;
+        };
+        const simTrendFiltered = isBullishSim ? simAllCands : simAllCands.filter(s => {
+          const tr = simTrendSignals[s.t];
+          return !tr || tr.distFromMA > -0.15;
+        });
+        const cands = simTrendFiltered.sort((a, b) => simSortScore(b) - simSortScore(a)).slice(0, 60);
         if (cands.length < 3) continue;
 
         // Lightweight optimizer with regime context (matches main backtest strategy)
@@ -4766,22 +5819,95 @@ export default function App() {
               const prev = simHistRegimes[sortedDates[mIdx - lb]];
               if (prev && prev.regime === sRegime3) sDur++; else break;
             }
-            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null, volSignal: rd.volSignal || 0, vixInversion: rd.vixInversion || false };
+            // Lightweight AR approximation (matching backtest)
+            let simArShift = 0;
+            { const arSyms = ["SPY","QQQ","IWM","XLK","XLF","XLV","XLE","GLD","BND","VEA","HYG"];
+              const arW = Math.min(63, mIdx);
+              if (arW >= 21) {
+                const arR = {};
+                for (const s of arSyms) { const rs = []; for (let ad = Math.max(0, mIdx - arW); ad < mIdx; ad++) rs.push(returnsByDateSym[sortedDates[ad]]?.[s]?.ret || 0); arR[s] = rs; }
+                let cS = 0, cC = 0; const aK = Object.keys(arR);
+                for (let ai = 0; ai < aK.length; ai++) for (let aj = ai + 1; aj < aK.length; aj++) {
+                  const r1 = arR[aK[ai]], r2 = arR[aK[aj]], n = r1.length;
+                  const m1 = r1.reduce((a, b) => a + b, 0) / n, m2 = r2.reduce((a, b) => a + b, 0) / n;
+                  let cv = 0, v1 = 0, v2 = 0;
+                  for (let k = 0; k < n; k++) { cv += (r1[k] - m1) * (r2[k] - m2); v1 += (r1[k] - m1) ** 2; v2 += (r2[k] - m2) ** 2; }
+                  const d = Math.sqrt(v1 * v2); if (d > 0) { cS += cv / d; cC++; }
+                }
+                if (cC > 0) simArShift = ((cS / cC) - 0.35) / 0.15;
+              }
+            }
+            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null, volSignal: rd.volSignal || 0, vixInversion: rd.vixInversion || false, arShift: simArShift };
             // HMM overlay (conservative fusion, incremental — no look-ahead)
             if (simHmmEnsembleMap[monthKey]) {
               const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
               const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
               const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
-              if (fR >= 0 && hR >= 0) simRegime.state5 = ro[Math.min(fR, hR)];
+              if (fR >= 0 && hR >= 0) {
+                const bOn2 = fR >= 3 && hR >= 3, bOff2 = fR <= 1 && hR <= 1;
+                simRegime.state5 = ro[(bOn2 || bOff2) ? Math.max(fR, hR) : Math.min(fR, hR)];
+              }
+              simRegime.hmmProbs = simHmmEnsembleMap[monthKey]; // pass HMM probs for confidence scaling
             }
           }
         }
-        const result = optimizeCash([], optValue, 0, cands, ot, srMode, volTarget, useKelly, simRegime, 200);
+        const simEffectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
+        // Build trailing return matrix for empirical CVaR (daily data, matches backtest)
+        let simTrailRetMatrix = null;
+        if (srMode === "cvar") {
+          const trailDays = Math.min(504, mIdx);
+          const tmRows = [];
+          for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
+            const row = new Float64Array(cands.length);
+            let hasData = false;
+            for (let ci = 0; ci < cands.length; ci++) {
+              const e = returnsByDateSym[sortedDates[td]]?.[cands[ci].t];
+              if (e) { row[ci] = e.ret; hasData = true; }
+            }
+            if (hasData) tmRows.push(row);
+          }
+          if (tmRows.length >= 60) simTrailRetMatrix = tmRows;
+        }
+        // Scale iterations to candidate count (matching backtest)
+        const simIterations = cands.length > 80 ? 600 : cands.length > 40 ? 400 : 300;
+        // Build warm-start weights from previous best
+        let simWarmWeights = null;
+        if (simLastBestWeights) {
+          simWarmWeights = new Float64Array(cands.length);
+          for (let ci = 0; ci < cands.length; ci++) simWarmWeights[ci] = simLastBestWeights[cands[ci].t] || 0;
+        }
+        // Dynamic RF from regime data (matching backtest)
+        const simDynamicRF = simHistRegimes?.[monthKey]?.dgs10 ?? RF;
+        const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, simIterations, simWarmWeights, simDynamicRF, simTrailRetMatrix);
         if (!result || result.length === 0) continue;
 
         const newAlloc = {};
         const totalDep = result.reduce((s, r) => s + r.dollars, 0) || optValue;
         result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDep; });
+
+        // ── Volatility Scaling (matching backtest) ──
+        if (volTarget > 0 && Object.keys(newAlloc).length > 0) {
+          const vlb = Math.min(63, mIdx);
+          const pdr = [];
+          for (let vd = Math.max(0, mIdx - vlb); vd < mIdx; vd++) {
+            const md = returnsByDateSym[sortedDates[vd]]; if (!md) continue;
+            let dr = 0; for (const [s, w] of Object.entries(newAlloc)) { if (md[s]) dr += w * md[s].ret; }
+            pdr.push(dr);
+          }
+          if (pdr.length >= 21) {
+            const pm = pdr.reduce((a, b) => a + b, 0) / pdr.length;
+            const pv = pdr.reduce((a, r) => a + (r - pm) ** 2, 0) / pdr.length;
+            const rv = Math.sqrt(pv) * Math.sqrt(252) * 100;
+            if (rv > 0) {
+              const vs = Math.max(0.5, Math.min(1.5, volTarget / rv));
+              if (Math.abs(vs - 1.0) > 0.05) {
+                for (const s of Object.keys(newAlloc)) newAlloc[s] *= vs;
+                const tw = Object.values(newAlloc).reduce((a, w) => a + w, 0);
+                if (tw > 1.0) for (const s of Object.keys(newAlloc)) newAlloc[s] /= tw;
+              }
+            }
+          }
+        }
 
         // ── Tax-aware rebalance decision (matches main backtest logic) ──
         const spyExp = trailingStats["SPY"]?.r || 10;
@@ -4842,6 +5968,11 @@ export default function App() {
           simCostBasis = newCB;
           simLossCarry = excessLoss - ordOffset;
           lastRebalMonth = monthKey;
+          simDDBaseAlloc = { ...newAlloc }; // reset drawdown base
+          // Save best weights for warm-starting next evaluation (matching backtest)
+          simLastBestWeights = {};
+          result.forEach(r => { simLastBestWeights[r.ticker] = r.dollars / (optValue || 1); });
+          simPeak = Math.max(simPeak, optValue);
         }
       }
 
@@ -4849,6 +5980,19 @@ export default function App() {
       // Compute sim volatility from monthly returns
       const simAvgRet = simMonthlyRets.length > 0 ? simMonthlyRets.reduce((s, r) => s + r, 0) / simMonthlyRets.length : 0;
       const simVol = simMonthlyRets.length > 1 ? Math.sqrt(simMonthlyRets.reduce((s, r) => s + (r - simAvgRet) ** 2, 0) / simMonthlyRets.length) * Math.sqrt(12) * 100 : 0;
+
+      // IS/OOS split for this simulation run
+      const simSplitIdx = Math.floor(simDates.length * (1 - oosFraction));
+      const simSplitDate = simDates[simSplitIdx] || simDates[simDates.length - 1];
+      // Track portfolio value at split point from equity curve
+      // simMonthlyRets[i] corresponds to simDates[i]
+      let isEndVal = startCash;
+      for (let i = 0; i < simSplitIdx && i < simMonthlyRets.length; i++) isEndVal *= (1 + simMonthlyRets[i]);
+      const isCAGR = (Math.pow(Math.max(0, isEndVal) / startCash, 12 / Math.max(1, simSplitIdx)) - 1) * 100;
+      const oosCAGR = simMonthlyRets.length > simSplitIdx
+        ? (Math.pow(Math.max(0, optValue) / Math.max(1, isEndVal), 12 / Math.max(1, simMonthlyRets.length - simSplitIdx)) - 1) * 100
+        : 0;
+
       results.push({
         finalValue: optValue,
         cagr: optCAGR,
@@ -4859,6 +6003,8 @@ export default function App() {
         vol: simVol,
         sharpe: simVol > 0 ? (optCAGR - 2) / simVol : 0,
         sharpeBeatsSPY: false, // computed after all sims
+        isCAGR,
+        oosCAGR,
       });
     }
 
@@ -4925,9 +6071,14 @@ export default function App() {
       avgSharpe: +avg(results.map(r => r.sharpe)).toFixed(2),
       medianSharpe: +pctl(results.map(r => r.sharpe).sort((a, b) => a - b), 50).toFixed(2),
       rollingPeriods,
+      // IS/OOS split metrics
+      isAvgCAGR: +avg(results.map(r => r.isCAGR)).toFixed(1),
+      oosAvgCAGR: +avg(results.map(r => r.oosCAGR)).toFixed(1),
+      isAvgAlpha: +(avg(results.map(r => r.isCAGR)) - spyCAGR * 0.8).toFixed(1), // approximate IS alpha
+      oosAvgAlpha: +(avg(results.map(r => r.oosCAGR)) - spyCAGR * 0.2).toFixed(1), // approximate OOS alpha
     });
     setSimProgress(""); setSimRunning(false);
-  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState]);
+  }, [btResult, btStartCash, ot, srMode, volTarget, useKelly, includeStocks, useRegime, taxState, walkForward, drawdownProtection, weightingMethod, oosFraction]);
   
 useEffect(() => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -5098,7 +6249,7 @@ useEffect(() => {
   }), [sq, sc]);
 
   const frontier = useMemo(() => {
-    try { if (cashBalance <= 0) return null; const fCands = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT].slice(0, 40) : includeStocks === "stocks" ? STOCK_OPT.slice(0, 30) : ETF_DB.slice(0, 30); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
+    try { if (cashBalance <= 0) return null; const fCands = [...ETF_DB, ...STOCK_OPT].slice(0, 40); return genFrontier(allPos, cashBalance, holdingsVal, fCands); } catch (e) { return null }
   }, [allPos, cashBalance, holdingsVal]);
 
   // ─── Ticker search ───
@@ -5370,7 +6521,7 @@ useEffect(() => {
 
     try {
     // ── Step 1: Fetch trailing 12-month history for all candidates ──
-    const baseCandidates = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT] : includeStocks === "stocks" ? STOCK_OPT : ETF_DB;
+    const baseCandidates = [...ETF_DB, ...STOCK_OPT];
     const tickers = baseCandidates.map(c => c.t);
     // Compute date range: 13 months back (need 12 months of returns = 13 price points)
     const endDate = new Date().toISOString().slice(0, 10);
@@ -5409,9 +6560,19 @@ useEffect(() => {
       baseCandidates.forEach(c => { etfDbMap[c.t] = c; });
 
       // Compute recency-weighted trailing stats (same logic as backtest)
+      // Vol-derived decay: compute trailing SPY vol and map to decay
       const liveCandidates = [];
       const mIdx = sortedDates.length;
       const trailStart = Math.max(0, mIdx - 12);
+      let liveSPYVol = 15;
+      { const spyR = [];
+        for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) {
+          const r = returnsByDate[sortedDates[rv]]?.["SPY"];
+          if (r) spyR.push(r.ret);
+        }
+        if (spyR.length >= 6) { const a = spyR.reduce((s, r) => s + r, 0) / spyR.length; liveSPYVol = Math.sqrt(spyR.reduce((s, r) => s + (r - a) ** 2, 0) / spyR.length) * Math.sqrt(12) * 100; }
+      }
+      const liveMomDecay = Math.max(0.02, Math.min(0.12, 0.13 - liveSPYVol * 0.003));
 
       for (const sym of fetchedTickers) {
         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
@@ -5419,7 +6580,7 @@ useEffect(() => {
           const entry = returnsByDate[sortedDates[ti]]?.[sym];
           if (entry) {
             const age = mIdx - 1 - ti;
-            const w = Math.exp(-0.05 * age);
+            const w = Math.exp(-liveMomDecay * age);
             sumWRet += w * entry.ret;
             sumW += w;
             sumRet += entry.ret;
@@ -5433,7 +6594,7 @@ useEffect(() => {
         const db = etfDbMap[sym];
         if (!db) continue;
         const isStk = db.type === "stock";
-        const shrunkR = shrinkReturn(rawR, isStk);
+        const shrunkR = shrinkReturn(rawR, isStk, lastRegimeCtx?.state5);
         const vol = Math.max(Math.sqrt(Math.max(0, sumRetSq / count - (sumRet/count) * (sumRet/count))) * Math.sqrt(12) * 100, 1);
 
         // Build candidate with live stats, keeping category/metadata from DB
@@ -5548,10 +6709,12 @@ useEffect(() => {
       const fredRisk = riskOrder.indexOf(fredState5);
       const hmmRisk = riskOrder.indexOf(hmmState5);
       if (fredRisk >= 0 && hmmRisk >= 0) {
-        // Conservative fusion: take the lower risk (more defensive) of the two
-        const fusedIdx = Math.min(fredRisk, hmmRisk);
+        // Adaptive fusion: use stronger signal when both agree, conservative when they disagree
+        const bothRiskOn = fredRisk >= 3 && hmmRisk >= 3;
+        const bothRiskOff = fredRisk <= 1 && hmmRisk <= 1;
+        const fusedIdx = (bothRiskOn || bothRiskOff) ? Math.max(fredRisk, hmmRisk) : Math.min(fredRisk, hmmRisk);
         regimeCtx.state5 = riskOrder[fusedIdx];
-        regimeCtx.fusionNote = fredRisk === hmmRisk ? "FRED & HMM agree" : `Conservative: FRED=${fredState5} HMM=${hmmState5} → ${riskOrder[fusedIdx]}`;
+        regimeCtx.fusionNote = fredRisk === hmmRisk ? "FRED & HMM agree" : `Adaptive: FRED=${fredState5} HMM=${hmmState5} → ${riskOrder[fusedIdx]}`;
       }
     }
 
@@ -5638,7 +6801,7 @@ useEffect(() => {
 
   // ─── SR mode helpers ───
   const getSR = (m) => m ? (srMode === "var" ? m.varSh : srMode === "vol2" ? m.vol2Sh : m.sh) : 0;
-  const srLabel = srMode === "var" ? "VaR Sharpe" : srMode === "vol2" ? "σ² Sharpe" : "Sharpe";
+  const srLabel = srMode === "cvar" ? "CVaR Sharpe" : "VaR Sharpe";
   const srSub = srMode === "var" ? "(R-Rf)/VaR₉₅" : srMode === "vol2" ? "(R-Rf)/σ²" : "(R-Rf)/σ";
   const srMax = srMode === "vol2" ? 1 : srMode === "var" ? 1 : 2;
 
@@ -5949,11 +7112,7 @@ useEffect(() => {
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>🌊</span>
                   <span style={{ fontSize: 8, color: useRegime ? cs.yellow : cs.dim }}>{useRegime ? (hmmResult ? `${hmmResult.currentEnsemble.name} (HMM+FRED)` : regimeData?.regime?.state5 ? regimeData.regime.state5.replace(/_/g," ").toUpperCase() : regimeData?.regime?.regime?.toUpperCase() || "ON") : "OFF"}</span>
                 </button>
-                {["etf", "stocks", "both"].map(mode => (
-                  <button key={mode} onClick={() => setIncludeStocks(mode)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${includeStocks === mode ? "rgba(120,169,255,.25)" : "#393939"}`, background: includeStocks === mode ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
-                    <span style={{ fontSize: 9, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF Only" : mode === "stocks" ? "Stocks Only" : "ETF+Stocks"}</span>
-                  </button>
-                ))}
+                <span style={{ fontSize: 8, color: cs.blue, fontFamily: mono2, fontWeight: 600 }}>All Assets</span>
               </div>
 
               {ot === "max_return" && srMode === "var" && <div style={{ fontSize: 8, color: cs.pink, marginBottom: 4 }}>🚀 Max Return + VaR: aggressive growth with a light drawdown brake. Return is weighted 1.5x with a mild VaR penalty. Hard constraints (min 3 positions, 25% stock cap, return shrinkage) still apply.</div>}
@@ -6010,41 +7169,51 @@ useEffect(() => {
             </div>}
             {useRegime && !lastRegimeCtx && <div style={{ fontSize: 8, color: cs.yellow, marginBottom: 6 }}>⚠ Regime enabled but data not yet loaded — optimizer ran without regime tilts.</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              {optResult.map(r => {
-                const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
-                const liveP = recPrices[r.ticker];
-                const estShares = liveP?.price > 0 ? Math.floor(r.dollars / liveP.price) : null;
-                return (
-                <div key={r.ticker} onClick={() => toggleRec(r)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 0,
-                    background: isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)",
-                    border: `1px solid ${isAccepted ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.1)"}`,
-                    cursor: "pointer", transition: "all .2s" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = isAccepted ? "rgba(255,131,137,.08)" : "rgba(66,190,101,.1)" }}
-                  onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)" }}>
-                  <Badge color={isAccepted ? cs.green : cs.blue}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
-                      <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
-                      <Badge color={cs.dim}>{r.cat}</Badge>
-                      {r.isStock && <Badge color={cs.blue}>STOCK</Badge>}
-                      {r.lev && <Badge color={cs.red}>{r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
+              {(() => {
+                const optStocks = optResult.filter(r => r.isStock);
+                const optETFs = optResult.filter(r => !r.isStock);
+                const renderRec = (r) => {
+                  const isAccepted = accepted.has(r.ticker) || etfs.find(e => e.ticker === r.ticker) || stocks.find(s => s.ticker === r.ticker);
+                  const liveP = recPrices[r.ticker];
+                  const estShares = liveP?.price > 0 ? Math.floor(r.dollars / liveP.price) : null;
+                  return (
+                  <div key={r.ticker} onClick={() => toggleRec(r)}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 0,
+                      background: isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)",
+                      border: `1px solid ${isAccepted ? "rgba(66,190,101,.25)" : "rgba(66,190,101,.1)"}`,
+                      cursor: "pointer", transition: "all .2s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = isAccepted ? "rgba(255,131,137,.08)" : "rgba(66,190,101,.1)" }}
+                    onMouseLeave={e => { e.currentTarget.style.background = isAccepted ? "rgba(66,190,101,.08)" : "rgba(66,190,101,.04)" }}>
+                    <Badge color={isAccepted ? cs.green : cs.blue}>{isAccepted ? "✓ ADDED" : "BUY"}</Badge>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 12, color: isAccepted ? cs.green : cs.text }}>{r.ticker}</span>
+                        <span style={{ fontSize: 9, color: cs.dim }}>{r.name}</span>
+                        <Badge color={cs.dim}>{r.cat}</Badge>
+                        {r.isStock && <Badge color={cs.blue}>STOCK</Badge>}
+                        {r.lev && <Badge color={cs.red}>{r.lev > 0 ? `${r.lev}x LEV` : `${Math.abs(r.lev)}x INV`}</Badge>}
+                      </div>
+                      <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
+                        {r.lev ? `Stated R:${r.r?.toFixed?.(1) || r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r?.toFixed?.(1) || r.r}%`} · V:{r.v?.toFixed?.(1) || r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
+                        {liveP && <span style={{ color: cs.text }}> · <span style={{ color: liveP.change >= 0 ? cs.green : cs.red }}>${liveP.price?.toFixed(2)} ({liveP.change > 0 ? "+" : ""}{liveP.change}%)</span></span>}
+                        {estShares && <span> · ~{estShares} shares</span>}
+                        {!liveP && <span style={{ color: cs.yellow }}> · Price pending</span>}
+                        {r.lev && <span style={{ color: cs.red }}> · Vol decay drag</span>}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 8, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
-                      {r.lev ? `Stated R:${r.r?.toFixed?.(1) || r.r}% → Adj R:${r.adjR}% (decay:${r.decay}%)` : `R:${r.r?.toFixed?.(1) || r.r}%`} · V:{r.v?.toFixed?.(1) || r.v}% · ER:{r.er}%{r.hk != null ? ` · ½K:${r.hk}%` : ""}
-                      {liveP && <span style={{ color: cs.text }}> · <span style={{ color: liveP.change >= 0 ? cs.green : cs.red }}>${liveP.price?.toFixed(2)} ({liveP.change > 0 ? "+" : ""}{liveP.change}%)</span></span>}
-                      {estShares && <span> · ~{estShares} shares</span>}
-                      {!liveP && <span style={{ color: cs.yellow }}> · Price pending</span>}
-                      {r.lev && <span style={{ color: cs.red }}> · Vol decay drag</span>}
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.green : cs.text }}>${r.dollars.toLocaleString()}</div>
+                      <div style={{ fontSize: 9, color: cs.dim, fontFamily: mono2 }}>{r.pct}% of cash</div>
                     </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: isAccepted ? cs.green : cs.text }}>${r.dollars.toLocaleString()}</div>
-                    <div style={{ fontSize: 9, color: cs.dim, fontFamily: mono2 }}>{r.pct}% of cash</div>
-                  </div>
-                </div>
-              )})}
+                  </div>);
+                };
+                return <>
+                  {optStocks.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.yellow, marginBottom: 2, marginTop: 4 }}>📈 Stocks ({optStocks.length})</div>}
+                  {optStocks.map(renderRec)}
+                  {optETFs.length > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: cs.green, marginBottom: 2, marginTop: optStocks.length > 0 ? 8 : 4 }}>📊 ETFs ({optETFs.length})</div>}
+                  {optETFs.map(renderRec)}
+                </>;
+              })()}
             </div>
 
             {accepted.size > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 0, background: "rgba(66,190,101,.06)", fontSize: 9, color: cs.green, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -6133,7 +7302,7 @@ useEffect(() => {
                     setRebalRunning(true);
                     try {
                     // ── Fetch live trailing data (same as Deploy Cash optimizer) ──
-                    const baseCandidates = includeStocks === "both" ? [...ETF_DB, ...STOCK_OPT] : includeStocks === "stocks" ? STOCK_OPT : ETF_DB;
+                    const baseCandidates = [...ETF_DB, ...STOCK_OPT];
                     const tickers = baseCandidates.map(c => c.t);
                     const endDate = new Date().toISOString().slice(0, 10);
                     const startDate = new Date(Date.now() - 14 * 30 * 86400000).toISOString().slice(0, 10);
@@ -6165,11 +7334,16 @@ useEffect(() => {
                       const liveCandidates = [];
                       const mIdx = sortedDates.length;
                       const trailStart = Math.max(0, mIdx - 12);
+                      // Vol-derived decay (matches backtest)
+                      let raSPYVol = 15;
+                      { const sr = []; for (let rv = Math.max(0, mIdx - 12); rv < mIdx; rv++) { const r = returnsByDate[sortedDates[rv]]?.["SPY"]; if (r) sr.push(r.ret); }
+                        if (sr.length >= 6) { const a = sr.reduce((s, r) => s + r, 0) / sr.length; raSPYVol = Math.sqrt(sr.reduce((s, r) => s + (r - a) ** 2, 0) / sr.length) * Math.sqrt(12) * 100; } }
+                      const raDecay = Math.max(0.02, Math.min(0.12, 0.13 - raSPYVol * 0.003));
                       for (const sym of fetchedTickers) {
                         let sumWRet = 0, sumW = 0, sumRet = 0, sumRetSq = 0, count = 0;
                         for (let ti = trailStart; ti < mIdx; ti++) {
                           const entry = returnsByDate[sortedDates[ti]]?.[sym];
-                          if (entry) { const age = mIdx - 1 - ti; const w = Math.exp(-0.05 * age); sumWRet += w * entry.ret; sumW += w; sumRet += entry.ret; sumRetSq += entry.ret * entry.ret; count++; }
+                          if (entry) { const age = mIdx - 1 - ti; const w = Math.exp(-raDecay * age); sumWRet += w * entry.ret; sumW += w; sumRet += entry.ret; sumRetSq += entry.ret * entry.ret; count++; }
                         }
                         if (count < 6) continue;
                         const db = etfDbMap[sym]; if (!db) continue;
@@ -6421,28 +7595,33 @@ useEffect(() => {
                       {ra.sells.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(255,131,137,.05)", fontSize: 9 }}>
                         <Badge color={cs.red}>SELL</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.red, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: cs.text }}>{fmt$(t2.curDollars)}</span>
                       </div>)}
                       {ra.reduces.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(255,171,145,.04)", fontSize: 9 }}>
                         <Badge color={cs.yellow}>REDUCE</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.yellow, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: t2.gl >= 0 ? cs.green : cs.red }}>{t2.gl >= 0 ? "+" : ""}{fmt$(t2.gl)}</span>
                       </div>)}
                       {ra.keeps.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(120,169,255,.04)", fontSize: 9 }}>
                         <Badge color={cs.blue}>KEEP</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.blue, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                       </div>)}
                       {ra.increases.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(190,149,255,.04)", fontSize: 9 }}>
                         <Badge color={cs.purple}>ADD</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.purple, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                       </div>)}
                       {ra.buys.map(t2 => <div key={t2.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 0, background: "rgba(110,231,183,.03)", fontSize: 9 }}>
                         <Badge color={cs.green}>BUY</Badge>
                         <span style={{ fontFamily: mono2, fontWeight: 600, color: cs.green, minWidth: 40 }}>{t2.ticker}</span>
+                        <Badge color={STOCK_TICKER_SET.has(t2.ticker) ? cs.yellow : cs.green}>{STOCK_TICKER_SET.has(t2.ticker) ? "S" : "E"}</Badge>
                         <span style={{ color: cs.dim, flex: 1 }}>{t2.reason}</span>
                         <span style={{ fontFamily: mono2, color: cs.text }}>{fmt$(t2.optDollars)}</span>
                       </div>)}
@@ -7630,13 +8809,9 @@ useEffect(() => {
                 <button onClick={() => setUseRegime(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${useRegime ? "rgba(255,171,145,.2)" : "#393939"}`, background: useRegime ? "rgba(255,171,145,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
                   <span style={{ fontSize: 9, color: useRegime ? cs.yellow : cs.dim, fontWeight: 600 }}>Regime-Adaptive {useRegime ? "ON" : "OFF"}</span>
                 </button>
-                {["etf", "stocks", "both"].map(mode => (
-                  <button key={mode} onClick={() => setIncludeStocks(mode)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${includeStocks === mode ? "rgba(120,169,255,.25)" : "#393939"}`, background: includeStocks === mode ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
-                    <span style={{ fontSize: 8, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF" : mode === "stocks" ? "Stocks" : "ETF+Stocks"}</span>
-                  </button>
-                ))}
-                {[{k:"std",l:"Std SR"},{k:"var",l:"VaR SR"},{k:"vol2",l:"σ² SR"}].map(m => (
-                  <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${srMode === m.k ? "rgba(66,190,101,.2)" : "#393939"}`, background: srMode === m.k ? "rgba(66,190,101,.06)" : "transparent", color: srMode === m.k ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
+                <span style={{ fontSize: 8, color: cs.blue, fontFamily: mono2, fontWeight: 600 }}>All Assets</span>
+                {[{k:"var",l:"VaR Sharpe"},{k:"cvar",l:"CVaR Sharpe"}].map(m => (
+                  <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "4px 8px", borderRadius: 0, border: `1px solid ${srMode === m.k ? "rgba(66,190,101,.2)" : "#393939"}`, background: srMode === m.k ? "rgba(66,190,101,.06)" : "transparent", color: srMode === m.k ? cs.green : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
                 ))}
                 <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
                   <span style={{ fontSize: 8, color: cs.dim }}>Vol Target</span>
@@ -7644,6 +8819,29 @@ useEffect(() => {
                   <span style={{ fontSize: 8, color: cs.dim }}>%</span>
                 </div>
                 <span style={{ fontSize: 8, color: cs.purple, fontFamily: mono2 }}>Tax: {taxRates.st.toFixed(0)}% ST / {taxRates.lt.toFixed(0)}% LT</span>
+              </div>
+              {/* ── Advanced Algorithm Controls ── */}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "1px solid #2a2a2a" }}>
+                <span style={{ fontSize: 8, color: cs.dim, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase" }}>ALGO</span>
+                <button onClick={() => setWalkForward(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${walkForward ? "rgba(66,190,101,.2)" : "#393939"}`, background: walkForward ? "rgba(66,190,101,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: walkForward ? cs.green : cs.dim, fontWeight: 600 }}>Walk-Forward {walkForward ? "ON" : "OFF"}</span>
+                </button>
+                <button onClick={() => setDrawdownProtection(v => !v)} style={{ padding: "5px 10px", borderRadius: 0, border: `1px solid ${drawdownProtection ? "rgba(255,126,182,.2)" : "#393939"}`, background: drawdownProtection ? "rgba(255,126,182,.06)" : "transparent", display: "flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: "inherit" }}>
+                  <span style={{ fontSize: 9, color: drawdownProtection ? cs.pink : cs.dim, fontWeight: 600 }}>DD Protection {drawdownProtection ? "ON" : "OFF"}</span>
+                </button>
+                {[{k:"score",l:"Score-Based",d:"Sharpe optimized"},{k:"risk_parity",l:"Risk Parity",d:"Equal risk contribution"},{k:"hybrid",l:"Hybrid",d:"RP base + alpha tilts"}].map(m => (
+                  <button key={m.k} onClick={() => setWeightingMethod(m.k)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${weightingMethod === m.k ? "rgba(120,169,255,.25)" : "#393939"}`, background: weightingMethod === m.k ? "rgba(120,169,255,.08)" : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    <div style={{ fontSize: 8, color: weightingMethod === m.k ? cs.blue : cs.dim, fontWeight: 600 }}>{m.l}</div>
+                    <div style={{ fontSize: 7, color: cs.muted }}>{m.d}</div>
+                  </button>
+                ))}
+                <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}>
+                  <span style={{ fontSize: 8, color: cs.dim, whiteSpace: "nowrap" }}>OOS</span>
+                  <input type="range" min="10" max="50" step="5" value={oosFraction * 100}
+                    onChange={e => setOosFraction(+e.target.value / 100)}
+                    style={{ width: 60, accentColor: cs.yellow, cursor: "pointer" }} />
+                  <span style={{ fontSize: 9, fontFamily: mono2, color: cs.yellow, fontWeight: 600, minWidth: 28 }}>{(oosFraction * 100).toFixed(0)}%</span>
+                </div>
               </div>
             </div>
 
@@ -7655,9 +8853,6 @@ useEffect(() => {
           {btResult && (() => {
             const { curves, summary, annual, startCash: sc2 } = btResult;
             return <>
-              {includeStocks !== "etf" && <div style={{ ...cardS, background: "rgba(96,165,250,.04)", borderColor: "rgba(96,165,250,.15)", marginBottom: 10 }}>
-                <div style={{ fontSize: 9, color: cs.blue }}>📊 <strong>Historical stock universe (2006–2025, ~100-140 per year):</strong> Top ~15 S&P 500 stocks per GICS sector at each year. Covers 2008 crisis (AIG in Financials pre-crash, removed after), 2010 recovery (V/MA enter), 2017 tech shift (NVDA enters), 2020 COVID (TSLA in Consumer), and 2023 AI boom (SMCI). GE Industrial #1 in 2006, exits by 2018. Return shrinkage (80% cap) + SPY-overlap penalty.</div>
-              </div>}
               {/* Interactive Equity Curve */}
               <EquityCurve curves={curves} sc2={sc2} />
 
@@ -7691,6 +8886,51 @@ useEffect(() => {
                 ))}
               </div>
 
+              {/* IS/OOS Split Analysis */}
+              {btResult.oosAnalysis && <div style={{ ...cardS, marginBottom: 14, background: "rgba(120,169,255,.02)", borderColor: "rgba(120,169,255,.12)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: cs.blue, marginBottom: 8 }}>In-Sample vs Out-of-Sample ({btResult.oosAnalysis.isYears}yr / {btResult.oosAnalysis.oosYears}yr · Split at {btResult.oosAnalysis.splitYear})</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {[
+                    { label: `In-Sample (2006-${btResult.oosAnalysis.splitYear - 1})`, data: btResult.oosAnalysis.is, isBg: "rgba(66,190,101,.03)", isBorder: "rgba(66,190,101,.1)" },
+                    { label: `Out-of-Sample (${btResult.oosAnalysis.splitYear}-2025)`, data: btResult.oosAnalysis.oos, isBg: "rgba(255,171,145,.03)", isBorder: "rgba(255,171,145,.1)" },
+                  ].map(section => (
+                    <div key={section.label} style={{ padding: 10, background: section.isBg, border: `1px solid ${section.isBorder}`, borderRadius: 2 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: cs.text, marginBottom: 6 }}>{section.label}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                        {[
+                          { l: "Optimized", d: section.data.opt, c: cs.green },
+                          { l: "S&P 500", d: section.data.spy, c: cs.blue },
+                          { l: "60/40", d: section.data.bal60, c: cs.purple },
+                        ].map(s => (
+                          <div key={s.l}>
+                            <div style={{ fontSize: 8, fontWeight: 600, color: s.c, marginBottom: 3 }}>{s.l}</div>
+                            <div style={{ fontSize: 7, color: cs.dim }}>CAGR</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{s.d.cagr.toFixed(1)}%</div>
+                            <div style={{ fontSize: 7, color: cs.dim, marginTop: 2 }}>Sharpe</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{s.d.sharpe.toFixed(2)}</div>
+                            <div style={{ fontSize: 7, color: cs.dim, marginTop: 2 }}>Max DD</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2, color: cs.red }}>-{s.d.dd.toFixed(1)}%</div>
+                            <div style={{ fontSize: 7, color: cs.dim, marginTop: 2 }}>Vol</div>
+                            <div style={{ fontSize: 10, fontWeight: 600, fontFamily: mono2 }}>{s.d.vol.toFixed(1)}%</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Alpha vs SPY */}
+                      <div style={{ marginTop: 6, padding: "4px 6px", background: "rgba(255,255,255,.02)", borderRadius: 2, fontSize: 8, fontFamily: mono2 }}>
+                        <span style={{ color: cs.dim }}>Alpha vs SPY: </span>
+                        <span style={{ fontWeight: 700, color: (section.data.opt.cagr - section.data.spy.cagr) >= 0 ? cs.green : cs.red }}>
+                          {(section.data.opt.cagr - section.data.spy.cagr) >= 0 ? "+" : ""}{(section.data.opt.cagr - section.data.spy.cagr).toFixed(1)}%
+                        </span>
+                        <span style={{ color: cs.dim }}> · Sharpe diff: </span>
+                        <span style={{ fontWeight: 700, color: (section.data.opt.sharpe - section.data.spy.sharpe) >= 0 ? cs.green : cs.red }}>
+                          {(section.data.opt.sharpe - section.data.spy.sharpe) >= 0 ? "+" : ""}{(section.data.opt.sharpe - section.data.spy.sharpe).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
               {/* Tax Impact Summary */}
               {btResult.tax && (btResult.tax.totalPaid > 0 || btResult.tax.totalSaved > 0) && <div style={{ ...cardS, marginBottom: 14, background: "rgba(167,139,250,.02)", borderColor: "rgba(167,139,250,.1)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -7722,6 +8962,45 @@ useEffect(() => {
                   </div>
                 </div>
               </div>}
+              {/* ── Algorithm & Drawdown Protection Summary ── */}
+              {(btResult.walkForward || btResult.drawdown?.enabled || btResult.weightingMethod !== "score") && <div style={{ ...cardS, marginBottom: 14, background: "rgba(120,169,255,.02)", borderColor: "rgba(120,169,255,.1)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: cs.blue }}>Algorithm Features</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                      {btResult.walkForward && <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(66,190,101,.08)", border: "1px solid rgba(66,190,101,.15)", color: cs.green, fontWeight: 600 }}>Walk-Forward (48mo rolling)</span>}
+                      {btResult.weightingMethod === "hybrid" && <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(120,169,255,.08)", border: "1px solid rgba(120,169,255,.15)", color: cs.blue, fontWeight: 600 }}>Hybrid RP + Alpha</span>}
+                      {btResult.weightingMethod === "risk_parity" && <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(120,169,255,.08)", border: "1px solid rgba(120,169,255,.15)", color: cs.blue, fontWeight: 600 }}>Risk Parity</span>}
+                      <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(255,126,182,.08)", border: "1px solid rgba(255,126,182,.15)", color: cs.pink, fontWeight: 600 }}>Momentum + Mean-Reversion</span>
+                      <span style={{ fontSize: 8, padding: "2px 6px", background: "rgba(255,171,145,.08)", border: "1px solid rgba(255,171,145,.15)", color: cs.yellow, fontWeight: 600 }}>Regime-Based Allocation</span>
+                    </div>
+                  </div>
+                  {btResult.drawdown?.enabled && <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>DD Triggers</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: btResult.drawdown.triggerCount > 0 ? cs.pink : cs.green }}>{btResult.drawdown.triggerCount}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Recoveries</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: cs.green }}>{btResult.drawdown.recoveryCount}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Protection</div>
+                      <div style={{ fontSize: 8, fontWeight: 600, fontFamily: mono2, color: cs.pink }}>10%/2mo 15%/1mo 20%/1mo 25%/imm</div>
+                    </div>
+                  </div>}
+                </div>
+                {btResult.drawdown?.events?.length > 0 && <div style={{ marginTop: 8, borderTop: "1px solid #2a2a2a", paddingTop: 6 }}>
+                  <div style={{ fontSize: 8, color: cs.dim, marginBottom: 4 }}>Drawdown Events</div>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {btResult.drawdown.events.map((ev, i) => (
+                      <span key={i} style={{ fontSize: 7, padding: "2px 5px", background: ev.type === "TRIGGER" ? "rgba(255,131,137,.06)" : "rgba(66,190,101,.06)", border: `1px solid ${ev.type === "TRIGGER" ? "rgba(255,131,137,.15)" : "rgba(66,190,101,.15)"}`, color: ev.type === "TRIGGER" ? cs.red : cs.green, fontFamily: mono2 }}>
+                        {ev.date} {ev.type === "TRIGGER" ? `DD -${ev.drawdown}% → ${(ev.equityScale*100).toFixed(0)}% eq` : "Recovered"}
+                      </span>
+                    ))}
+                  </div>
+                </div>}
+              </div>}
               <div style={cardS}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                   <div style={{ fontSize: 11, fontWeight: 700 }}>Annual Returns & Rebalancing</div>
@@ -7744,7 +9023,7 @@ useEffect(() => {
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.green, fontFamily: mono2, fontSize: 9 }}>Opt</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.blue, fontFamily: mono2, fontSize: 9 }}>SPY</th>
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Alpha</th>
-                        <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>ETFs</th>
+                        <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>#</th>
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.yellow, fontFamily: mono2, fontSize: 9 }}>Regime</th>}
                         {useRegime && <th style={{ padding: "6px 8px", textAlign: "center", color: cs.dim, fontFamily: mono2, fontSize: 9 }}>Accel</th>}
                         <th style={{ padding: "6px 8px", textAlign: "right", color: cs.purple, fontFamily: mono2, fontSize: 9 }}>Tax</th>
@@ -7756,12 +9035,17 @@ useEffect(() => {
                         const alpha = a.optRet - a.spyRet;
                         const isExp = btExpandedYear === a.year;
                         const cs2 = 8 + (useRegime ? 2 : 0);
+                        const oosRow = a.isOOS;
+                        const defaultBg = oosRow ? "rgba(255,171,145,.02)" : "transparent";
                         return (<React.Fragment key={a.year}>
                           <tr onClick={() => setBtExpandedYear(isExp ? null : a.year)}
-                            style={{ borderBottom: isExp ? "none" : "1px solid #222222", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : "transparent" }}
-                            onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = "#1e1e1e" }}
-                            onMouseLeave={e => { if (!isExp) e.currentTarget.style.background = "transparent" }}>
-                            <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>{isExp ? "▾" : "▸"} {a.year}</td>
+                            style={{ borderBottom: isExp ? "none" : "1px solid #222222", cursor: "pointer", background: isExp ? "rgba(110,231,183,.03)" : defaultBg }}
+                            onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = oosRow ? "rgba(255,171,145,.05)" : "#1e1e1e" }}
+                            onMouseLeave={e => { if (!isExp) e.currentTarget.style.background = defaultBg }}>
+                            <td style={{ padding: "5px 8px", fontFamily: mono2, fontWeight: 600 }}>
+                              {isExp ? "▾" : "▸"} {a.year}
+                              {oosRow && <span style={{ fontSize: 6, color: cs.yellow, marginLeft: 4, fontWeight: 400, letterSpacing: ".04em" }}>OOS</span>}
+                            </td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: cs.dim, fontSize: 9 }}>{fmt$(a.portfolioValue || 0)}</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.optRet >= 0 ? cs.green : cs.red }}>{a.optRet >= 0 ? "+" : ""}{a.optRet.toFixed(1)}%</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontFamily: mono2, color: a.spyRet >= 0 ? cs.blue : cs.red }}>{a.spyRet >= 0 ? "+" : ""}{a.spyRet.toFixed(1)}%</td>
@@ -7788,22 +9072,67 @@ useEffect(() => {
                               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                                 {/* Holdings */}
                                 <div style={{ flex: "1 1 250px", minWidth: 200 }}>
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: cs.green, marginBottom: 6 }}>📊 Holdings ({a.holdings?.length || 0} ETFs · {fmt$(a.portfolioValue || 0)})</div>
-                                  {a.holdings?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                    {a.holdings.map((h, i) => (
-                                      <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 7px", borderRadius: 0, background: i % 2 ? "rgba(255,255,255,.01)" : "transparent" }}>
-                                        <span style={{ width: 4, height: 14, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
-                                        <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color: cs.green, minWidth: 40 }}>{h.ticker}</span>
-                                        <span style={{ fontSize: 8, color: cs.dim, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
-                                        <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.weight}%</span>
-                                        <span style={{ fontFamily: mono2, fontSize: 8, color: cs.muted, minWidth: 50, textAlign: "right" }}>{fmt$(h.dollars)}</span>
-                                        {h.glPct != null && h.glPct !== 0 && <span style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: h.glPct >= 0 ? cs.green : cs.red, minWidth: 45, textAlign: "right" }}>{h.glPct >= 0 ? "+" : ""}{h.glPct.toFixed(1)}%</span>}
+                                  {(() => {
+                                    const hStocks = (a.holdings || []).filter(h => h.isStock);
+                                    const hETFs = (a.holdings || []).filter(h => !h.isStock);
+                                    const renderHolding = (h, i, color) => {
+                                      // Use pre-computed year-end values if available, otherwise fallback
+                                      const mv = h.yearEndMV || Math.round((h.weight / 100) * (a.portfolioValue || 0));
+                                      const gl = h.yearEndGL != null ? h.yearEndGL : (h.costBasis > 0 ? mv - h.costBasis : null);
+                                      const glPct = h.yearEndGLPct != null ? h.yearEndGLPct : (h.costBasis > 0 ? ((mv / h.costBasis) - 1) * 100 : null);
+                                      return (
+                                      <div key={h.ticker} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 7px", borderRadius: 0, background: i % 2 ? "rgba(255,255,255,.02)" : "transparent" }}>
+                                        <span style={{ width: 4, height: 28, borderRadius: 2, background: PAL[i % PAL.length], flexShrink: 0 }} />
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                                            <span style={{ fontFamily: mono2, fontWeight: 600, fontSize: 10, color }}>{h.ticker}</span>
+                                            <span style={{ fontSize: 8, color: cs.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
+                                          </div>
+                                          <div style={{ fontSize: 7, color: cs.muted, fontFamily: mono2, marginTop: 1 }}>
+                                            {h.cat}
+                                            {h.costBasis > 0 && <span> · Basis {fmt$(h.costBasis)}</span>}
+                                            {h.yearEndPrice && <span> · Close ${h.yearEndPrice.toFixed(2)}</span>}
+                                          </div>
+                                        </div>
+                                        <span style={{ fontFamily: mono2, fontSize: 9, color: cs.text, fontWeight: 600, minWidth: 35, textAlign: "right" }}>{h.yearEndWeight || h.weight}%</span>
+                                        <div style={{ textAlign: "right", minWidth: 70 }}>
+                                          <div style={{ fontFamily: mono2, fontSize: 10, fontWeight: 600, color: cs.text }}>{fmt$(mv)}</div>
+                                          {gl != null && <div style={{ fontFamily: mono2, fontSize: 8, fontWeight: 600, color: gl >= 0 ? cs.green : cs.red }}>
+                                            {gl >= 0 ? "+" : ""}{fmt$(Math.round(gl))} ({glPct >= 0 ? "+" : ""}{glPct.toFixed(1)}%)
+                                          </div>}
+                                        </div>
+                                      </div>);
+                                    };
+                                    return <>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: cs.green, marginBottom: 6 }}>
+                                        Holdings ({a.holdings?.length || 0}{hStocks.length > 0 && hETFs.length > 0 ? ` · ${hStocks.length} Stocks + ${hETFs.length} ETFs` : hStocks.length > 0 ? " Stocks" : " ETFs"} · {fmt$(a.portfolioValue || 0)})
                                       </div>
-                                    ))}
-                                    <div style={{ marginTop: 6, padding: "6px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
-                                      {(() => { const cats = {}; (a.holdings || []).forEach(h => { cats[h.cat] = (cats[h.cat] || 0) + h.weight; }); return Object.entries(cats).sort(([,x],[,y]) => y - x).map(([cat, wt]) => `${cat}: ${wt.toFixed(0)}%`).join(" · "); })()}
-                                    </div>
-                                  </div> : <div style={{ fontSize: 9, color: cs.muted }}>No data</div>}
+                                      {a.holdings?.length > 0 ? <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                        {hStocks.length > 0 && <div style={{ fontSize: 9, fontWeight: 600, color: cs.yellow, marginTop: 2, marginBottom: 1 }}>Stocks ({hStocks.length})</div>}
+                                        {hStocks.map((h, i) => renderHolding(h, i, cs.yellow))}
+                                        {hETFs.length > 0 && <div style={{ fontSize: 9, fontWeight: 600, color: cs.green, marginTop: hStocks.length > 0 ? 6 : 2, marginBottom: 1 }}>ETFs ({hETFs.length})</div>}
+                                        {hETFs.map((h, i) => renderHolding(h, i, cs.green))}
+                                        {/* Total G/L summary */}
+                                        {(() => {
+                                          const totalMV = a.portfolioValue || 0;
+                                          const totalBasis = (a.holdings || []).reduce((s, h) => s + (h.costBasis || 0), 0);
+                                          const totalGL = totalBasis > 0 ? totalMV - totalBasis : null;
+                                          const totalGLPct = totalBasis > 0 ? ((totalMV / totalBasis) - 1) * 100 : null;
+                                          return <div style={{ marginTop: 4, padding: "5px 7px", borderRadius: 0, background: "rgba(120,169,255,.04)", border: "1px solid rgba(120,169,255,.08)", fontSize: 8, fontFamily: mono2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                            <span style={{ color: cs.dim }}>Year-End Total</span>
+                                            <span style={{ fontWeight: 700, color: cs.text }}>{fmt$(totalMV)}</span>
+                                            {totalGL != null && <span style={{ fontWeight: 600, color: totalGL >= 0 ? cs.green : cs.red }}>
+                                              Unrealized: {totalGL >= 0 ? "+" : ""}{fmt$(Math.round(totalGL))} ({totalGLPct >= 0 ? "+" : ""}{totalGLPct.toFixed(1)}%)
+                                            </span>}
+                                          </div>;
+                                        })()}
+                                        {/* Category breakdown */}
+                                        <div style={{ marginTop: 4, padding: "5px 7px", borderRadius: 0, background: "#1c1c1c", fontSize: 8, color: cs.dim }}>
+                                          {(() => { const cats = {}; (a.holdings || []).forEach(h => { cats[h.cat] = (cats[h.cat] || 0) + h.weight; }); return Object.entries(cats).sort(([,x],[,y]) => y - x).map(([cat, wt]) => `${cat}: ${wt.toFixed(0)}%`).join(" · "); })()}
+                                        </div>
+                                      </div> : <div style={{ fontSize: 9, color: cs.muted }}>No data</div>}
+                                    </>;
+                                  })()}
                                 </div>
                                 {/* Rebalance Trades */}
                                 <div style={{ flex: "1 1 250px", minWidth: 200 }}>

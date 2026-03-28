@@ -1,5 +1,6 @@
 // api/history.js — Vercel Serverless Function
-// Historical monthly prices via Yahoo Finance public API (no package needed)
+// Historical prices via Yahoo Finance public API (no package needed)
+// Supports ?interval=1d (daily) or ?interval=1mo (monthly, default)
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -7,7 +8,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { symbols, start, end } = req.query;
+  const { symbols, start, end, interval } = req.query;
   if (!symbols) return res.status(400).json({ error: "Missing ?symbols= param" });
 
   const tickers = symbols.split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 100);
@@ -15,6 +16,7 @@ export default async function handler(req, res) {
 
   const startDate = start || "2015-01-01";
   const endDate = end || new Date().toISOString().slice(0, 10);
+  const yahooInterval = interval === "1d" ? "1d" : "1mo"; // daily or monthly
 
   // Convert dates to Unix timestamps for Yahoo
   const period1 = Math.floor(new Date(startDate).getTime() / 1000);
@@ -27,7 +29,7 @@ export default async function handler(req, res) {
   // ── Fetch from Yahoo Finance chart endpoint — ALL symbols in parallel ──
   await Promise.all(tickers.map(async (sym) => {
     try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1mo&period1=${period1}&period2=${period2}`;
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=${yahooInterval}&period1=${period1}&period2=${period2}`;
       const resp = await fetch(url, {
         headers: { "User-Agent": "Mozilla/5.0" },
       });
