@@ -5226,6 +5226,7 @@ export default function App() {
       let optValue = startCash;
       let optAlloc = {};
       let lastRebalMonth = null;
+      let simLastBestWeights = null; // warm-start weights for optimizer
       let simTaxPaid = 0;
       let simLossCarry = 0;
       let simCostBasis = {}; // ticker → actual dollar cost basis
@@ -5236,7 +5237,7 @@ export default function App() {
       const simHighTax = simTaxRates.st > 40;
       const simCooldown = simHighTax ? 3 : 2;
       const simSigThreshold = simHighTax ? 3 : 2;
-      const simHurdleFloor = simHighTax ? 2.5 : simTaxRates.st > 30 ? 2.0 : 1.5;
+      const simHurdleFloor = simHighTax ? 3.5 : simTaxRates.st > 30 ? 3.0 : 2.5; // match backtest hurdle floors
       let simPeak = startCash, simMaxDD = 0;
       const simMonthlyRets = [];
       // Drawdown protection state for simulation
@@ -5276,7 +5277,8 @@ export default function App() {
           }
           let confirmedLevel = -1;
           for (let lvl = DRAWDOWN_LEVELS.length - 1; lvl >= 0; lvl--) {
-            if (simDDCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths) { confirmedLevel = lvl; break; }
+            // Match backtest: confirmationMonths × 21 trading days (was just confirmationMonths)
+            if (simDDCounters[lvl] >= DRAWDOWN_LEVELS[lvl].confirmationMonths * 21) { confirmedLevel = lvl; break; }
           }
           if (confirmedLevel >= 0 && confirmedLevel > simDDActiveLevel) {
             simDDEquityScale = 1.0 - DRAWDOWN_LEVELS[confirmedLevel].equityReduction;
@@ -5287,7 +5289,7 @@ export default function App() {
             const activeThreshold = DRAWDOWN_LEVELS[simDDActiveLevel].threshold;
             if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
               SimDDRecoveryMonths++;
-              simDDEquityScale = Math.min(1.0, simDDEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[simDDActiveLevel].equityReduction)) / 3);
+              simDDEquityScale = Math.min(1.0, simDDEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[simDDActiveLevel].equityReduction)) / 63);
               if (simDDEquityScale >= 0.98) {
                 simDDEquityScale = 1.0; simDDActiveLevel = -1; SimDDRecoveryMonths = 0;
                 simDDCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
@@ -5317,31 +5319,44 @@ export default function App() {
         const isFirst = prevTickers.length === 0;
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
 
+        // Rebalance triggers matching backtest's tighter gates
         let shouldEval = isFirst;
         if (!shouldEval && simHistRegimes) {
           const rd = simHistRegimes[monthKey];
+          // Gate 1: Regime change — require 2+ months persistence
           if (mi > 0) {
             const prevRd = simHistRegimes[simDates[mi - 1]];
-            if (prevRd && rd && prevRd.regime !== rd.regime) shouldEval = true;
+            if (prevRd && rd && prevRd.regime !== rd.regime) {
+              // Check duration >= 2
+              let simDur = 1;
+              for (let lb = 2; lb <= 36 && mi - lb >= 0; lb++) {
+                const prev2 = simHistRegimes[simDates[mi - lb]];
+                if (prev2 && prev2.regime === rd.regime) simDur++; else break;
+              }
+              if (simDur >= 2) shouldEval = true;
+            }
           }
+          // Gate 2: Multi-signal — require 3 confirming signals
           if (!shouldEval && rd) {
             let sigCount = 0;
-            if (Math.abs(rd.stressAcceleration || 0) >= 0.5) sigCount++;
+            if (Math.abs(rd.stressAcceleration || 0) >= 0.8) sigCount++;
             if (rd.vixInversion) sigCount++;
             if (mi > 0) {
               const prevRd = simHistRegimes[simDates[mi - 1]];
               const volShift = rd.volRegime !== prevRd?.volRegime;
               if (volShift && ((prevRd?.volRegime === "compression" && rd.volRegime === "expansion") ||
-                  (prevRd?.volRegime === "normal" && rd.volRegime === "elevated") ||
-                  (prevRd?.volRegime === "elevated" && rd.volRegime === "normal"))) sigCount++;
+                  (prevRd?.volRegime === "normal" && rd.volRegime === "elevated"))) sigCount++;
             }
-            if (sigCount >= simSigThreshold) shouldEval = true;
+            if (sigCount >= 3) shouldEval = true;
           }
-          if (!shouldEval && mMonth % 3 === 0 && mSinceRebal >= simCooldown) shouldEval = true;
+          // Semi-annual fallback (matching backtest)
+          if (!shouldEval && mMonth % 6 === 0 && mSinceRebal >= simCooldown) shouldEval = true;
         } else if (!shouldEval) {
-          if (mMonth % 3 === 0) shouldEval = true;
+          if (mMonth % 6 === 0) shouldEval = true;
         }
-        if (!isFirst && mSinceRebal < simCooldown) shouldEval = false;
+        // Minimum 63 trading day cooldown (matching backtest)
+        const simMinCooldown = Math.max(simCooldown, 63);
+        if (!isFirst && mSinceRebal < simMinCooldown) shouldEval = false;
         if (!shouldEval) continue;
 
         // Trailing stats with recency weighting + shrinkage (matches main backtest)
@@ -5391,15 +5406,20 @@ export default function App() {
           trailingStats[sym] = { t: sym, n: db?.n || sym, c: db?.c || "US Large Cap", r: shrunkR, v: vol, er: db?.er || 0.1, d: 0, lev: db?.lev || null, type: db?.type || "etf" };
         }
 
-        const cands = Object.values(trailingStats).filter(s => {
-          if (s.v <= 0 || s.r <= -50) return false;
-          return true;
-        }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v)).slice(0, 30);
-
-        // Factor scoring for simulation candidates (lightweight)
+        // Factor scoring (matching backtest — with adaptive weights if available)
         if (mIdx > 12) computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
 
-        // Randomness comes from optimizer stochastic search — no artificial noise on returns
+        // Relative value signals (matching backtest)
+        const simRelVal = computeRelativeValue(returnsByDateSym, sortedDates, mIdx, trailingStats);
+        for (const sym of Object.keys(trailingStats)) trailingStats[sym].relValue = simRelVal[sym] || 0;
+
+        // All candidates — no cap (matching backtest)
+        const isBullishSim = simState5?.includes("risk_on");
+        const simReturnFloor = isBullishSim ? -50 : -80;
+        const cands = Object.values(trailingStats).filter(s => {
+          if (s.v <= 0 || s.r <= simReturnFloor) return false;
+          return true;
+        }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v));
         if (cands.length < 3) continue;
 
         // Lightweight optimizer with regime context (matches main backtest strategy)
@@ -5420,9 +5440,10 @@ export default function App() {
               const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
               const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
               if (fR >= 0 && hR >= 0) {
-                const bOn = fR >= 3 && hR >= 3, bOff = fR <= 1 && hR <= 1;
-                simRegime.state5 = ro[(bOn || bOff) ? Math.max(fR, hR) : Math.min(fR, hR)];
+                const bOn2 = fR >= 3 && hR >= 3, bOff2 = fR <= 1 && hR <= 1;
+                simRegime.state5 = ro[(bOn2 || bOff2) ? Math.max(fR, hR) : Math.min(fR, hR)];
               }
+              simRegime.hmmProbs = simHmmEnsembleMap[monthKey]; // pass HMM probs for confidence scaling
             }
           }
         }
@@ -5443,7 +5464,17 @@ export default function App() {
           }
           if (tmRows.length >= 60) simTrailRetMatrix = tmRows;
         }
-        const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, 200, null, null, simTrailRetMatrix);
+        // Scale iterations to candidate count (matching backtest)
+        const simIterations = cands.length > 80 ? 600 : cands.length > 40 ? 400 : 300;
+        // Build warm-start weights from previous best
+        let simWarmWeights = null;
+        if (simLastBestWeights) {
+          simWarmWeights = new Float64Array(cands.length);
+          for (let ci = 0; ci < cands.length; ci++) simWarmWeights[ci] = simLastBestWeights[cands[ci].t] || 0;
+        }
+        // Dynamic RF from regime data (matching backtest)
+        const simDynamicRF = simHistRegimes?.[monthKey]?.dgs10 ?? RF;
+        const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, simIterations, simWarmWeights, simDynamicRF, simTrailRetMatrix);
         if (!result || result.length === 0) continue;
 
         const newAlloc = {};
@@ -5510,6 +5541,9 @@ export default function App() {
           simLossCarry = excessLoss - ordOffset;
           lastRebalMonth = monthKey;
           simDDBaseAlloc = { ...newAlloc }; // reset drawdown base
+          // Save best weights for warm-starting next evaluation (matching backtest)
+          simLastBestWeights = {};
+          result.forEach(r => { simLastBestWeights[r.ticker] = r.dollars / (optValue || 1); });
           simPeak = Math.max(simPeak, optValue);
         }
       }
