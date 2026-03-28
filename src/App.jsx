@@ -5443,7 +5443,21 @@ export default function App() {
           }
         }
         const simEffectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
-        const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, 200);
+        // Build trailing return matrix for empirical CVaR (matches backtest)
+        let simTrailRetMatrix = null;
+        if (srMode === "cvar") {
+          const tmRows = [];
+          for (let tm = Math.max(0, mIdx - Math.min(24, mIdx)); tm < mIdx; tm++) {
+            const row = new Float64Array(cands.length);
+            for (let ci = 0; ci < cands.length; ci++) {
+              const e = returnsByDateSym[sortedDates[tm]]?.[cands[ci].t];
+              row[ci] = e ? e.ret : 0;
+            }
+            tmRows.push(row);
+          }
+          if (tmRows.length >= 12) simTrailRetMatrix = tmRows;
+        }
+        const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, 200, null, null, simTrailRetMatrix);
         if (!result || result.length === 0) continue;
 
         const newAlloc = {};
