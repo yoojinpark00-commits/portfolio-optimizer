@@ -2255,8 +2255,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
     // ── Empirical CVaR: actual worst-5% portfolio returns from trailing data ──
     let empiricalCvar = 0;
-    if (srMode === "cvar" && trailRetMatrix && trailRetMatrix.length >= 12) {
-      // Compute portfolio return for each trailing month
+    if (srMode === "cvar" && trailRetMatrix && trailRetMatrix.length >= 60) {
+      // Compute portfolio return for each trailing day
       const T = trailRetMatrix.length;
       const portRets = new Float64Array(T);
       for (let m = 0; m < T; m++) {
@@ -2266,12 +2266,12 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
       }
       // Sort ascending (worst returns first)
       portRets.sort();
-      // CVaR = average of worst 5% (at least 1 observation)
-      const tailCount = Math.max(1, Math.floor(T * 0.05));
+      // CVaR = average of worst 5% (e.g., 25 of 504 daily observations)
+      const tailCount = Math.max(3, Math.floor(T * 0.05));
       let tailSum = 0;
       for (let i = 0; i < tailCount; i++) tailSum += portRets[i];
-      // CVaR as annualized positive loss percentage
-      empiricalCvar = Math.abs(tailSum / tailCount) * Math.sqrt(12) * 100;
+      // CVaR as annualized positive loss percentage (daily → annual via √252)
+      empiricalCvar = Math.abs(tailSum / tailCount) * Math.sqrt(252) * 100;
     }
     const cvar = srMode === "cvar" && empiricalCvar > 0 ? empiricalCvar : parametricCvar;
 
@@ -4620,20 +4620,22 @@ export default function App() {
       // Step 4: Optimizer (btIterations scaled to candidate pool size)
       // Build warm-start weights: map previous best allocation to current candidate indices
       // ── Pre-compute trailing return matrix for empirical CVaR ──
-      // retMatrix[m][i] = monthly return of candidate i at trailing month m
+      // Uses daily returns (~504 trading days = 2 years) for robust tail estimation.
+      // With 504 observations, worst 5% = 25 data points — statistically meaningful.
       let trailRetMatrix = null;
       if (srMode === "cvar") {
-        const trailMonths = Math.min(24, mIdx);
+        const trailDays = Math.min(504, mIdx); // ~2 years of trading days
         const rows = [];
-        for (let tm = Math.max(0, mIdx - trailMonths); tm < mIdx; tm++) {
+        for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
           const row = new Float64Array(candidates.length);
+          let hasData = false;
           for (let ci = 0; ci < candidates.length; ci++) {
-            const e = returnsByDateSym[sortedDates[tm]]?.[candidates[ci].t];
-            row[ci] = e ? e.ret : 0;
+            const e = returnsByDateSym[sortedDates[td]]?.[candidates[ci].t];
+            if (e) { row[ci] = e.ret; hasData = true; }
           }
-          rows.push(row);
+          if (hasData) rows.push(row);
         }
-        trailRetMatrix = rows;
+        if (rows.length >= 60) trailRetMatrix = rows; // need at least ~3 months of daily data
       }
 
       let warmWeights = null;
@@ -5443,19 +5445,21 @@ export default function App() {
           }
         }
         const simEffectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
-        // Build trailing return matrix for empirical CVaR (matches backtest)
+        // Build trailing return matrix for empirical CVaR (daily data, matches backtest)
         let simTrailRetMatrix = null;
         if (srMode === "cvar") {
+          const trailDays = Math.min(504, mIdx);
           const tmRows = [];
-          for (let tm = Math.max(0, mIdx - Math.min(24, mIdx)); tm < mIdx; tm++) {
+          for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
             const row = new Float64Array(cands.length);
+            let hasData = false;
             for (let ci = 0; ci < cands.length; ci++) {
-              const e = returnsByDateSym[sortedDates[tm]]?.[cands[ci].t];
-              row[ci] = e ? e.ret : 0;
+              const e = returnsByDateSym[sortedDates[td]]?.[cands[ci].t];
+              if (e) { row[ci] = e.ret; hasData = true; }
             }
-            tmRows.push(row);
+            if (hasData) tmRows.push(row);
           }
-          if (tmRows.length >= 12) simTrailRetMatrix = tmRows;
+          if (tmRows.length >= 60) simTrailRetMatrix = tmRows;
         }
         const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, 200, null, null, simTrailRetMatrix);
         if (!result || result.length === 0) continue;
