@@ -3641,7 +3641,7 @@ export default function App() {
 
   const [tab, setTab] = useState("My Portfolio");
   const [sq, setSq] = useState(""); const [so, setSo] = useState(false); const [sc, setSc] = useState("All");
-  const [srMode, setSrMode] = useState("std"); // "std" | "var" | "vol2"
+  const [srMode, setSrMode] = useState("var"); // VaR Sharpe only
   const [ot, setOt] = useState("max_sharpe");
   const [volTarget, setVolTarget] = useState(0);  // 0 = off, otherwise target vol %
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
@@ -8310,9 +8310,7 @@ useEffect(() => {
                     <span style={{ fontSize: 8, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF" : mode === "stocks" ? "Stocks" : "ETF+Stocks"}</span>
                   </button>
                 ))}
-                {[{k:"std",l:"Std SR"},{k:"var",l:"VaR SR"},{k:"vol2",l:"σ² SR"}].map(m => (
-                  <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "5px 8px", borderRadius: 0, border: `1px solid ${srMode === m.k ? "rgba(66,190,101,.2)" : "#393939"}`, background: srMode === m.k ? "rgba(66,190,101,.06)" : "transparent", color: srMode === m.k ? cs.green : cs.dim, fontSize: 9, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
-                ))}
+                <span style={{ fontSize: 8, color: cs.green, fontFamily: mono2, fontWeight: 600 }}>VaR Sharpe</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
                   <span style={{ fontSize: 8, color: cs.dim }}>Vol Target</span>
                   <input type="number" value={volTarget || ""} onChange={e => setVolTarget(Math.max(0, +e.target.value || 0))} placeholder="off" step="1" min="0" max="50" style={{ ...inpS, width: 45, fontSize: 10, textAlign: "center", color: cs.blue, padding: "4px 6px" }} />
