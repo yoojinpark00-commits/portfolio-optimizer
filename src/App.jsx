@@ -4099,17 +4099,63 @@ export default function App() {
     const benchmarks = ["SPY"];
     // Unified universe: always fetch both ETFs and stocks for maximum alpha opportunity
     const allSymbols = [...new Set([...btETFs, ...benchmarks, ...SP500_ALL_TICKERS])];
-    setBtProgress(`Fetching ${allSymbols.length} symbols (2005-2025)...`);
+
+    // ── IndexedDB cache for historical price data ──
+    // Daily data for ~750 symbols is too large for localStorage (~50MB).
+    // IndexedDB has no practical limit. Cache key includes symbol list hash + date range.
+    const CACHE_DB_NAME = "portfolio_optimizer_cache";
+    const CACHE_STORE = "histData";
+    const CACHE_KEY = `hist_daily_2005_2025_v2_${allSymbols.length}`;
+
+    const openCacheDB = () => new Promise((resolve, reject) => {
+      const req = indexedDB.open(CACHE_DB_NAME, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(CACHE_STORE); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    const getCached = (db) => new Promise((resolve) => {
+      try {
+        const tx = db.transaction(CACHE_STORE, "readonly");
+        const store = tx.objectStore(CACHE_STORE);
+        const req = store.get(CACHE_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    });
+
+    const setCache = (db, data) => {
+      try {
+        const tx = db.transaction(CACHE_STORE, "readwrite");
+        tx.objectStore(CACHE_STORE).put(data, CACHE_KEY);
+      } catch { /* cache write failure is non-fatal */ }
+    };
 
     let histData = {};
+    let usedCache = false;
     try {
-      // Fetch in large batches — daily data for precise monitoring
-      for (let i = 0; i < allSymbols.length; i += 15) {
-        const batch = allSymbols.slice(i, i + 15);
-        setBtProgress(`Fetching daily data batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
-        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31&interval=1d`);
-        const json = await resp.json();
-        if (json.data) Object.assign(histData, json.data);
+      const cacheDB = await openCacheDB();
+      const cached = await getCached(cacheDB);
+      if (cached && Object.keys(cached).length >= allSymbols.length * 0.8) {
+        // Cache hit — skip API calls entirely
+        histData = cached;
+        usedCache = true;
+        setBtProgress(`Loaded ${Object.keys(histData).length} symbols from cache (instant)`);
+      } else {
+        // Cache miss — fetch from API and store
+        setBtProgress(`Fetching ${allSymbols.length} symbols (2005-2025)...`);
+        for (let i = 0; i < allSymbols.length; i += 15) {
+          const batch = allSymbols.slice(i, i + 15);
+          setBtProgress(`Fetching daily data batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}: ${batch.join(", ")}...`);
+          const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31&interval=1d`);
+          const json = await resp.json();
+          if (json.data) Object.assign(histData, json.data);
+        }
+        // Store in IndexedDB for next run
+        if (Object.keys(histData).length > 10) {
+          setBtProgress(`Caching ${Object.keys(histData).length} symbols for instant future runs...`);
+          setCache(cacheDB, histData);
+        }
       }
     } catch (e) {
       setBtProgress("Error fetching historical data: " + e.message);
@@ -5139,14 +5185,33 @@ export default function App() {
     // Unified universe: always fetch both ETFs and stocks
     const allSymbols = [...new Set([...btETFs, "SPY", ...SP500_ALL_TICKERS])];
 
-    setSimProgress(`Fetching ${allSymbols.length} symbols...`);
+    setSimProgress(`Loading ${allSymbols.length} symbols...`);
     let histData = {};
     try {
-      for (let i = 0; i < allSymbols.length; i += 15) {
-        const batch = allSymbols.slice(i, i + 15);
-        const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31`);
-        const json = await resp.json();
-        if (json.data) Object.assign(histData, json.data);
+      // Try IndexedDB cache first (same cache as backtest)
+      const CACHE_DB_NAME = "portfolio_optimizer_cache";
+      const CACHE_STORE = "histData";
+      const CACHE_KEY = `hist_daily_2005_2025_v2_${allSymbols.length}`;
+      const cacheDB = await new Promise((resolve, reject) => {
+        const req = indexedDB.open(CACHE_DB_NAME, 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore(CACHE_STORE); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const cached = await new Promise((resolve) => {
+        try { const tx = cacheDB.transaction(CACHE_STORE, "readonly"); const req = tx.objectStore(CACHE_STORE).get(CACHE_KEY); req.onsuccess = () => resolve(req.result || null); req.onerror = () => resolve(null); } catch { resolve(null); }
+      });
+      if (cached && Object.keys(cached).length >= allSymbols.length * 0.8) {
+        histData = cached;
+        setSimProgress(`Loaded ${Object.keys(histData).length} symbols from cache`);
+      } else {
+        for (let i = 0; i < allSymbols.length; i += 15) {
+          const batch = allSymbols.slice(i, i + 15);
+          setSimProgress(`Fetching batch ${Math.floor(i/15)+1}/${Math.ceil(allSymbols.length/15)}...`);
+          const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31&interval=1d`);
+          const json = await resp.json();
+          if (json.data) Object.assign(histData, json.data);
+        }
       }
     } catch (e) { setSimProgress("Error: " + e.message); setSimRunning(false); return; }
 
