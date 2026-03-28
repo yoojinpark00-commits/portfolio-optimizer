@@ -2187,7 +2187,8 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
     // Score
     const var95 = vol * 1.645;
-    const sh = srMode === "var" ? (var95 > 0 ? (ret - localRF) / var95 : 0) : srMode === "vol2" ? (vol > 0 ? (ret - localRF) / (vol * vol / 100) : 0) : (vol > 0 ? (ret - localRF) / vol : 0);
+    // Sharpe computed after CVaR so cvar mode can use it
+    let sh;
     const volPenalty = volTarget > 0 ? -0.15 * Math.abs(vol - volTarget) : 0;
 
     let levPenalty = 0, levExposure = 0;
@@ -2251,6 +2252,10 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     let wtdSkew = 0;
     for (let i = 0; i < n; i++) wtdSkew += (alloc[i] / (deployAmt || 1)) * skewArr[i];
     const cvar = computeCVaR(vol, wtdSkew);
+
+    // ── Sharpe ratio (VaR or CVaR denominator) ──
+    if (srMode === "cvar") sh = cvar > 0 ? (ret - localRF) / cvar : 0;
+    else sh = var95 > 0 ? (ret - localRF) / var95 : 0; // default: VaR Sharpe
     const cvarPenalty = -0.03 * Math.max(0, cvar - 25); // penalize CVaR > 25%
 
     // ── Tail risk penalty: leverage + EM + high-vol concentration ──
@@ -3641,7 +3646,7 @@ export default function App() {
 
   const [tab, setTab] = useState("My Portfolio");
   const [sq, setSq] = useState(""); const [so, setSo] = useState(false); const [sc, setSc] = useState("All");
-  const [srMode, setSrMode] = useState("var"); // VaR Sharpe only
+  const [srMode, setSrMode] = useState("var"); // "var" (VaR Sharpe) | "cvar" (CVaR Sharpe)
   const [ot, setOt] = useState("max_sharpe");
   const [volTarget, setVolTarget] = useState(0);  // 0 = off, otherwise target vol %
   const [useKelly, setUseKelly] = useState(true); // Half Kelly toggle
@@ -6293,7 +6298,7 @@ useEffect(() => {
 
   // ─── SR mode helpers ───
   const getSR = (m) => m ? (srMode === "var" ? m.varSh : srMode === "vol2" ? m.vol2Sh : m.sh) : 0;
-  const srLabel = srMode === "var" ? "VaR Sharpe" : srMode === "vol2" ? "σ² Sharpe" : "Sharpe";
+  const srLabel = srMode === "cvar" ? "CVaR Sharpe" : "VaR Sharpe";
   const srSub = srMode === "var" ? "(R-Rf)/VaR₉₅" : srMode === "vol2" ? "(R-Rf)/σ²" : "(R-Rf)/σ";
   const srMax = srMode === "vol2" ? 1 : srMode === "var" ? 1 : 2;
 
@@ -8310,7 +8315,9 @@ useEffect(() => {
                     <span style={{ fontSize: 8, color: includeStocks === mode ? cs.blue : cs.dim, fontWeight: 600 }}>{mode === "etf" ? "ETF" : mode === "stocks" ? "Stocks" : "ETF+Stocks"}</span>
                   </button>
                 ))}
-                <span style={{ fontSize: 8, color: cs.green, fontFamily: mono2, fontWeight: 600 }}>VaR Sharpe</span>
+                {[{k:"var",l:"VaR Sharpe"},{k:"cvar",l:"CVaR Sharpe"}].map(m => (
+                  <button key={m.k} onClick={() => setSrMode(m.k)} style={{ padding: "4px 8px", borderRadius: 0, border: `1px solid ${srMode === m.k ? "rgba(66,190,101,.2)" : "#393939"}`, background: srMode === m.k ? "rgba(66,190,101,.06)" : "transparent", color: srMode === m.k ? cs.green : cs.dim, fontSize: 8, cursor: "pointer", fontFamily: mono2, fontWeight: 600 }}>{m.l}</button>
+                ))}
                 <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
                   <span style={{ fontSize: 8, color: cs.dim }}>Vol Target</span>
                   <input type="number" value={volTarget || ""} onChange={e => setVolTarget(Math.max(0, +e.target.value || 0))} placeholder="off" step="1" min="0" max="50" style={{ ...inpS, width: 45, fontSize: 10, textAlign: "center", color: cs.blue, padding: "4px 6px" }} />
