@@ -4366,7 +4366,7 @@ export default function App() {
           const regMonthIdx = regEntries.indexOf(monthKey);
           const threeStagePredict = regMonthIdx >= 0 ? computeThreeStagePredict(historicalRegimes, regEntries, regMonthIdx) : null;
           // Raised confidence threshold from 55% to 65% for daily mode
-          if (threeStagePredict?.shouldTrigger && threeStagePredict.confidence >= 0.65 && monthsSinceRebal >= taxCooldownDays) {
+          if (threeStagePredict?.shouldTrigger && threeStagePredict.confidence >= 0.90 && monthsSinceRebal >= taxCooldownDays) {
             shouldEvaluate = true;
             if (btRegime) btRegime.threeStagePredict = threeStagePredict;
           }
