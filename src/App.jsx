@@ -1863,7 +1863,7 @@ function factorDiversificationScore(alloc, candidates, deployAmt) {
 
 // regimeCtx: { state5, acceleration, duration, transition, durationModel } or just a string
 // prevBest: optional previous allocation weights to warm-start from
-function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest, rfRate) {
+function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volTarget, useKelly, regimeCtx, iterations, prevBest, rfRate, trailRetMatrix) {
   const localRF = rfRate != null ? rfRate : RF;
   if (!candidates.length || cash <= 0) return [];
   const n = candidates.length; let best = null, bs = -Infinity;
@@ -2251,7 +2251,29 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // ── CVaR / Expected Shortfall: tail-risk-aware scoring ──
     let wtdSkew = 0;
     for (let i = 0; i < n; i++) wtdSkew += (alloc[i] / (deployAmt || 1)) * skewArr[i];
-    const cvar = computeCVaR(vol, wtdSkew);
+    const parametricCvar = computeCVaR(vol, wtdSkew);
+
+    // ── Empirical CVaR: actual worst-5% portfolio returns from trailing data ──
+    let empiricalCvar = 0;
+    if (srMode === "cvar" && trailRetMatrix && trailRetMatrix.length >= 12) {
+      // Compute portfolio return for each trailing month
+      const T = trailRetMatrix.length;
+      const portRets = new Float64Array(T);
+      for (let m = 0; m < T; m++) {
+        let pRet = 0;
+        for (let i = 0; i < n; i++) pRet += (alloc[i] / (deployAmt || 1)) * trailRetMatrix[m][i];
+        portRets[m] = pRet;
+      }
+      // Sort ascending (worst returns first)
+      portRets.sort();
+      // CVaR = average of worst 5% (at least 1 observation)
+      const tailCount = Math.max(1, Math.floor(T * 0.05));
+      let tailSum = 0;
+      for (let i = 0; i < tailCount; i++) tailSum += portRets[i];
+      // CVaR as annualized positive loss percentage
+      empiricalCvar = Math.abs(tailSum / tailCount) * Math.sqrt(12) * 100;
+    }
+    const cvar = srMode === "cvar" && empiricalCvar > 0 ? empiricalCvar : parametricCvar;
 
     // ── Sharpe ratio (VaR or CVaR denominator) ──
     if (srMode === "cvar") sh = cvar > 0 ? (ret - localRF) / cvar : 0;
@@ -4597,6 +4619,23 @@ export default function App() {
 
       // Step 4: Optimizer (btIterations scaled to candidate pool size)
       // Build warm-start weights: map previous best allocation to current candidate indices
+      // ── Pre-compute trailing return matrix for empirical CVaR ──
+      // retMatrix[m][i] = monthly return of candidate i at trailing month m
+      let trailRetMatrix = null;
+      if (srMode === "cvar") {
+        const trailMonths = Math.min(24, mIdx);
+        const rows = [];
+        for (let tm = Math.max(0, mIdx - trailMonths); tm < mIdx; tm++) {
+          const row = new Float64Array(candidates.length);
+          for (let ci = 0; ci < candidates.length; ci++) {
+            const e = returnsByDateSym[sortedDates[tm]]?.[candidates[ci].t];
+            row[ci] = e ? e.ret : 0;
+          }
+          rows.push(row);
+        }
+        trailRetMatrix = rows;
+      }
+
       let warmWeights = null;
       if (lastBestWeights) {
         warmWeights = new Float64Array(candidates.length);
@@ -4604,7 +4643,7 @@ export default function App() {
           warmWeights[i] = lastBestWeights[candidates[i].t] || 0;
         }
       }
-      const result = optimizeCash([], optValue, 0, candidates, effectiveOT, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights, dynamicRF);
+      const result = optimizeCash([], optValue, 0, candidates, effectiveOT, srMode, volTarget, useKelly, btRegime, btIterations, warmWeights, dynamicRF, trailRetMatrix);
       if (!result || result.length === 0) continue;
       // Save best weights for warm-starting next evaluation
       lastBestWeights = {};
