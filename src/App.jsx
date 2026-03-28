@@ -264,9 +264,13 @@ const ETF_DB = [
   {t:"XAR",n:"SPDR S&P Aerospace & Defense",c:"Sector Indust",h:70,er:.35,r:10.5,v:20.0,d:.5},
   // ── Extended: Buffer / Defined Outcome ──
   {t:"BUFR",n:"FT Cboe Vest Fund of Buffer ETFs",c:"US Large Cap",h:503,er:.95,r:7.0,v:8.0,d:0},
+  // ── Managed Futures / Trend Following (Crisis Alpha) ──
+  {t:"DBMF",n:"iMGP DBi Managed Futures",c:"Managed Futures",h:10,er:.85,r:5.0,v:12.0,d:0},
+  {t:"KMLM",n:"KFA Mount Lucas Managed Futures",c:"Managed Futures",h:25,er:.92,r:4.5,v:11.0,d:0},
+  {t:"CTA",n:"Simplify Managed Futures",c:"Managed Futures",h:15,er:.75,r:4.0,v:10.5,d:0},
 ];
 
-const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Sector Health":.62,"Sector Finance":.72,"Sector Energy":.32,"Sector Indust":.75,"Sector Consumer":.78,"Sector RE":.42,"Sector Utilities":.30,"Sector Materials":.48,"Sector Comms":.82,"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Sector Finance":.58,"Sector Energy":.35,"Sector Indust":.60,"Sector Consumer":.62,"Sector RE":.45,"Sector Utilities":.48,"Sector Materials":.42,"Sector Comms":.55,"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Sector Energy":.55,"Sector Indust":.72,"Sector Consumer":.68,"Sector RE":.58,"Sector Utilities":.42,"Sector Materials":.55,"Sector Comms":.62,"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Sector Indust":.55,"Sector Consumer":.42,"Sector RE":.30,"Sector Utilities":.35,"Sector Materials":.62,"Sector Comms":.35,"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Sector Consumer":.72,"Sector RE":.48,"Sector Utilities":.42,"Sector Materials":.68,"Sector Comms":.62,"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Sector RE":.45,"Sector Utilities":.38,"Sector Materials":.48,"Sector Comms":.70,"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Sector Utilities":.62,"Sector Materials":.35,"Sector Comms":.38,"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Sector Materials":.38,"Sector Comms":.32,"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Sector Comms":.42,"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Stock":.20,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
+const CORR={"US Large Cap":{"US Total Mkt":.99,"US Growth":.92,"US Value":.92,"US Mid Cap":.95,"US Small Cap":.88,"US Dividend":.93,"International":.72,"Intl Developed":.74,"Emerging Mkts":.65,"Sector Tech":.88,"Sector Health":.78,"Sector Finance":.82,"Sector Energy":.58,"Sector Indust":.88,"Sector Consumer":.87,"Sector RE":.62,"Sector Utilities":.55,"Sector Materials":.72,"Sector Comms":.82,"Factor Momentum":.90,"Factor Quality":.96,"Factor LowVol":.85,"US Bond":-.15,"Intl Bond":-.08,"US Treasury":-.35,"US Corp Bond":.10,"US High Yield":.60,"Commodity":.25,"Stock":.75,"Cash":0},"US Growth":{"US Value":.72,"US Small Cap":.82,"International":.65,"US Bond":-.22,"US Treasury":-.42,"Commodity":.15,"Stock":.78,"Cash":0},"US Value":{"US Small Cap":.88,"International":.78,"US Bond":.05,"US Treasury":-.15,"Commodity":.35,"Stock":.70,"Cash":0},"US Total Mkt":{"Commodity":.22,"Stock":.76,"Cash":0},"US Mid Cap":{"Commodity":.28,"Stock":.72,"Cash":0},"US Small Cap":{"International":.72,"US Bond":-.08,"US Treasury":-.28,"Commodity":.25,"Stock":.68,"Cash":0},"US Dividend":{"US Bond":.08,"US Treasury":-.12,"Commodity":.30,"Stock":.65,"Cash":0},"International":{"Intl Developed":.98,"Emerging Mkts":.88,"US Bond":.05,"US Treasury":-.10,"Commodity":.35,"Stock":.55,"Cash":0},"Intl Developed":{"Emerging Mkts":.82,"Commodity":.30,"Stock":.52,"Cash":0},"Emerging Mkts":{"US Bond":.02,"US Treasury":-.15,"Commodity":.40,"Stock":.48,"Cash":0},"Sector Tech":{"Sector Health":.62,"Sector Finance":.72,"Sector Energy":.32,"Sector Indust":.75,"Sector Consumer":.78,"Sector RE":.42,"Sector Utilities":.30,"Sector Materials":.48,"Sector Comms":.82,"Commodity":.10,"Stock":.80,"Cash":0},"Sector Health":{"Sector Finance":.58,"Sector Energy":.35,"Sector Indust":.60,"Sector Consumer":.62,"Sector RE":.45,"Sector Utilities":.48,"Sector Materials":.42,"Sector Comms":.55,"Commodity":.15,"Stock":.60,"Cash":0},"Sector Finance":{"Sector Energy":.55,"Sector Indust":.72,"Sector Consumer":.68,"Sector RE":.58,"Sector Utilities":.42,"Sector Materials":.55,"Sector Comms":.62,"Commodity":.25,"Stock":.65,"Cash":0},"Sector Energy":{"Sector Indust":.55,"Sector Consumer":.42,"Sector RE":.30,"Sector Utilities":.35,"Sector Materials":.62,"Sector Comms":.35,"Commodity":.65,"Stock":.45,"Cash":0},"Sector Indust":{"Sector Consumer":.72,"Sector RE":.48,"Sector Utilities":.42,"Sector Materials":.68,"Sector Comms":.62,"Commodity":.35,"Stock":.68,"Cash":0},"Sector Consumer":{"Sector RE":.45,"Sector Utilities":.38,"Sector Materials":.48,"Sector Comms":.70,"Commodity":.20,"Stock":.70,"Cash":0},"Sector RE":{"Sector Utilities":.62,"Sector Materials":.35,"Sector Comms":.38,"Commodity":.15,"Stock":.40,"Cash":0},"Sector Utilities":{"Sector Materials":.38,"Sector Comms":.32,"Commodity":.18,"US Bond":.25,"Stock":.35,"Cash":0},"Sector Materials":{"Sector Comms":.42,"Commodity":.60,"Stock":.55,"Cash":0},"Sector Comms":{"Commodity":.12,"Stock":.72,"Cash":0},"Factor Momentum":{"Commodity":.18,"Stock":.72,"Cash":0},"Factor Quality":{"Commodity":.20,"Stock":.74,"Cash":0},"Factor LowVol":{"US Bond":.15,"Commodity":.12,"Stock":.55,"Cash":0},"US Bond":{"Intl Bond":.65,"US Treasury":.88,"US Corp Bond":.92,"US High Yield":.45,"Commodity":-.05,"Stock":-.10,"Cash":.05},"Intl Bond":{"US Treasury":.55,"US Corp Bond":.60,"US High Yield":.35,"Commodity":.05,"Stock":-.05,"Cash":.03},"US Treasury":{"US Corp Bond":.72,"US High Yield":.05,"Commodity":-.10,"Stock":-.30,"Cash":.02},"US Corp Bond":{"US High Yield":.68,"Commodity":.00,"Stock":.05,"Cash":.03},"US High Yield":{"Commodity":.20,"Stock":.50,"Cash":0},"Commodity":{"Managed Futures":.15,"Stock":.20,"Cash":0},"Managed Futures":{"Stock":-.05,"Cash":0},"Stock":{"Cash":0},"Cash":{"Cash":1}};
 // Parent category mapping: sub-category → parent ETF category (for cross-group fallback)
 const SUB_PARENT = {
   "Tech-Semi":"Sector Tech","Tech-Software":"Sector Tech","Tech-Internet":"Sector Tech",
@@ -833,6 +837,7 @@ const MACRO_SECTOR_MAP = {
   "International": "intl", "Intl Developed": "intl", "Emerging Mkts": "intl-em",
   "US Bond": "fixed-income", "US Treasury": "fixed-income", "US Corp Bond": "fixed-income", "US High Yield": "fixed-income", "Intl Bond": "fixed-income",
   "Commodity": "alternatives",
+  "Managed Futures": "alternatives",
 };
 
 // ── Category-level skewness estimates for CVaR computation ──
@@ -845,6 +850,7 @@ const CATEGORY_SKEW = {
   "Sector Consumer": -0.30, "Sector Indust": -0.25, "Sector Utilities": 0.05,
   "US Bond": 0.15, "US Treasury": 0.25, "US Corp Bond": 0.10, "Intl Bond": 0.05,
   "Commodity": -0.10, "Factor LowVol": 0.0, "Factor Quality": -0.15,
+  "Managed Futures": 0.20, // positive skew — crisis alpha (profits in tails)
 };
 
 /**
@@ -1426,7 +1432,7 @@ function hmmToState5(probs) {
 function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap, lookback = 36) {
   if (mIdx < lookback + 12) return null; // need at least lookback + 12mo for factor computation
 
-  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
+  const factors = ["mom12_1", "mom6_1", "mom3_1", "tsmom", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
   const ics = {};
   for (const f of factors) ics[f] = [];
 
@@ -1457,11 +1463,16 @@ function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap
       }
       if (monthlyRets.length < 6) continue;
       const db = etfDbMap[sym] || {};
+      const mom12_1 = monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0);
+      const totalRetIC = monthlyRets.reduce((a, b) => a + b, 0);
       scores[sym] = {
-        mom12_1: monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0),
+        mom12_1,
+        mom6_1: monthlyRets.length >= 7 ? monthlyRets.slice(-7, -1).reduce((a, b) => a + b, 0) : mom12_1 * 0.5,
+        mom3_1: monthlyRets.length >= 4 ? monthlyRets.slice(-4, -1).reduce((a, b) => a + b, 0) : mom12_1 * 0.25,
+        tsmom: totalRetIC > 0 ? Math.min(totalRetIC, 0.5) : Math.max(totalRetIC, -0.5),
         rev1m: -(monthlyRets[monthlyRets.length - 1] || 0),
         val: db.d || 0,
-        qual: (monthlyRets.reduce((a, b) => a + b, 0) > 0 ? 2 : 0) + 1 / (1 + (db.er || 0.1)),
+        qual: (totalRetIC > 0 ? 2 : 0) + 1 / (1 + (db.er || 0.1)),
         lowvol: 1 / (Math.sqrt(monthlyRets.reduce((s, r) => s + r * r, 0) / monthlyRets.length) || 0.01),
         carry: db.d || 0,
         csRev: 0, // placeholder, computed below
@@ -1550,10 +1561,30 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
       const e = returnsByDate[sortedDates[ti]]?.[sym];
       if (e) monthlyRets.push(e.ret);
     }
-    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0, csRev: 0 }; continue; }
+    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, mom6_1: 0, mom3_1: 0, tsmom: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0, csRev: 0 }; continue; }
 
     // ── 1. Momentum (12-1): skip most recent month to avoid reversal ──
     const mom12_1raw = monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0) * 100;
+
+    // ── 1b. Multi-horizon momentum: 6-month and 3-month (skip most recent ~21 days to avoid reversal) ──
+    // Different horizons capture different phenomena — 3mo = intermediate trend, 6mo = medium sentiment
+    // With daily data (lookbackPeriods=252): 6mo ≈ 126 days, 3mo ≈ 63 days, skip last ~21 days
+    const skipDays = Math.max(1, Math.round(lookbackPeriods / 12)); // ~21 days for daily, ~1 for monthly
+    const m6Window = Math.round(lookbackPeriods / 2); // ~126 days for daily
+    const m3Window = Math.round(lookbackPeriods / 4); // ~63 days for daily
+    const mom6_1 = monthlyRets.length >= m6Window + skipDays
+      ? monthlyRets.slice(-(m6Window + skipDays), -skipDays).reduce((a, b) => a + b, 0) * 100
+      : mom12_1raw * 0.5;
+    const mom3_1 = monthlyRets.length >= m3Window + skipDays
+      ? monthlyRets.slice(-(m3Window + skipDays), -skipDays).reduce((a, b) => a + b, 0) * 100
+      : mom12_1raw * 0.25;
+
+    // ── 1c. Time-Series Momentum (TSMOM): absolute return signal ──
+    // Unlike cross-sectional momentum (rank best vs worst), TSMOM uses each asset's OWN
+    // trailing return as an absolute go/no-go signal. Positive trailing return → long, negative → avoid.
+    // Prevents buying "best of the worst" in bear markets (Moskowitz, Ooi & Pedersen 2012).
+    const totalRet = monthlyRets.reduce((a, b) => a + b, 0);
+    const tsmom = totalRet > 0 ? Math.min(totalRet * 100, 50) : Math.max(totalRet * 100, -50); // capped magnitude
 
     // ── 2. Short-term Reversal (1-month): most recent month, inverted ──
     const rev1m = -(monthlyRets[monthlyRets.length - 1] || 0) * 100;
@@ -1574,7 +1605,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
     if (cat.includes("bond") || cat.includes("treasury")) carry = (ts.d || 0) + 1.5; // bond carry premium
     if (cat.includes("commodity")) carry = Math.max(0, carry - 0.5); // commodity roll cost
 
-    scores[sym] = { mom12_1: mom12_1raw, rev1m, val, qual, lowvol, carry, csRev: 0 };
+    scores[sym] = { mom12_1: mom12_1raw, mom6_1, mom3_1, tsmom, rev1m, val, qual, lowvol, carry, csRev: 0 };
   }
 
   // ── 7. Cross-sectional demeaned reversal (Kakushadze §3.9) ──
@@ -1597,7 +1628,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
   }
 
   // ── Cross-sectional percentile ranking (0-1) for each factor ──
-  const factors = ["mom12_1", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
+  const factors = ["mom12_1", "mom6_1", "mom3_1", "tsmom", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
   const ranks = {};
 
   for (const f of factors) {
@@ -1610,7 +1641,9 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
 
   // ── Composite factor score (weighted blend) ──
   // Use adaptive IC-based weights if available, otherwise hardcoded defaults
-  const defaultFactorWeights = { mom12_1: 0.25, rev1m: 0.10, val: 0.15, qual: 0.12, lowvol: 0.13, carry: 0.15, csRev: 0.10 };
+  // Multi-horizon momentum (12/6/3) captures different phenomena: behavioral drift, sentiment, intermediate trend
+  // TSMOM (time-series momentum) is an absolute return signal — distinct from cross-sectional ranking
+  const defaultFactorWeights = { mom12_1: 0.15, mom6_1: 0.08, mom3_1: 0.05, tsmom: 0.10, rev1m: 0.08, val: 0.12, qual: 0.10, lowvol: 0.10, carry: 0.12, csRev: 0.10 };
   const factorWeights = adaptiveWeights || defaultFactorWeights;
   for (const sym of syms) {
     let composite = 0;
@@ -1905,7 +1938,26 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   // This makes tilts data-driven instead of full-blast on every regime detection.
   const hmmProbs = regimeCtx?.hmmProbs;
   const maxProb = hmmProbs ? Math.max(...hmmProbs) : 0.7; // fallback if no HMM
-  const confidenceScale = 0.3 + 0.7 * Math.min(1, (maxProb - 0.4) / 0.5);
+  let confidenceScale = 0.3 + 0.7 * Math.min(1, (maxProb - 0.4) / 0.5);
+
+  // ── Absorption Ratio Amplifier (Kritzman et al. 2011) ──
+  // When cross-asset correlations are high (markets "tightly coupled"), a shock in
+  // any asset propagates to all. AR spikes preceded COVID crash, 2022 rate shock,
+  // and Aug 2024 unwind by 2-4 weeks — a leading indicator vs our coincident HMM.
+  // regimeCtx.arShift carries the standardized AR shift from the backtest loop.
+  const arShift = regimeCtx?.arShift ?? 0;
+  if (arShift > 1.0) {
+    // AR in top decile — markets are fragile, amplify defensive confidence by 1.3x
+    // This shifts effective regime one step toward risk-off
+    if (state5.includes("risk_off")) confidenceScale = Math.min(1.0, confidenceScale * 1.3);
+    else if (state5 === "neutral") confidenceScale *= 0.7; // reduce conviction in neutral (could turn bad)
+  } else if (arShift > 0.5) {
+    // AR elevated but not extreme — mild caution
+    if (state5.includes("risk_on")) confidenceScale *= 0.85; // temper bullish confidence
+  } else if (arShift < -0.5) {
+    // AR well below average — markets are well-diversified, safe to be more aggressive
+    if (state5.includes("risk_on")) confidenceScale = Math.min(1.0, confidenceScale * 1.15);
+  }
 
   const durationScale = Math.min(2.0, 0.5 + (duration / 12) * 1.5);
   let accelMod = 1.0;
@@ -4117,6 +4169,8 @@ export default function App() {
       "BND","AGG","TIP","IEF","HYG",
       // Commodity
       "GLD","SLV","DBC",
+      // Managed Futures (crisis alpha — uncorrelated trend-following)
+      "DBMF","KMLM","CTA",
       // Dividend
       "HDV","DGRO",
     ];
@@ -4431,10 +4485,49 @@ export default function App() {
               if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
             }
           }
+          // ── Lightweight Absorption Ratio approximation ──
+          // Compute average pairwise correlation of major sector ETFs over trailing 63 days.
+          // High avg corr → markets tightly coupled → fragile (AR high).
+          // This is a leading indicator: AR spikes 2-4 weeks before crashes.
+          let btArShift = 0;
+          { const arSyms = ["SPY","QQQ","IWM","XLK","XLF","XLV","XLE","GLD","BND","VEA","HYG"];
+            const arWindow = Math.min(63, mIdx);
+            if (arWindow >= 21) {
+              const arRets = {};
+              for (const s of arSyms) {
+                const rets = [];
+                for (let ad = Math.max(0, mIdx - arWindow); ad < mIdx; ad++) {
+                  rets.push(returnsByDateSym[sortedDates[ad]]?.[s]?.ret || 0);
+                }
+                arRets[s] = rets;
+              }
+              // Average pairwise correlation
+              let corrSum = 0, corrCount = 0;
+              const arKeys = Object.keys(arRets);
+              for (let ai = 0; ai < arKeys.length; ai++) {
+                for (let aj = ai + 1; aj < arKeys.length; aj++) {
+                  const r1 = arRets[arKeys[ai]], r2 = arRets[arKeys[aj]];
+                  const n = r1.length;
+                  const m1 = r1.reduce((a, b) => a + b, 0) / n, m2 = r2.reduce((a, b) => a + b, 0) / n;
+                  let cov = 0, v1 = 0, v2 = 0;
+                  for (let k = 0; k < n; k++) { cov += (r1[k] - m1) * (r2[k] - m2); v1 += (r1[k] - m1) ** 2; v2 += (r2[k] - m2) ** 2; }
+                  const denom = Math.sqrt(v1 * v2);
+                  if (denom > 0) { corrSum += cov / denom; corrCount++; }
+                }
+              }
+              if (corrCount > 0) {
+                const avgCorr = corrSum / corrCount;
+                // Typical avg pairwise corr: ~0.3 normal, ~0.5 stressed, ~0.7+ crisis
+                // Convert to standardized shift: (avgCorr - 0.35) / 0.15
+                btArShift = (avgCorr - 0.35) / 0.15;
+              }
+            }
+          }
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
             threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx),
             volSignal: regData?.volSignal || 0,
-            vixInversion: regData?.vixInversion || false };
+            vixInversion: regData?.vixInversion || false,
+            arShift: btArShift };
           if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
 
           // ── HMM ensemble overlay (conservative fusion, same logic as live optimizer) ──
@@ -4829,6 +4922,44 @@ export default function App() {
       result.forEach(r => { lastBestWeights[r.ticker] = r.dollars / (optValue || 1); });
       const newAlloc = {}; const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
       result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDeployed; });
+
+      // ── Volatility Scaling (Moreira & Muir 2017) ──
+      // Scale portfolio exposure inversely to recent realized volatility.
+      // When vol is high, reduce exposure (shift to cash/bonds); when low, stay fully invested.
+      // This improves risk-adjusted returns because high-vol periods have worse return/risk.
+      if (volTarget > 0 && Object.keys(newAlloc).length > 0) {
+        // Compute realized portfolio vol from trailing ~63 trading days (3 months)
+        const volLookback = Math.min(63, mIdx);
+        const portDailyRets = [];
+        for (let vd = Math.max(0, mIdx - volLookback); vd < mIdx; vd++) {
+          const md = returnsByDateSym[sortedDates[vd]];
+          if (!md) continue;
+          let dRet = 0;
+          for (const [sym, wt] of Object.entries(newAlloc)) {
+            if (md[sym]) dRet += wt * md[sym].ret;
+          }
+          portDailyRets.push(dRet);
+        }
+        if (portDailyRets.length >= 21) {
+          const pMean = portDailyRets.reduce((a, b) => a + b, 0) / portDailyRets.length;
+          const pVar = portDailyRets.reduce((a, r) => a + (r - pMean) ** 2, 0) / portDailyRets.length;
+          const realizedVol = Math.sqrt(pVar) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100; // annualized %
+          if (realizedVol > 0) {
+            // Scale = target_vol / realized_vol, capped at [0.5, 1.5] to avoid extreme leverage/deleveraging
+            const volScale = Math.max(0.5, Math.min(1.5, volTarget / realizedVol));
+            if (Math.abs(volScale - 1.0) > 0.05) { // only scale if >5% deviation
+              for (const sym of Object.keys(newAlloc)) newAlloc[sym] *= volScale;
+              // Re-normalize (excess goes to implicit cash position which costs nothing)
+              const totalWtAfterScale = Object.values(newAlloc).reduce((s, w) => s + w, 0);
+              if (totalWtAfterScale > 0 && totalWtAfterScale < 1.0) {
+                // Reduced exposure — the gap is "cash" (no action needed, weights < 1.0 is fine)
+              } else if (totalWtAfterScale > 1.0) {
+                for (const sym of Object.keys(newAlloc)) newAlloc[sym] /= totalWtAfterScale;
+              }
+            }
+          }
+        }
+      }
 
       // Step 5: Compare
       const prevAlloc = { ...optAlloc }; const spyExpRet = trailingStats["SPY"]?.r || 10;
@@ -5328,7 +5459,7 @@ export default function App() {
     const btETFs = [
       "SPY","VTI","QQQ","IWM","SCHD","SCHG","SCHF","VEA","VWO","EFA","MCHI",
       "XLK","XLF","XLV","XLE","XLU","XLRE","SOXX","ARKK","ICLN",
-      "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","HDV","DGRO",
+      "VIG","MTUM","USMV","BND","AGG","TIP","IEF","HYG","GLD","SLV","DBC","DBMF","KMLM","CTA","HDV","DGRO",
     ];
     // Unified universe: always fetch both ETFs and stocks
     const allSymbols = [...new Set([...btETFs, "SPY", ...SP500_ALL_TICKERS])];
@@ -5688,7 +5819,25 @@ export default function App() {
               const prev = simHistRegimes[sortedDates[mIdx - lb]];
               if (prev && prev.regime === sRegime3) sDur++; else break;
             }
-            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null, volSignal: rd.volSignal || 0, vixInversion: rd.vixInversion || false };
+            // Lightweight AR approximation (matching backtest)
+            let simArShift = 0;
+            { const arSyms = ["SPY","QQQ","IWM","XLK","XLF","XLV","XLE","GLD","BND","VEA","HYG"];
+              const arW = Math.min(63, mIdx);
+              if (arW >= 21) {
+                const arR = {};
+                for (const s of arSyms) { const rs = []; for (let ad = Math.max(0, mIdx - arW); ad < mIdx; ad++) rs.push(returnsByDateSym[sortedDates[ad]]?.[s]?.ret || 0); arR[s] = rs; }
+                let cS = 0, cC = 0; const aK = Object.keys(arR);
+                for (let ai = 0; ai < aK.length; ai++) for (let aj = ai + 1; aj < aK.length; aj++) {
+                  const r1 = arR[aK[ai]], r2 = arR[aK[aj]], n = r1.length;
+                  const m1 = r1.reduce((a, b) => a + b, 0) / n, m2 = r2.reduce((a, b) => a + b, 0) / n;
+                  let cv = 0, v1 = 0, v2 = 0;
+                  for (let k = 0; k < n; k++) { cv += (r1[k] - m1) * (r2[k] - m2); v1 += (r1[k] - m1) ** 2; v2 += (r2[k] - m2) ** 2; }
+                  const d = Math.sqrt(v1 * v2); if (d > 0) { cS += cv / d; cC++; }
+                }
+                if (cC > 0) simArShift = ((cS / cC) - 0.35) / 0.15;
+              }
+            }
+            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null, volSignal: rd.volSignal || 0, vixInversion: rd.vixInversion || false, arShift: simArShift };
             // HMM overlay (conservative fusion, incremental — no look-ahead)
             if (simHmmEnsembleMap[monthKey]) {
               const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
@@ -5735,6 +5884,30 @@ export default function App() {
         const newAlloc = {};
         const totalDep = result.reduce((s, r) => s + r.dollars, 0) || optValue;
         result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDep; });
+
+        // ── Volatility Scaling (matching backtest) ──
+        if (volTarget > 0 && Object.keys(newAlloc).length > 0) {
+          const vlb = Math.min(63, mIdx);
+          const pdr = [];
+          for (let vd = Math.max(0, mIdx - vlb); vd < mIdx; vd++) {
+            const md = returnsByDateSym[sortedDates[vd]]; if (!md) continue;
+            let dr = 0; for (const [s, w] of Object.entries(newAlloc)) { if (md[s]) dr += w * md[s].ret; }
+            pdr.push(dr);
+          }
+          if (pdr.length >= 21) {
+            const pm = pdr.reduce((a, b) => a + b, 0) / pdr.length;
+            const pv = pdr.reduce((a, r) => a + (r - pm) ** 2, 0) / pdr.length;
+            const rv = Math.sqrt(pv) * Math.sqrt(252) * 100;
+            if (rv > 0) {
+              const vs = Math.max(0.5, Math.min(1.5, volTarget / rv));
+              if (Math.abs(vs - 1.0) > 0.05) {
+                for (const s of Object.keys(newAlloc)) newAlloc[s] *= vs;
+                const tw = Object.values(newAlloc).reduce((a, w) => a + w, 0);
+                if (tw > 1.0) for (const s of Object.keys(newAlloc)) newAlloc[s] /= tw;
+              }
+            }
+          }
+        }
 
         // ── Tax-aware rebalance decision (matches main backtest logic) ──
         const spyExp = trailingStats["SPY"]?.r || 10;
