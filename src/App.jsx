@@ -1221,12 +1221,13 @@ function computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) {
 }
 
 // 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
+// Amplified magnitudes so regime signal is meaningful vs Sharpe (0.6-1.2 range)
 const REGIME_TILTS = {
-  strong_risk_on: [-0.12, +0.15, 1.0],
-  mild_risk_on:   [-0.06, +0.08, 1.0],
+  strong_risk_on: [-0.25, +0.35, 1.0],
+  mild_risk_on:   [-0.12, +0.18, 1.0],
   neutral:        [0, 0, 1.0],
-  mild_risk_off:  [+0.08, -0.06, 0.8],
-  strong_risk_off: [+0.15, -0.12, 0.5],
+  mild_risk_off:  [+0.18, -0.12, 0.7],
+  strong_risk_off: [+0.30, -0.25, 0.4],
 };
 
 // ── Dynamic Regime-Based Allocation Rules ──
@@ -1957,7 +1958,14 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
-    if (state5 === "neutral" && entryBonus === 0) { regimeTilt[i] = 0; continue; }
+    if (state5 === "neutral" && entryBonus === 0) {
+      // Neutral regime: use acceleration direction for a small trend-following tilt
+      // instead of going silent. Negative accel = improving → slight risk-on. Positive = worsening → slight risk-off.
+      const neutralTilt = acceleration < -0.05 ? 0.04 : acceleration > 0.05 ? -0.04 : 0;
+      if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = -neutralTilt;
+      else if (AGGRESSIVE_CATS.has(c.c)) regimeTilt[i] = neutralTilt;
+      continue;
+    }
     if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = defBonus - (entryBonus > 0 ? entryBonus * 0.5 : 0);
     else if (AGGRESSIVE_CATS.has(c.c)) regimeTilt[i] = aggBonus;
     else regimeTilt[i] = entryBonus > 0 ? entryBonus * 0.3 : 0;
@@ -2224,16 +2232,12 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     }
     if (maxSectorWt > sectorHardLimit) continue; // reject over-concentrated portfolios
 
-    // Position count scoring: reward 4-7 sweet spot
-    let divScore;
-    if (activeCount === 3) divScore = -0.02;      // borderline — slight penalty
-    else if (activeCount <= 5) divScore = 0.04;    // sweet spot
-    else if (activeCount <= 7) divScore = 0.03;    // good diversification
-    else divScore = 0.01;                          // 8+: slight bonus
+    // Flat diversification: small bonus for ≥3 positions, no sweet-spot forcing
+    // Don't reward mediocre diversification that converges to market returns
+    const divScore = activeCount >= 3 ? 0.01 : -0.05;
 
-    // Single-position concentration penalty — progressive above 25%
-    // Even within the 30% hard cap, softer concentration is preferred
-    const concPenalty = maxSingleWt > 0.25 ? -0.20 * (maxSingleWt - 0.25) / 0.75 : 0;
+    // Only penalize exceeding the hard position cap, not conviction bets within it
+    const concPenalty = maxSingleWt > POS_CAP ? -0.15 * (maxSingleWt - POS_CAP) : 0;
 
     let sc;
     const divAdj = divScore + concPenalty;
@@ -2270,7 +2274,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // ── Sharpe ratio (VaR or CVaR denominator) ──
     if (srMode === "cvar") sh = cvar > 0 ? (ret - localRF) / cvar : 0;
     else sh = var95 > 0 ? (ret - localRF) / var95 : 0; // default: VaR Sharpe
-    const cvarPenalty = -0.03 * Math.max(0, cvar - 25); // penalize CVaR > 25%
+    const cvarPenalty = -0.01 * Math.max(0, cvar - 35); // softer: only penalize extreme CVaR > 35%
 
     // ── Tail risk penalty: leverage + EM + high-vol concentration ──
     let emWeight = 0, highVolWeight = 0;
@@ -2295,8 +2299,9 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     const spyPenaltyScale = 0.5; // moderate SPY overlap penalty — differentiation matters but don't force exotic picks
     const spyPenalty = (wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0) * spyPenaltyScale;
 
-    // ── Factor diversification: reward balanced factor exposure ──
-    const factorDiv = hasFactors ? factorDiversificationScore(alloc, candidates, deployAmt) : 0;
+    // Factor diversification removed — was forcing neutral factor exposure and preventing
+    // tactical tilts toward working factors (e.g., momentum in trending markets)
+    const factorDiv = 0;
 
     // ── Relative value signal: bonus for undervalued-vs-peers positions ──
     let relValBonus = 0;
@@ -2347,7 +2352,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
         rpDist += (actual - rpWeights[i]) ** 2;
       }
       // Balance RP adherence (stability) with Sharpe + signals (alpha)
-      sc = -rpDist * 30 + sh * 0.6 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + alphaSignals + newPenalties;
+      sc = -rpDist * 10 + sh * 0.8 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + alphaSignals + newPenalties;
     } else if (target === "risk_parity" && rpWeights) {
       // Risk parity objective: minimize distance from equal-risk-contribution weights
       let rpDist = 0;
@@ -4342,7 +4347,12 @@ export default function App() {
               const fredRisk = riskOrder.indexOf(fredState5);
               const hmmRisk = riskOrder.indexOf(hmmState5);
               if (fredRisk >= 0 && hmmRisk >= 0) {
-                btRegime.state5 = riskOrder[Math.min(fredRisk, hmmRisk)];
+                // Adaptive fusion: when both agree on direction, use the STRONGER signal
+                // When they disagree, use the more defensive (conservative)
+                const bothRiskOn = fredRisk >= 3 && hmmRisk >= 3; // both mild_risk_on or stronger
+                const bothRiskOff = fredRisk <= 1 && hmmRisk <= 1; // both mild_risk_off or stronger
+                const fusedIdx = (bothRiskOn || bothRiskOff) ? Math.max(fredRisk, hmmRisk) : Math.min(fredRisk, hmmRisk);
+                btRegime.state5 = riskOrder[fusedIdx];
               }
               btRegime.hmmState5 = hmmState5;
               btRegime.hmmProbs = ensProbs;
@@ -4467,7 +4477,7 @@ export default function App() {
       const shrinkParams = rawReturnsForShrink.length >= 20 ? (() => {
         const sorted = rawReturnsForShrink.sort((a, b) => a - b);
         const p = (arr, pct) => arr[Math.floor(arr.length * pct / 100)] || arr[arr.length - 1];
-        return { threshold: Math.max(15, p(sorted, 80)), hardCap: Math.max(40, p(sorted, 95)) };
+        return { threshold: Math.max(15, p(sorted, 90)), hardCap: Math.max(40, p(sorted, 98)) };
       })() : null;
 
       const trailingStats = {};
@@ -4546,15 +4556,9 @@ export default function App() {
         const factor = s.factorScore ?? 0.5;
         return sharpe * 0.60 + factor * 3.0 * 0.40; // scale factor to comparable range
       };
-      // Bull markets: top 50 by blended score — momentum + factor quality
-      // Bear/neutral: ALL candidates — diversification matters most
-      let candidates;
-      if (isBullish) {
-        candidates = allCandidates.sort((a, b) => sortScore(b) - sortScore(a)).slice(0, 50);
-      } else {
-        const sorted = allCandidates.sort((a, b) => sortScore(b) - sortScore(a));
-        candidates = [...sorted]; // all candidates
-      }
+      // All candidates available in every regime — let the optimizer + regime tilts do the selection
+      // Pre-filtering was removing valuable diversifiers and capping alpha potential
+      const candidates = allCandidates.sort((a, b) => sortScore(b) - sortScore(a));
       if (candidates.length < 3) continue;
 
       // Scale iterations to candidate pool: more candidates → more iterations needed for coverage
@@ -5142,7 +5146,7 @@ export default function App() {
     for (const sym of available) {
       const prices = histData[sym];
       for (let i = 1; i < prices.length; i++) {
-        const dk = prices[i].date.slice(0, 7);
+        const dk = prices[i].date; // use full daily date (match backtest)
         const entry = { ret: (prices[i].close - prices[i - 1].close) / prices[i - 1].close };
         if (!returnsByDateSym[dk]) returnsByDateSym[dk] = {};
         returnsByDateSym[dk][sym] = entry;
@@ -5152,7 +5156,7 @@ export default function App() {
     const sortedDates = [...allDateKeys].sort();
     const dateToIdx = {}; sortedDates.forEach((d, i) => { dateToIdx[d] = i; });
     const spyDates = new Set(Object.keys(returnsByDateSym).filter(k => returnsByDateSym[k]["SPY"]));
-    const simDates = sortedDates.filter(d => d >= "2006-01" && d <= "2025-12" && spyDates.has(d));
+    const simDates = sortedDates.filter(d => d >= "2006-01-01" && d <= "2025-12-31" && spyDates.has(d));
     const etfDbMap = {}; ETF_DB.forEach(e => { etfDbMap[e.t] = e; }); STOCK_OPT.forEach(s => { etfDbMap[s.t] = s; });
 
     // Compute SPY final value and track SPY max drawdown + monthly returns
@@ -5395,9 +5399,7 @@ export default function App() {
         // Factor scoring for simulation candidates (lightweight)
         if (mIdx > 12) computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap);
 
-        // Keep all top 30 candidates — Monte Carlo randomness comes from optimizer stochastic search
-        // Add slight noise to return estimates to model forecast uncertainty (±5%)
-        for (const c of cands) c.r *= (1 + (Math.random() - 0.5) * 0.1);
+        // Randomness comes from optimizer stochastic search — no artificial noise on returns
         if (cands.length < 3) continue;
 
         // Lightweight optimizer with regime context (matches main backtest strategy)
@@ -5417,7 +5419,10 @@ export default function App() {
               const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
               const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
               const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
-              if (fR >= 0 && hR >= 0) simRegime.state5 = ro[Math.min(fR, hR)];
+              if (fR >= 0 && hR >= 0) {
+                const bOn = fR >= 3 && hR >= 3, bOff = fR <= 1 && hR <= 1;
+                simRegime.state5 = ro[(bOn || bOff) ? Math.max(fR, hR) : Math.min(fR, hR)];
+              }
             }
           }
         }
@@ -6242,10 +6247,12 @@ useEffect(() => {
       const fredRisk = riskOrder.indexOf(fredState5);
       const hmmRisk = riskOrder.indexOf(hmmState5);
       if (fredRisk >= 0 && hmmRisk >= 0) {
-        // Conservative fusion: take the lower risk (more defensive) of the two
-        const fusedIdx = Math.min(fredRisk, hmmRisk);
+        // Adaptive fusion: use stronger signal when both agree, conservative when they disagree
+        const bothRiskOn = fredRisk >= 3 && hmmRisk >= 3;
+        const bothRiskOff = fredRisk <= 1 && hmmRisk <= 1;
+        const fusedIdx = (bothRiskOn || bothRiskOff) ? Math.max(fredRisk, hmmRisk) : Math.min(fredRisk, hmmRisk);
         regimeCtx.state5 = riskOrder[fusedIdx];
-        regimeCtx.fusionNote = fredRisk === hmmRisk ? "FRED & HMM agree" : `Conservative: FRED=${fredState5} HMM=${hmmState5} → ${riskOrder[fusedIdx]}`;
+        regimeCtx.fusionNote = fredRisk === hmmRisk ? "FRED & HMM agree" : `Adaptive: FRED=${fredState5} HMM=${hmmState5} → ${riskOrder[fusedIdx]}`;
       }
     }
 
