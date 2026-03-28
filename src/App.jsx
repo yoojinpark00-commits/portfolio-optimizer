@@ -2343,31 +2343,44 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // Combined new penalties
     const newPenalties = cvarPenalty + tailRiskPenalty + sectorConcPenalty;
     const alphaSignals = momBonus + regimeAlignBonus;
+    // Common signals used across strategies
+    const commonSignals = regimeBonus + divAdj + spyPenalty + relValBonus + alphaSignals + newPenalties;
 
     if (target === "hybrid" && rpWeights) {
-      // Hybrid mode: risk-parity base + alpha tilts from scoring
+      // Hybrid: risk-parity base + alpha tilts — best balance of stability and alpha
       let rpDist = 0;
-      for (let i = 0; i < n; i++) {
-        const actual = alloc[i] / (deployAmt || 1);
-        rpDist += (actual - rpWeights[i]) ** 2;
-      }
-      // Balance RP adherence (stability) with Sharpe + signals (alpha)
-      sc = -rpDist * 10 + sh * 0.8 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + alphaSignals + newPenalties;
+      for (let i = 0; i < n; i++) { const a = alloc[i] / (deployAmt || 1); rpDist += (a - rpWeights[i]) ** 2; }
+      // RP is a gentle preference (10x), Sharpe drives alpha (0.8x), momentum gets extra weight
+      sc = -rpDist * 10 + sh * 0.8 + momBonus * 0.5 + commonSignals;
     } else if (target === "risk_parity" && rpWeights) {
-      // Risk parity objective: minimize distance from equal-risk-contribution weights
+      // Risk Parity: equal risk contribution with meaningful alpha input
       let rpDist = 0;
-      for (let i = 0; i < n; i++) {
-        const actual = alloc[i] / (deployAmt || 1);
-        rpDist += (actual - rpWeights[i]) ** 2;
-      }
-      sc = -rpDist * 100 + sh * 0.1 + regimeBonus + divAdj + factorDiv + relValBonus + spyPenalty + alphaSignals + newPenalties;
-    } else if (target === "max_sharpe") sc = sh + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
-    else if (target === "min_vol") sc = -vol + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
-    else if (target === "max_return") {
-      const ddPenalty = srMode === "var" ? -0.08 * estMaxDD : srMode === "vol2" ? -0.04 * vol : -0.01 * vol;
-      sc = dynRet * 1.5 + ddPenalty + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
+      for (let i = 0; i < n; i++) { const a = alloc[i] / (deployAmt || 1); rpDist += (a - rpWeights[i]) ** 2; }
+      // Reduced RP dominance (50x, was 100x), increased Sharpe input (0.3, was 0.1)
+      sc = -rpDist * 50 + sh * 0.3 + commonSignals;
+    } else if (target === "max_sharpe") {
+      // Max Sharpe: primary alpha strategy — Sharpe ratio drives selection
+      // Add return floor: penalize portfolios with expected return below risk-free rate
+      const retFloorPenalty = ret < localRF ? -0.10 * (localRF - ret) : 0;
+      sc = sh + retFloorPenalty + volPenalty + levPenalty + commonSignals;
+    } else if (target === "min_vol") {
+      // Min Vol: minimum volatility WITH a return floor
+      // Without a return floor, this always picks 100% bonds. Reward exceeding RF+2%.
+      const minRetFloor = localRF + 2;
+      const retFloorBonus = ret > minRetFloor ? Math.min(0.15, (ret - minRetFloor) * 0.03) : -0.10 * (minRetFloor - ret);
+      sc = -vol * 0.8 + retFloorBonus + levPenalty + commonSignals;
+    } else if (target === "max_return") {
+      // Max Return: aggressive alpha pursuit with Sharpe safety net
+      // Regime-aware aggression: bull = full send, bear = tempered
+      const regimeRetMult = state5.includes("risk_on") ? 2.0 : state5.includes("risk_off") ? 1.0 : 1.5;
+      // Sharpe floor: don't pick 100% vol assets — need minimum risk-adjusted quality
+      const shFloor = sh < 0.2 ? -0.15 * (0.2 - sh) : 0;
+      const ddPenalty = -0.02 * estMaxDD;
+      sc = dynRet * regimeRetMult + shFloor + ddPenalty + volPenalty + levPenalty + commonSignals;
+    } else {
+      // Balanced (default): multi-objective — meaningful weight on return + Sharpe + drawdown
+      sc = sh * 0.6 + dynRet * 0.10 - estMaxDD * 0.03 + volPenalty + levPenalty + commonSignals;
     }
-    else sc = sh * .5 + dynRet * .02 - vol * .01 - estMaxDD * 0.05 + volPenalty + regimeBonus + divAdj + levPenalty + spyPenalty + factorDiv + relValBonus + alphaSignals + newPenalties;
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
   const minAlloc = cash * 0.03;
