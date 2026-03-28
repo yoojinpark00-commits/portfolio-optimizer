@@ -2105,12 +2105,30 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   for (let t = 0; t < numIterations; t++) {
-    // Position count distribution: favor 4-7 (sweet spot), explore 3 and 8-10
+    // Position count distribution: regime-adaptive concentration
+    // Bull/recovery: concentrate into fewer high-conviction bets (more alpha per position)
+    // Neutral: balanced diversification
+    // Bear/crisis: spread risk across more positions
     let numActive;
     const rnd = Math.random();
-    if (rnd < 0.10) numActive = 3;                                          // 10%: concentrated
-    else if (rnd < 0.70) numActive = 4 + Math.floor(Math.random() * 4);     // 60%: 4-7 sweet spot
-    else numActive = 8 + Math.floor(Math.random() * 3);                     // 30%: 8-10 diversified
+    const isRiskOn = state5.includes("risk_on");
+    const isRiskOff = state5.includes("risk_off");
+    if (isRiskOn) {
+      // Bull: favor 3-5 concentrated positions (capture winners)
+      if (rnd < 0.25) numActive = 3;                                        // 25%: concentrated
+      else if (rnd < 0.80) numActive = 4 + Math.floor(Math.random() * 2);   // 55%: 4-5 sweet spot
+      else numActive = 6 + Math.floor(Math.random() * 2);                   // 20%: 6-7 moderate
+    } else if (isRiskOff) {
+      // Bear: favor 8-12 diversified positions (reduce single-name risk)
+      if (rnd < 0.10) numActive = 5 + Math.floor(Math.random() * 2);        // 10%: moderate
+      else if (rnd < 0.60) numActive = 8 + Math.floor(Math.random() * 3);   // 50%: 8-10 diversified
+      else numActive = 10 + Math.floor(Math.random() * 3);                  // 40%: 10-12 max diversification
+    } else {
+      // Neutral: balanced — original distribution
+      if (rnd < 0.10) numActive = 3;                                        // 10%: concentrated
+      else if (rnd < 0.70) numActive = 4 + Math.floor(Math.random() * 4);   // 60%: 4-7 sweet spot
+      else numActive = 8 + Math.floor(Math.random() * 3);                   // 30%: 8-10 diversified
+    }
     numActive = Math.min(numActive, n);
 
     // Warm-start: 50% of iterations mutate the best-so-far, 50% random exploration
@@ -4233,6 +4251,9 @@ export default function App() {
     let lastEvalMonth = null;
     // Convert cooldown from months to trading days (~21 per month)
     const taxCooldownDays = taxCooldownMonths * 21;
+    // ── Position-level trailing stop tracking ──
+    // Track peak price for each held position to detect single-position blowups
+    let positionPeakPrice = {}; // ticker → highest close price while held
 
     // ── Build regime-duration-return model from historical data ──
     // IMPORTANT: To avoid forward-looking bias, we build this INCREMENTALLY during the backtest.
@@ -4281,6 +4302,11 @@ export default function App() {
       const spyMd = dayData["SPY"];
       if (spyMd) spyValue *= (1 + spyMd.ret);
       bal60Value *= (1 + 0.6 * (dayData["VTI"]?.ret || 0) + 0.4 * (dayData["BND"]?.ret || 0));
+      // ── Update position peak prices for trailing stop detection ──
+      for (const sym of Object.keys(optAlloc)) {
+        const closePrice = dayData[sym]?.close;
+        if (closePrice) positionPeakPrice[sym] = Math.max(positionPeakPrice[sym] || 0, closePrice);
+      }
       // Record curve at daily granularity (sampled to ~monthly for chart performance)
       // Always push last trading day of each month + every 5th day for drawdown precision
       const isMonthEnd = mi + 1 >= simDates.length || dateToMonth(simDates[mi + 1]) !== monthKey;
@@ -4516,8 +4542,29 @@ export default function App() {
       }
 
       // ── Minimum cooldown: 3 months (63 trading days) regardless of tax state ──
+      // EXCEPTION: Emergency drawdown override — if portfolio is down >15% from peak,
+      // bypass the cooldown. In a crash (Mar 2020, Oct 2008), 3 months of waiting destroys capital.
+      const currentDDFromPeak = ddPeak > 0 ? (ddPeak - optValue) / ddPeak : 0;
+      const isEmergencyDD = currentDDFromPeak >= 0.15;
       const minCooldownDays = Math.max(taxCooldownDays, 63);
-      if (!isFirstAllocation && monthsSinceRebal < minCooldownDays) shouldEvaluate = false;
+      if (!isFirstAllocation && monthsSinceRebal < minCooldownDays && !isEmergencyDD) shouldEvaluate = false;
+
+      // ── Gate 6: Position-level trailing stop ──
+      // Portfolio-level drawdown can mask single-position blowups (e.g., -40% in one stock
+      // while portfolio is only -8%). Force rebalance evaluation if any position drops >25%
+      // from its peak weight-adjusted value.
+      if (!shouldEvaluate && !isFirstAllocation && Object.keys(optAlloc).length > 0) {
+        for (const [sym, wt] of Object.entries(optAlloc)) {
+          if (wt < 0.03) continue; // ignore tiny positions
+          const currentPrice = dayData[sym]?.close;
+          if (!currentPrice || !positionPeakPrice[sym]) continue;
+          const posDDFromPeak = (positionPeakPrice[sym] - currentPrice) / positionPeakPrice[sym];
+          if (posDDFromPeak >= 0.25) {
+            shouldEvaluate = true;
+            break;
+          }
+        }
+      }
 
       // ── Annual tax budget: don't rebalance if we've already spent >1% of portfolio in taxes this year ──
       if (mYear !== annualTaxYear) { annualTaxSpent = 0; annualTaxYear = mYear; }
@@ -4652,18 +4699,58 @@ export default function App() {
         if (s.v <= 0 || s.r <= returnFloor) return false;
         return true;
       });
+
+      // ── Trend filter: 200-day moving average ──
+      // One of the most robust alpha signals in quantitative finance.
+      // In bear/neutral: exclude assets below 200-day MA (falling knives).
+      // In bull: give bonus to assets above their 200-day MA (ride trends).
+      const trendSignals = {};
+      for (const s of allCandidates) {
+        const sym = s.t;
+        // Compute 200-day MA from daily close prices
+        let sumClose = 0, countClose = 0;
+        for (let td = Math.max(0, mIdx - 200); td < mIdx; td++) {
+          const e = returnsByDateSym[sortedDates[td]]?.[sym];
+          if (e && e.close) { sumClose += e.close; countClose++; }
+        }
+        if (countClose >= 100) {
+          const ma200 = sumClose / countClose;
+          const currentClose = returnsByDateSym[sortedDates[mIdx - 1]]?.[sym]?.close;
+          if (currentClose) {
+            const aboveMA = currentClose > ma200;
+            const distFromMA = (currentClose - ma200) / ma200; // % distance from MA
+            trendSignals[sym] = { aboveMA, distFromMA };
+          }
+        }
+      }
+
       // ── Tiered candidate selection ──
-      // Sort by blended score: 60% Sharpe-like + 40% composite factor score
-      // This diversifies the signal away from pure momentum
+      // Sort by blended score: 55% Sharpe-like + 35% factor + 10% trend
+      // Uses dynamic RF instead of hardcoded 4% for accurate risk-adjusted ranking
       const sortScore = (s) => {
-        const sharpe = (s.r - 4) / (s.v || 1);
+        const sharpe = (s.r - dynamicRF * 100) / (s.v || 1);
         const factor = s.factorScore ?? 0.5;
-        return sharpe * 0.60 + factor * 3.0 * 0.40; // scale factor to comparable range
+        const trend = trendSignals[s.t];
+        // Trend bonus: +0.5 if above MA, -0.3 if below in bear/neutral (penalize falling knives)
+        let trendScore = 0;
+        if (trend) {
+          if (trend.aboveMA) trendScore = 0.5 + Math.min(0.5, trend.distFromMA * 2); // up to +1.0
+          else if (!isBullish) trendScore = -0.3 - Math.min(0.7, Math.abs(trend.distFromMA) * 2); // down to -1.0
+          else trendScore = -0.1; // mild penalty in bull (allow dip-buying)
+        }
+        return sharpe * 0.55 + factor * 3.0 * 0.35 + trendScore * 0.10;
       };
+      // In bear/neutral regimes: hard-filter assets far below 200-day MA (>15% below)
+      // These are falling knives — let them find a bottom first
+      const trendFiltered = isBullish ? allCandidates : allCandidates.filter(s => {
+        const trend = trendSignals[s.t];
+        if (!trend) return true; // no trend data → keep
+        return trend.distFromMA > -0.15; // exclude if >15% below 200-day MA
+      });
       // Pre-filter to top 60 by blended score, then give optimizer 2000 iterations
       // 750 assets × 300 iterations = throwing darts in the dark
       // 60 assets × 2000 iterations = thorough search of the best candidates
-      const candidates = allCandidates.sort((a, b) => sortScore(b) - sortScore(a)).slice(0, 60);
+      const candidates = trendFiltered.sort((a, b) => sortScore(b) - sortScore(a)).slice(0, 60);
       if (candidates.length < 3) continue;
 
       const btIterations = 2000;
@@ -4870,7 +4957,15 @@ export default function App() {
         curAlpha > 3 ? tcPct * 2.0 :
         curAlpha < -2 ? tcPct * 0.8 :
         tcPct * 1.2;
-      const minFloor = isFirstAllocation ? -999 : taxHurdleFloor; // scales with tax rate
+      // ── Regime-adaptive hurdle floor ──
+      // Risk-off: lower floor to allow defensive rotations (1.0-1.5%)
+      // Neutral: standard floor (2.5-3.5%)
+      // Risk-on: raise floor to stay invested, avoid overtrading (3.5-5.0%)
+      const btIsRiskOff = btState5 && btState5.includes("risk_off");
+      const btIsRiskOn = btState5 && btState5.includes("risk_on");
+      const regimeFloorMult = btIsRiskOff ? 0.45 : btIsRiskOn ? 1.35 : 1.0;
+      const adaptiveFloor = taxHurdleFloor * regimeFloorMult;
+      const minFloor = isFirstAllocation ? -999 : adaptiveFloor;
       const hurdle = Math.max(taxHurdle, minFloor) + turnoverPct * 0.01 + txCostPct + ltProximityBonus;
 
       if (isFirstAllocation || retImp > hurdle) {
@@ -4916,6 +5011,13 @@ export default function App() {
         annualTaxSpent += estTC; // track against annual tax budget
         ddBaseAlloc = { ...newAlloc }; // reset drawdown base to fresh optimizer output
         ddPeak = Math.max(ddPeak, optValue); // update peak after rebalance
+        // Reset position peak prices: keep peaks for held positions, set current price for new ones
+        const newPeaks = {};
+        for (const sym of Object.keys(newAlloc)) {
+          const currentClose = dayData[sym]?.close;
+          newPeaks[sym] = Math.max(positionPeakPrice[sym] || 0, currentClose || 0);
+        }
+        positionPeakPrice = newPeaks;
         costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
         lossCarryover = newCarryover;
         rebalanceEvents.push({ date: dateKey, decision: "REBALANCE", holdings: result.map(r => {
@@ -5540,10 +5642,39 @@ export default function App() {
         // All candidates — no cap (matching backtest)
         const isBullishSim = simState5?.includes("risk_on");
         const simReturnFloor = isBullishSim ? -50 : -80;
-        const cands = Object.values(trailingStats).filter(s => {
-          if (s.v <= 0 || s.r <= simReturnFloor) return false;
-          return true;
-        }).sort((a, b) => ((b.r - 4) / b.v) - ((a.r - 4) / a.v));
+        // ── Trend filter (matching backtest): 200-day MA ──
+        const simTrendSignals = {};
+        const simAllCands = Object.values(trailingStats).filter(s => s.v > 0 && s.r > simReturnFloor);
+        for (const s of simAllCands) {
+          let sc = 0, cc = 0;
+          for (let td = Math.max(0, mIdx - 200); td < mIdx; td++) {
+            const e = returnsByDateSym[sortedDates[td]]?.[s.t];
+            if (e && e.close) { sc += e.close; cc++; }
+          }
+          if (cc >= 100) {
+            const ma = sc / cc;
+            const cur = returnsByDateSym[sortedDates[mIdx - 1]]?.[s.t]?.close;
+            if (cur) simTrendSignals[s.t] = { aboveMA: cur > ma, distFromMA: (cur - ma) / ma };
+          }
+        }
+        const simDynamicRF2 = simHistRegimes?.[monthKey]?.dgs10 ?? RF;
+        const simSortScore = (s) => {
+          const sh = (s.r - simDynamicRF2 * 100) / (s.v || 1);
+          const f = s.factorScore ?? 0.5;
+          const tr = simTrendSignals[s.t];
+          let ts = 0;
+          if (tr) {
+            if (tr.aboveMA) ts = 0.5 + Math.min(0.5, tr.distFromMA * 2);
+            else if (!isBullishSim) ts = -0.3 - Math.min(0.7, Math.abs(tr.distFromMA) * 2);
+            else ts = -0.1;
+          }
+          return sh * 0.55 + f * 3.0 * 0.35 + ts * 0.10;
+        };
+        const simTrendFiltered = isBullishSim ? simAllCands : simAllCands.filter(s => {
+          const tr = simTrendSignals[s.t];
+          return !tr || tr.distFromMA > -0.15;
+        });
+        const cands = simTrendFiltered.sort((a, b) => simSortScore(b) - simSortScore(a)).slice(0, 60);
         if (cands.length < 3) continue;
 
         // Lightweight optimizer with regime context (matches main backtest strategy)
