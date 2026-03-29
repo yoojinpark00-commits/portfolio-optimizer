@@ -1547,11 +1547,89 @@ function computeAdaptiveFactorWeights(returnsByDate, sortedDates, mIdx, etfDbMap
  * @param {Object} etfDbMap - ticker → ETF_DB entry
  * @returns {Object} { enriched: trailingStats with factor fields, factorRanks: { sym: { mom, rev, val, qual, lowvol, carry, composite } } }
  */
+/**
+ * Multi-Speed EWMAC Trend Ensemble (Carver / Man AHL framework).
+ * Combines 3 exponential moving average crossover speeds into a single forecast.
+ */
+function computeEWMACEnsemble(prices) {
+  if (prices.length < 130) return 0;
+  function emaArr(vals, span) {
+    const k = 2 / (span + 1);
+    const out = [vals[0]];
+    for (let i = 1; i < vals.length; i++) out.push(vals[i] * k + out[i - 1] * (1 - k));
+    return out;
+  }
+  const changes = [];
+  for (let i = 1; i < prices.length; i++) changes.push(prices[i] - prices[i - 1]);
+  const volWindow = Math.min(25, changes.length);
+  const recentChanges = changes.slice(-volWindow);
+  const chgMean = recentChanges.reduce((a, b) => a + b, 0) / recentChanges.length;
+  const priceVol = Math.sqrt(recentChanges.reduce((a, c) => a + (c - chgMean) ** 2, 0) / recentChanges.length) || 1;
+  function ewmacSignal(fast, slow, scalar) {
+    const emaF = emaArr(prices, fast);
+    const emaS = emaArr(prices, slow);
+    const raw = (emaF[emaF.length - 1] - emaS[emaS.length - 1]) / priceVol;
+    return Math.max(-20, Math.min(20, raw * scalar));
+  }
+  const fast = ewmacSignal(8, 32, 5.95);
+  const med  = ewmacSignal(16, 64, 4.10);
+  const slow = ewmacSignal(32, 128, 2.79);
+  return Math.max(-20, Math.min(20, (0.42 * fast + 0.16 * med + 0.42 * slow) * 1.3));
+}
+
+/**
+ * Signal Orthogonalization via Modified Gram-Schmidt (Phase 5).
+ * Removes redundant information between correlated factor signals.
+ */
+function orthogonalizeSignals(factorScores, priorityOrder, minResidualNorm = 0.1) {
+  const syms = Object.keys(factorScores);
+  if (syms.length < 5 || priorityOrder.length < 2) return { orthScores: factorScores, droppedFactors: [] };
+  const n = syms.length;
+  const droppedFactors = [];
+  const vectors = {};
+  for (const f of priorityOrder) vectors[f] = syms.map(s => factorScores[s]?.[f] || 0);
+  const orthVectors = {};
+  const keptFactors = [];
+  for (const f of priorityOrder) {
+    let v = [...vectors[f]];
+    for (const prev of keptFactors) {
+      const u = orthVectors[prev];
+      const dot = v.reduce((s, vi, i) => s + vi * u[i], 0);
+      const normSq = u.reduce((s, ui) => s + ui * ui, 0);
+      if (normSq > 1e-10) { const proj = dot / normSq; v = v.map((vi, i) => vi - proj * u[i]); }
+    }
+    const norm = Math.sqrt(v.reduce((s, vi) => s + vi * vi, 0) / n);
+    if (norm < minResidualNorm && keptFactors.length > 0) { droppedFactors.push(f); continue; }
+    orthVectors[f] = v;
+    keptFactors.push(f);
+  }
+  const orthScores = {};
+  for (let i = 0; i < n; i++) { const sym = syms[i]; orthScores[sym] = {}; for (const f of keptFactors) orthScores[sym][f] = orthVectors[f][i]; }
+  return { orthScores, droppedFactors };
+}
+
 function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveWeights, lookbackPeriods = 12) {
   const syms = Object.keys(trailingStats);
   if (syms.length < 3 || mIdx < lookbackPeriods + 1) return { enriched: trailingStats, factorRanks: {} };
 
   const scores = {};
+
+  // ── Volatility-Scaled Momentum: compute cross-sectional momentum spread vol (Barroso & Santa-Clara 2015) ──
+  const momSpreadReturns = [];
+  const lookbackForVol = Math.min(6, mIdx);
+  for (let ti = Math.max(0, mIdx - lookbackForVol); ti < mIdx; ti++) {
+    const dateData = returnsByDate[sortedDates[ti]];
+    if (!dateData) continue;
+    const rets = Object.values(dateData).map(e => e.ret).filter(r => r != null);
+    if (rets.length < 5) continue;
+    rets.sort((a, b) => a - b);
+    const topQ = rets.slice(Math.floor(rets.length * 0.8));
+    const botQ = rets.slice(0, Math.floor(rets.length * 0.2));
+    momSpreadReturns.push(topQ.reduce((a, b) => a + b, 0) / topQ.length - botQ.reduce((a, b) => a + b, 0) / botQ.length);
+  }
+  const momSpreadVol = momSpreadReturns.length >= 3
+    ? Math.sqrt(momSpreadReturns.reduce((a, r) => a + r * r, 0) / momSpreadReturns.length) * Math.sqrt(12) : 0.12;
+  const volScale = Math.min(2.0, Math.max(0.3, 0.12 / (momSpreadVol || 0.12)));
 
   for (const sym of syms) {
     const db = etfDbMap[sym] || {};
@@ -1561,17 +1639,16 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
       const e = returnsByDate[sortedDates[ti]]?.[sym];
       if (e) monthlyRets.push(e.ret);
     }
-    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, mom6_1: 0, mom3_1: 0, tsmom: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0, csRev: 0 }; continue; }
+    if (monthlyRets.length < 6) { scores[sym] = { mom12_1: 0, mom6_1: 0, mom3_1: 0, tsmom: 0, fipQuality: 0, nearHigh: 0, momAccel: 0, trendEnsemble: 0, rev1m: 0, val: 0, qual: 0, lowvol: 0, carry: 0, csRev: 0 }; continue; }
 
-    // ── 1. Momentum (12-1): skip most recent month to avoid reversal ──
+    // ── 1. Momentum (12-1): skip most recent month, volatility-scaled ──
     const mom12_1raw = monthlyRets.slice(0, -1).reduce((a, b) => a + b, 0) * 100;
+    const mom12_1 = mom12_1raw * volScale; // Barroso & Santa-Clara: ~2x Sharpe improvement
 
-    // ── 1b. Multi-horizon momentum: 6-month and 3-month (skip most recent ~21 days to avoid reversal) ──
-    // Different horizons capture different phenomena — 3mo = intermediate trend, 6mo = medium sentiment
-    // With daily data (lookbackPeriods=252): 6mo ≈ 126 days, 3mo ≈ 63 days, skip last ~21 days
-    const skipDays = Math.max(1, Math.round(lookbackPeriods / 12)); // ~21 days for daily, ~1 for monthly
-    const m6Window = Math.round(lookbackPeriods / 2); // ~126 days for daily
-    const m3Window = Math.round(lookbackPeriods / 4); // ~63 days for daily
+    // ── 1b. Multi-horizon momentum ──
+    const skipDays = Math.max(1, Math.round(lookbackPeriods / 12));
+    const m6Window = Math.round(lookbackPeriods / 2);
+    const m3Window = Math.round(lookbackPeriods / 4);
     const mom6_1 = monthlyRets.length >= m6Window + skipDays
       ? monthlyRets.slice(-(m6Window + skipDays), -skipDays).reduce((a, b) => a + b, 0) * 100
       : mom12_1raw * 0.5;
@@ -1579,39 +1656,54 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
       ? monthlyRets.slice(-(m3Window + skipDays), -skipDays).reduce((a, b) => a + b, 0) * 100
       : mom12_1raw * 0.25;
 
-    // ── 1c. Time-Series Momentum (TSMOM): absolute return signal ──
-    // Unlike cross-sectional momentum (rank best vs worst), TSMOM uses each asset's OWN
-    // trailing return as an absolute go/no-go signal. Positive trailing return → long, negative → avoid.
-    // Prevents buying "best of the worst" in bear markets (Moskowitz, Ooi & Pedersen 2012).
+    // ── 1c. TSMOM (Moskowitz, Ooi & Pedersen 2012) ──
     const totalRet = monthlyRets.reduce((a, b) => a + b, 0);
-    const tsmom = totalRet > 0 ? Math.min(totalRet * 100, 50) : Math.max(totalRet * 100, -50); // capped magnitude
+    const tsmom = totalRet > 0 ? Math.min(totalRet * 100, 50) : Math.max(totalRet * 100, -50);
 
-    // ── 2. Short-term Reversal (1-month): most recent month, inverted ──
+    // ── 1d. Frog-in-the-Pan momentum quality (Da, Gurun, Warachka 2014) ──
+    // More continuous momentum = higher quality = stronger persistence
+    const cumRet = monthlyRets.reduce((a, b) => a + b, 0);
+    const pctPos = monthlyRets.filter(r => r > 0).length / monthlyRets.length;
+    const pctNeg = monthlyRets.filter(r => r < 0).length / monthlyRets.length;
+    const fipQuality = -Math.sign(cumRet) * (pctNeg - pctPos); // more negative ID = higher quality → higher score
+
+    // ── 1e. 52-Week High Momentum (George & Hwang 2004) ──
+    // 0.65%/mo, no long-term reversal (unlike standard momentum)
+    let nearHigh = 0.5;
+    const priceHistory = [];
+    for (let ti = Math.max(0, mIdx - lookbackPeriods); ti <= mIdx; ti++) {
+      const e = returnsByDate[sortedDates[ti]]?.[sym];
+      if (e?.close) priceHistory.push(e.close);
+    }
+    if (priceHistory.length >= 6) {
+      const high = Math.max(...priceHistory);
+      nearHigh = high > 0 ? priceHistory[priceHistory.length - 1] / high : 0.5;
+    }
+
+    // ── 1f. Momentum Acceleration (Chen et al. 2018) ──
+    const recentHalf = mom6_1;
+    const earlierHalf = mom12_1raw * volScale - recentHalf;
+    const momAccel = recentHalf - earlierHalf;
+
+    // ── 1g. EWMAC Trend Ensemble (Carver / Man AHL) ──
+    const trendEnsemble = priceHistory.length >= 6 ? computeEWMACEnsemble(priceHistory) : 0;
+
+    // ── 2. Short-term Reversal ──
     const rev1m = -(monthlyRets[monthlyRets.length - 1] || 0) * 100;
 
-    // ── 3. Value: use dividend yield as proxy (higher = more value) ──
+    // ── 3-6. Value, Quality, Low Vol, Carry ──
     const val = ts.d || db.d || 0;
-
-    // ── 4. Quality: low expense ratio + low vol + positive returns ──
-    // Higher = better quality
     const qual = (ts.r > 0 ? 1 : 0) * 2 + (1 / (1 + (ts.er || 0.1))) + (ts.v < 15 ? 1 : ts.v < 25 ? 0.5 : 0);
-
-    // ── 5. Low Volatility: inverted vol (lower vol = higher score) ──
     const lowvol = ts.v > 0 ? 100 / ts.v : 0;
-
-    // ── 6. Carry: dividend yield for equities, estimated for bonds ──
     let carry = ts.d || 0;
     const cat = (ts.c || "").toLowerCase();
-    if (cat.includes("bond") || cat.includes("treasury")) carry = (ts.d || 0) + 1.5; // bond carry premium
-    if (cat.includes("commodity")) carry = Math.max(0, carry - 0.5); // commodity roll cost
+    if (cat.includes("bond") || cat.includes("treasury")) carry = (ts.d || 0) + 1.5;
+    if (cat.includes("commodity")) carry = Math.max(0, carry - 0.5);
 
-    scores[sym] = { mom12_1: mom12_1raw, mom6_1, mom3_1, tsmom, rev1m, val, qual, lowvol, carry, csRev: 0 };
+    scores[sym] = { mom12_1, mom6_1, mom3_1, tsmom, fipQuality, nearHigh, momAccel, trendEnsemble, rev1m, val, qual, lowvol, carry, csRev: 0 };
   }
 
   // ── 7. Cross-sectional demeaned reversal (Kakushadze §3.9) ──
-  // Group assets by category, compute category-average trailing return,
-  // then each asset's score = -(asset return - category avg return)
-  // Negative sign because underperformers relative to peers are expected to revert UP
   const catGroups = {};
   for (const sym of syms) {
     const cat = trailingStats[sym]?.c || "Unknown";
@@ -1628,22 +1720,24 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
   }
 
   // ── Cross-sectional percentile ranking (0-1) for each factor ──
-  const factors = ["mom12_1", "mom6_1", "mom3_1", "tsmom", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
+  const factors = ["mom12_1", "mom6_1", "mom3_1", "tsmom", "fipQuality", "nearHigh", "momAccel", "trendEnsemble", "rev1m", "val", "qual", "lowvol", "carry", "csRev"];
   const ranks = {};
 
   for (const f of factors) {
-    const vals = syms.map(s => ({ sym: s, v: scores[s][f] || 0 })).sort((a, b) => a.v - b.v);
+    const vals = syms.map(s => ({ sym: s, v: scores[s]?.[f] || 0 })).sort((a, b) => a.v - b.v);
     vals.forEach((item, idx) => {
       if (!ranks[item.sym]) ranks[item.sym] = {};
       ranks[item.sym][f] = vals.length > 1 ? idx / (vals.length - 1) : 0.5;
     });
   }
 
-  // ── Composite factor score (weighted blend) ──
-  // Use adaptive IC-based weights if available, otherwise hardcoded defaults
-  // Multi-horizon momentum (12/6/3) captures different phenomena: behavioral drift, sentiment, intermediate trend
-  // TSMOM (time-series momentum) is an absolute return signal — distinct from cross-sectional ranking
-  const defaultFactorWeights = { mom12_1: 0.15, mom6_1: 0.08, mom3_1: 0.05, tsmom: 0.10, rev1m: 0.08, val: 0.12, qual: 0.10, lowvol: 0.10, carry: 0.12, csRev: 0.10 };
+  // ── Composite factor score ──
+  // Expanded 14-factor model with adaptive IC-based weights or research-informed defaults
+  const defaultFactorWeights = {
+    mom12_1: 0.10, mom6_1: 0.06, mom3_1: 0.04, tsmom: 0.08,
+    fipQuality: 0.04, nearHigh: 0.04, momAccel: 0.03, trendEnsemble: 0.05,
+    rev1m: 0.06, val: 0.10, qual: 0.10, lowvol: 0.08, carry: 0.10, csRev: 0.08,
+  };
   const factorWeights = adaptiveWeights || defaultFactorWeights;
   for (const sym of syms) {
     let composite = 0;
@@ -1651,7 +1745,6 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
       composite += (ranks[sym]?.[f] || 0.5) * w;
     }
     ranks[sym].composite = composite;
-    // Attach to trailing stats
     trailingStats[sym].factorScore = composite;
     trailingStats[sym].factorRanks = ranks[sym];
     trailingStats[sym].mom12_1 = scores[sym].mom12_1;
@@ -1896,6 +1989,129 @@ function factorDiversificationScore(alloc, candidates, deployAmt) {
   }
 
   return factorPenalty;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PHASE 2: PORTFOLIO CONSTRUCTION IMPROVEMENTS
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Ledoit-Wolf Linear Shrinkage (Ledoit & Wolf 2004).
+ * Shrinks sample covariance toward scaled identity to reduce estimation error.
+ */
+function ledoitWolfShrinkage(sampleCov, T) {
+  const N = sampleCov.length;
+  if (N <= 1 || T <= 1) return sampleCov;
+  const mu = sampleCov.reduce((s, row, i) => s + row[i], 0) / N;
+  let sumSqOffDiag = 0, sumSqDev = 0;
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) {
+      const target = i === j ? mu : 0;
+      sumSqDev += (sampleCov[i][j] - target) ** 2;
+      if (i !== j) sumSqOffDiag += sampleCov[i][j] ** 2;
+    }
+  }
+  const delta = Math.min(1, Math.max(0, (sumSqOffDiag / T) / (sumSqDev + 1e-10)));
+  const shrunk = [];
+  for (let i = 0; i < N; i++) {
+    shrunk[i] = [];
+    for (let j = 0; j < N; j++) {
+      shrunk[i][j] = delta * (i === j ? mu : 0) + (1 - delta) * sampleCov[i][j];
+    }
+  }
+  return shrunk;
+}
+
+/**
+ * Hierarchical Risk Parity (López de Prado 2016).
+ * Graph-theory-based allocation — doesn't require covariance matrix inversion.
+ * 72% lower OOS variance than mean-variance optimization.
+ */
+function computeHRP(corrMatrix, vols) {
+  const N = corrMatrix.length;
+  if (N <= 1) return [1.0];
+  const dist = Array.from({ length: N }, (_, i) =>
+    Array.from({ length: N }, (_, j) => Math.sqrt(0.5 * (1 - (corrMatrix[i]?.[j] ?? (i === j ? 1 : 0)))))
+  );
+  // Single-linkage hierarchical clustering
+  const active = new Set(Array.from({ length: N }, (_, i) => i));
+  const clusters = Array.from({ length: N }, (_, i) => [i]);
+  while (active.size > 1) {
+    let minDist = Infinity, bestI = -1, bestJ = -1;
+    const activeArr = [...active];
+    for (let ai = 0; ai < activeArr.length; ai++) {
+      for (let aj = ai + 1; aj < activeArr.length; aj++) {
+        const ci = activeArr[ai], cj = activeArr[aj];
+        let d = Infinity;
+        for (const a of clusters[ci]) for (const b of clusters[cj]) if (dist[a][b] < d) d = dist[a][b];
+        if (d < minDist) { minDist = d; bestI = ci; bestJ = cj; }
+      }
+    }
+    if (bestI < 0) break;
+    clusters[bestI] = [...clusters[bestI], ...clusters[bestJ]];
+    active.delete(bestJ);
+  }
+  const leafOrder = clusters[[...active][0]] || Array.from({ length: N }, (_, i) => i);
+  // Recursive bisection
+  const weights = new Array(N).fill(1.0);
+  function getClusterVar(indices) {
+    if (indices.length === 0) return 1;
+    const invVars = indices.map(i => 1 / ((vols[i] || 0.01) ** 2));
+    const sumInvVar = invVars.reduce((a, b) => a + b, 0) || 1;
+    const ivpW = invVars.map(iv => iv / sumInvVar);
+    let pv = 0;
+    for (let a = 0; a < indices.length; a++) for (let b = 0; b < indices.length; b++) {
+      pv += ivpW[a] * ivpW[b] * vols[indices[a]] * vols[indices[b]] * (corrMatrix[indices[a]]?.[indices[b]] ?? (indices[a] === indices[b] ? 1 : 0.5));
+    }
+    return Math.max(pv, 1e-10);
+  }
+  function bisect(order) {
+    if (order.length <= 1) return;
+    const mid = Math.floor(order.length / 2);
+    const left = order.slice(0, mid), right = order.slice(mid);
+    const alpha = 1 - getClusterVar(left) / (getClusterVar(left) + getClusterVar(right));
+    for (const i of left) weights[i] *= alpha;
+    for (const i of right) weights[i] *= (1 - alpha);
+    bisect(left); bisect(right);
+  }
+  bisect(leafOrder);
+  const wSum = weights.reduce((a, b) => a + b, 0) || 1;
+  return weights.map(w => w / wSum);
+}
+
+/**
+ * No-trade zones around target weights (Leland 1999).
+ * ~50% reduction in transaction costs by only trading when weight drifts outside zone.
+ */
+function applyNoTradeZones(targetWeights, currentWeights, costs, volatilities, riskAversion = 3, volRegimeScale = 1.0) {
+  const trades = {};
+  let turnover = 0;
+  for (const ticker of Object.keys(targetWeights)) {
+    const target = targetWeights[ticker] || 0;
+    const current = currentWeights[ticker] || 0;
+    const cost = (costs[ticker] || 5) / 10000;
+    const vol = volatilities[ticker] || 0.15;
+    const halfWidth = Math.pow((3 * cost * vol * vol) / (2 * riskAversion), 1 / 3) * volRegimeScale;
+    if (current >= target - halfWidth && current <= target + halfWidth) { trades[ticker] = current; }
+    else if (current < target - halfWidth) { trades[ticker] = target - halfWidth; turnover += target - halfWidth - current; }
+    else { trades[ticker] = target + halfWidth; turnover += current - (target + halfWidth); }
+  }
+  for (const ticker of Object.keys(currentWeights)) {
+    if (!(ticker in targetWeights) && currentWeights[ticker] > 0.005) { trades[ticker] = 0; turnover += currentWeights[ticker]; }
+  }
+  return { trades, turnover };
+}
+
+/**
+ * CPPI Drawdown Floor Protection.
+ * Dynamically scales exposure based on distance to a ratcheting floor.
+ */
+function cppiExposure(portfolioValue, peakValue, maxDD = 0.20, multiplier = 5, sigmaTarget = 0, sigmaRealized = 0) {
+  if (!portfolioValue || !peakValue || portfolioValue <= 0) return 1.0;
+  const floor = (1 - maxDD) * peakValue;
+  const cushion = Math.max(0, portfolioValue - floor);
+  const dynMult = (sigmaTarget > 0 && sigmaRealized > 0) ? multiplier * Math.min(2, sigmaTarget / sigmaRealized) : multiplier;
+  return Math.max(0.05, Math.min(1.5, dynMult * cushion / portfolioValue));
 }
 
 // ═══════════════════════════════════════════════════════════════════

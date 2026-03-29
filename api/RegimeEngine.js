@@ -2122,4 +2122,53 @@ export default {
   runRegimeAnalysis,
   computeStressThermometer,
   getWatchlistSignals,
+  regimeDependentCovariance,
 };
+
+// ═══════════════════════════════════════════════════════════════════
+//  SECTION 9: REGIME-DEPENDENT COVARIANCE MATRICES (Phase 4)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Estimate separate covariance matrices per regime, blend using current
+ * regime probabilities. During crisis, crisis-era correlations naturally
+ * dominate — capturing correlation spikes that destroy naive diversification.
+ */
+export function regimeDependentCovariance(assetReturns, regimeLabels, regimeProbs) {
+  const tickers = Object.keys(assetReturns);
+  const K = tickers.length;
+  const T = Math.min(...tickers.map(tk => assetReturns[tk].length));
+  if (K < 2 || T < 50) return { blendedCov: null, regimeCovs: {}, tickers };
+
+  const regimeCovs = {};
+  for (let regime = 0; regime < NUM_STATES; regime++) {
+    const indices = [];
+    for (let t = 0; t < T; t++) if (regimeLabels[t] === regime) indices.push(t);
+    if (indices.length < K + 5) { regimeCovs[regime] = null; continue; }
+    const mu = new Array(K).fill(0);
+    for (const t of indices) for (let j = 0; j < K; j++) mu[j] += assetReturns[tickers[j]][t] || 0;
+    for (let j = 0; j < K; j++) mu[j] /= indices.length;
+    const cov = Array.from({ length: K }, () => new Array(K).fill(0));
+    for (const t of indices) {
+      for (let i = 0; i < K; i++) {
+        const di = (assetReturns[tickers[i]][t] || 0) - mu[i];
+        for (let j = i; j < K; j++) cov[i][j] += di * ((assetReturns[tickers[j]][t] || 0) - mu[j]);
+      }
+    }
+    for (let i = 0; i < K; i++) { for (let j = i; j < K; j++) { cov[i][j] /= indices.length; cov[j][i] = cov[i][j]; } cov[i][i] += 1e-8; }
+    regimeCovs[regime] = cov;
+  }
+
+  const blendedCov = Array.from({ length: K }, () => new Array(K).fill(0));
+  let totalProb = 0;
+  for (let regime = 0; regime < NUM_STATES; regime++) {
+    if (!regimeCovs[regime]) continue;
+    const p = regimeProbs?.[regime] || (1 / NUM_STATES);
+    totalProb += p;
+    for (let i = 0; i < K; i++) for (let j = 0; j < K; j++) blendedCov[i][j] += p * regimeCovs[regime][i][j];
+  }
+  if (totalProb > 0 && totalProb < 0.99) {
+    for (let i = 0; i < K; i++) for (let j = 0; j < K; j++) blendedCov[i][j] /= totalProb;
+  }
+  return { blendedCov, regimeCovs, tickers };
+}

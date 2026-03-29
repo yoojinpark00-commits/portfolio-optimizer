@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   const isAnalytics = req.query.analytics === "true";
   const isFull = req.query.full === "true";
 
-  // ── 10 FRED series: 6 original + 4 new ──
+  // ── 19 FRED series: 12 original + 7 alpha-enhancement signals ──
   const series = {
     hy_oas: "BAMLH0A0HYM2",   // HY Credit Spread (daily)
     vix: "VIXCLS",             // VIX Spot (daily)
@@ -38,6 +38,14 @@ export default async function handler(req, res) {
     // For cross-asset correlation
     gold: "GOLDAMGBD228NLBM",  // Gold price (London fix, daily)
     dgs10: "DGS10",            // 10Y Treasury yield (daily, inverse of bond price)
+    // ── Alpha-enhancement signals (Phase 3) ──
+    t5yie: "T5YIE",           // 5Y Breakeven Inflation (daily)
+    t10yie: "T10YIE",         // 10Y Breakeven Inflation (daily)
+    dfii10: "DFII10",         // 10Y TIPS Real Yield (daily)
+    cp90d: "RIFSPPAAAD90NB",  // 90-Day AA Financial CP Rate (daily)
+    stlfsi: "STLFSI4",        // St. Louis Fed Financial Stress Index (weekly)
+    usdx: "DTWEXBGS",         // Broad USD Index (daily)
+    recprob: "RECPROUSM156N", // Smoothed Recession Probability (monthly)
   };
 
   const startDate = (isHistory || isAnalytics || isFull) ? "2005-01-01" : new Date(Date.now() - 3 * 365.25 * 86400000).toISOString().slice(0, 10);
@@ -264,20 +272,64 @@ function computeScoreAtDate(data, dateStr) {
     }
   }
 
+  // ── 9. Inflation regime (weight: 0.03) ──
+  if (data.t10yie?.length > 0) {
+    const idx = binarySearchLastLE(data.t10yie, dateStr);
+    if (idx >= 0) scores.inflation = { z: rollingZScore(data.t10yie.map(d => d.value), idx, 1750), val: data.t10yie[idx].value, w: 0.03 };
+  }
+
+  // ── 10. Funding liquidity (weight: 0.04) ──
+  if (data.cp90d?.length > 0) {
+    const idx = binarySearchLastLE(data.cp90d, dateStr);
+    if (idx >= 0) scores.funding = { z: rollingZScore(data.cp90d.map(d => d.value), idx, 750), val: data.cp90d[idx].value, w: 0.04 };
+  }
+
+  // ── 11. StL Fed Financial Stress (weight: 0.03) ──
+  if (data.stlfsi?.length > 0) {
+    const idx = binarySearchLastLE(data.stlfsi, dateStr);
+    if (idx >= 0) scores.stlfsi = { z: data.stlfsi[idx].value * 2, val: data.stlfsi[idx].value, w: 0.03 };
+  }
+
+  // ── 12. Credit spread momentum (weight: 0.04) ──
+  if (data.hy_oas?.length > 60) {
+    const idx = binarySearchLastLE(data.hy_oas, dateStr);
+    const idx3m = Math.max(0, idx - 63);
+    if (idx > idx3m) {
+      const oasMom = data.hy_oas[idx].value - data.hy_oas[idx3m].value;
+      scores.oas_momentum = { z: oasMom > 0 ? Math.min(oasMom * 0.5, 3) : Math.max(oasMom * 0.3, -2), val: oasMom, w: 0.04 };
+    }
+  }
+
+  // ── 13. Dollar strength (weight: 0.02) ──
+  if (data.usdx?.length > 120) {
+    const idx = binarySearchLastLE(data.usdx, dateStr);
+    const idx6m = Math.max(0, idx - 126);
+    if (idx > idx6m && data.usdx[idx6m].value > 0) {
+      const dollarRoC = (data.usdx[idx].value - data.usdx[idx6m].value) / data.usdx[idx6m].value;
+      scores.dollar = { z: dollarRoC * 20, val: dollarRoC, w: 0.02 };
+    }
+  }
+
   // Composite weighted score
   let composite = 0, totalW = 0;
   for (const s of Object.values(scores)) {
     composite += s.z * s.w;
     totalW += s.w;
   }
-  if (totalW > 0) composite /= totalW; // normalize by actual weights present
-  composite *= totalW / 1.0; // scale back (all weights sum to 1.0)
+  if (totalW > 0) composite /= totalW;
+  composite *= totalW / 1.0;
 
   // Extract raw VIX data for regime acceleration / vol decomposition
   const vixLevel = vixObs?.value ?? null;
   const vixRatio = (vixObs && vix3mObs && vix3mObs.value > 0) ? vixObs.value / vix3mObs.value : null;
 
-  return { composite, scores, vixLevel, vixRatio };
+  // Supplementary macro signals for optimizer passthrough
+  const realRate = data.dfii10?.length > 0 ? findClosest(data.dfii10, dateStr)?.value ?? null : null;
+  const recessionProb = data.recprob?.length > 0 ? findClosest(data.recprob, dateStr)?.value ?? null : null;
+  const inflationBE = data.t10yie?.length > 0 ? findClosest(data.t10yie, dateStr)?.value ?? null : null;
+  const dollarIdx = data.usdx?.length > 0 ? findClosest(data.usdx, dateStr)?.value ?? null : null;
+
+  return { composite, scores, vixLevel, vixRatio, realRate, recessionProb, inflationBE, dollarIdx };
 }
 
 // ═══ COMPUTE LATEST REGIME (v2 — daily, 5-state, with acceleration) ═══
@@ -286,7 +338,7 @@ function computeRegimeV2(data) {
 
   // Compute score at latest date
   const latestDate = data.sp500?.length > 0 ? data.sp500[data.sp500.length - 1].date : new Date().toISOString().slice(0, 10);
-  const { composite, scores } = computeScoreAtDate(data, latestDate);
+  const { composite, scores, realRate, recessionProb, inflationBE, dollarIdx } = computeScoreAtDate(data, latestDate);
 
   result.score = Math.round(composite * 100) / 100;
   result.state5 = classify5State(composite);
@@ -382,6 +434,14 @@ function computeRegimeV2(data) {
     result.zScores[key] = Math.round(s.z * 100) / 100;
   }
 
+  // Alpha-enhancement macro signals (Phase 3)
+  result.macroSignals = {
+    realRate: realRate != null ? Math.round(realRate * 100) / 100 : null,
+    recessionProb: recessionProb != null ? Math.round(recessionProb * 100) / 100 : null,
+    inflationBE: inflationBE != null ? Math.round(inflationBE * 100) / 100 : null,
+    dollarIdx: dollarIdx != null ? Math.round(dollarIdx * 100) / 100 : null,
+  };
+
   return result;
 }
 
@@ -396,7 +456,7 @@ function computeMonthlyRegimesV2(data) {
     const maxMonth = year === currentYear ? currentMonth : 12;
     for (let month = 1; month <= maxMonth; month++) {
       const dateStr = `${year}-${String(month).padStart(2, "0")}-28`;
-      const { composite, scores, vixLevel, vixRatio } = computeScoreAtDate(data, dateStr);
+      const { composite, scores, vixLevel, vixRatio, realRate, recessionProb, inflationBE, dollarIdx } = computeScoreAtDate(data, dateStr);
 
       const state5 = classify5State(composite);
       const regime = to3State(state5);
@@ -494,6 +554,11 @@ function computeMonthlyRegimesV2(data) {
         volRegime,
         volSignal,
         dgs10: dgs10Val,
+        // Alpha-enhancement macro signals (Phase 3)
+        realRate: realRate != null ? Math.round(realRate * 100) / 100 : null,
+        recessionProb: recessionProb != null ? Math.round(recessionProb * 100) / 100 : null,
+        inflationBE: inflationBE != null ? Math.round(inflationBE * 100) / 100 : null,
+        dollarIdx: dollarIdx != null ? Math.round(dollarIdx * 100) / 100 : null,
       });
     }
   }
