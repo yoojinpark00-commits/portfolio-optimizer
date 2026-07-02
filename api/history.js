@@ -24,6 +24,7 @@ export default async function handler(req, res) {
 
   const data = {};
   const errors = [];
+  const warnings = [];
   let yahooSuccess = 0;
 
   // ── Fetch from Yahoo Finance chart endpoint — ALL symbols in parallel ──
@@ -54,6 +55,9 @@ export default async function handler(req, res) {
       const adjCloses = result.indicators?.adjclose?.[0]?.adjclose;
       const rawCloses = result.indicators.quote[0].close;
       const closes = adjCloses || rawCloses; // prefer adjusted, fallback to raw
+      // Flag the raw-close fallback — unadjusted series carry fake split drops and
+      // miss dividends; consumers must be able to see which symbols are affected
+      if (!adjCloses) warnings.push({ symbol: sym, message: "adjclose unavailable — using RAW close (splits/dividends not adjusted)" });
 
       const points = [];
       for (let i = 0; i < timestamps.length; i++) {
@@ -79,6 +83,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       data,
       errors: errors.filter(e => !data[e.symbol]),
+      warnings,
       provider: "yahoo",
       fetched: yahooSuccess,
       requested: tickers.length,

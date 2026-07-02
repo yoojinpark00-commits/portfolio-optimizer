@@ -194,6 +194,20 @@ function binarySearchLastLE(arr, dateStr) {
 }
 
 // ═══ COMPUTE DAILY COMPOSITE SCORE AT A GIVEN DATE ═══
+// ── Publication-lag guard ──
+// FRED dates observations by REFERENCE period, not release date. A monthly series
+// value dated month M (e.g. Sahm rule, recession probability) is not actually
+// published until well into M+1 (or later). Looking it up "as of" a date in M is
+// look-ahead. Shift the lookup date back so only genuinely-published data is used.
+function lagDateStr(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+// Realistic release delays: Sahm rule = jobs report (~1st Friday of M+1);
+// smoothed recession prob = published with multi-month delay; weekly series ~1 week.
+const PUB_LAG_DAYS = { sahm: 35, recprob: 65, claims: 7, nfci: 7, stlfsi: 7 };
+
 function computeScoreAtDate(data, dateStr) {
   const scores = {};
 
@@ -213,9 +227,9 @@ function computeScoreAtDate(data, dateStr) {
     scores.vix_slope = { z: -slope * 5, val: slope, w: 0.20 };
   }
 
-  // 3. NFCI (weight: 0.15)
+  // 3. NFCI (weight: 0.15) — weekly, published the following Wednesday
   if (data.nfci?.length > 0) {
-    const idx = binarySearchLastLE(data.nfci, dateStr);
+    const idx = binarySearchLastLE(data.nfci, lagDateStr(dateStr, PUB_LAG_DAYS.nfci));
     if (idx >= 0) {
       scores.nfci = { z: rollingZScore(data.nfci.map(d => d.value), idx, 156), val: data.nfci[idx].value, w: 0.15 };
     }
@@ -239,8 +253,9 @@ function computeScoreAtDate(data, dateStr) {
   }
 
   // 6. Sahm Rule (weight: 0.10) — recession trigger
+  // Month-M value is published with the M+1 jobs report — lag the lookup
   if (data.sahm?.length > 0) {
-    const idx = binarySearchLastLE(data.sahm, dateStr);
+    const idx = binarySearchLastLE(data.sahm, lagDateStr(dateStr, PUB_LAG_DAYS.sahm));
     if (idx >= 0) {
       // Sahm > 0.5 historically = 100% recession
       const sahmVal = data.sahm[idx].value;
@@ -248,9 +263,9 @@ function computeScoreAtDate(data, dateStr) {
     }
   }
 
-  // 7. Initial Claims rate-of-change (weight: 0.05)
+  // 7. Initial Claims rate-of-change (weight: 0.05) — weekly, ~5-day release delay
   if (data.claims?.length > 0) {
-    const idx = binarySearchLastLE(data.claims, dateStr);
+    const idx = binarySearchLastLE(data.claims, lagDateStr(dateStr, PUB_LAG_DAYS.claims));
     if (idx >= 0) {
       scores.claims = { z: rollingZScore(data.claims.map(d => d.value), idx, 156), val: data.claims[idx].value, w: 0.05 };
     }
@@ -284,9 +299,9 @@ function computeScoreAtDate(data, dateStr) {
     if (idx >= 0) scores.funding = { z: rollingZScore(data.cp90d.map(d => d.value), idx, 750), val: data.cp90d[idx].value, w: 0.04 };
   }
 
-  // ── 11. StL Fed Financial Stress (weight: 0.03) ──
+  // ── 11. StL Fed Financial Stress (weight: 0.03) — weekly, ~1-week release delay ──
   if (data.stlfsi?.length > 0) {
-    const idx = binarySearchLastLE(data.stlfsi, dateStr);
+    const idx = binarySearchLastLE(data.stlfsi, lagDateStr(dateStr, PUB_LAG_DAYS.stlfsi));
     if (idx >= 0) scores.stlfsi = { z: data.stlfsi[idx].value * 2, val: data.stlfsi[idx].value, w: 0.03 };
   }
 
@@ -325,7 +340,13 @@ function computeScoreAtDate(data, dateStr) {
 
   // Supplementary macro signals for optimizer passthrough
   const realRate = data.dfii10?.length > 0 ? findClosest(data.dfii10, dateStr)?.value ?? null : null;
-  const recessionProb = data.recprob?.length > 0 ? findClosest(data.recprob, dateStr)?.value ?? null : null;
+  // Recession probability (Chauvet-Piger) is published with a multi-month delay —
+  // lag the lookup, and use last-on-or-before (findClosest could grab a FUTURE value)
+  const recessionProb = (() => {
+    if (!(data.recprob?.length > 0)) return null;
+    const idx = binarySearchLastLE(data.recprob, lagDateStr(dateStr, PUB_LAG_DAYS.recprob));
+    return idx >= 0 ? data.recprob[idx].value : null;
+  })();
   const inflationBE = data.t10yie?.length > 0 ? findClosest(data.t10yie, dateStr)?.value ?? null : null;
   const dollarIdx = data.usdx?.length > 0 ? findClosest(data.usdx, dateStr)?.value ?? null : null;
 
