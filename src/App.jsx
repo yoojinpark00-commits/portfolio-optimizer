@@ -1679,7 +1679,9 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
     // 0.65%/mo, no long-term reversal (unlike standard momentum)
     let nearHigh = 0.5;
     const priceHistory = [];
-    for (let ti = Math.max(0, mIdx - lookbackPeriods); ti <= mIdx; ti++) {
+    // ti < mIdx: consistent with every other window in the pipeline (decisions
+    // use data through yesterday's close only — no same-bar peeking)
+    for (let ti = Math.max(0, mIdx - lookbackPeriods); ti < mIdx; ti++) {
       const e = returnsByDate[sortedDates[ti]]?.[sym];
       if (e?.close) priceHistory.push(e.close);
     }
@@ -2127,6 +2129,38 @@ function cppiExposure(portfolioValue, peakValue, maxDD = 0.20, multiplier = 5, s
 function shrunkEmpiricalCorr(trailRetMatrix, n) {
   if (!trailRetMatrix || trailRetMatrix.length < 120 || n < 2) return null;
   const T = trailRetMatrix.length;
+  const mask = trailRetMatrix.mask || null; // parallel rows: 1 = real data, 0 = missing
+  const corr = [];
+  for (let i = 0; i < n; i++) corr[i] = new Array(n).fill(0);
+  if (mask) {
+    // ── Pairwise-complete estimation: missing days are EXCLUDED, not zero-filled.
+    // Zero-filling fakes calm 0% return days for late-inception assets, understating
+    // their vol and correlations (false diversification). Pairs with < 120 common
+    // observations fall back to corr 0 → the category prior dominates via the blend.
+    let minPairCount = T;
+    for (let i = 0; i < n; i++) {
+      corr[i][i] = 1;
+      for (let j = i + 1; j < n; j++) {
+        let cnt = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+        for (let m = 0; m < T; m++) {
+          if (!mask[m][i] || !mask[m][j]) continue;
+          const x = trailRetMatrix[m][i], y = trailRetMatrix[m][j];
+          cnt++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
+        }
+        let c = 0;
+        if (cnt >= 120) {
+          const covXY = sxy / cnt - (sx / cnt) * (sy / cnt);
+          const vx = sxx / cnt - (sx / cnt) ** 2, vy = syy / cnt - (sy / cnt) ** 2;
+          const denom = Math.sqrt(vx * vy);
+          if (denom > 1e-12) c = covXY / denom;
+          if (cnt < minPairCount) minPairCount = cnt;
+        }
+        corr[i][j] = corr[j][i] = Math.max(-0.99, Math.min(0.99, c));
+      }
+    }
+    return ledoitWolfShrinkage(corr, Math.max(120, minPairCount));
+  }
+  // ── No mask available: legacy full-matrix path ──
   const means = new Float64Array(n);
   for (let m = 0; m < T; m++) { const row = trailRetMatrix[m]; for (let i = 0; i < n; i++) means[i] += row[i]; }
   for (let i = 0; i < n; i++) means[i] /= T;
@@ -2141,9 +2175,7 @@ function shrunkEmpiricalCorr(trailRetMatrix, n) {
   }
   const sd = new Float64Array(n);
   for (let i = 0; i < n; i++) sd[i] = Math.sqrt(cov[i][i] / T);
-  const corr = [];
   for (let i = 0; i < n; i++) {
-    corr[i] = new Array(n);
     for (let j = 0; j < n; j++) {
       if (i === j) { corr[i][j] = 1; continue; }
       const denom = sd[i] * sd[j];
@@ -4507,7 +4539,6 @@ export default function App() {
     // Instead, we prepare the raw score arrays and retrain periodically in the loop.
     let btHmmAllScores = null, btHmmAllDates = null, btHmmDateToIdx = {};
     let btHmmModel = null, btHmmEnsembleMap = {}; // date → ensemble probs
-    let lastHmmBuildDate = null;
     if (historicalRegimes) {
       try {
         const regEntries = Object.entries(historicalRegimes).sort((a, b) => a[0].localeCompare(b[0]));
@@ -4551,7 +4582,17 @@ export default function App() {
     // IndexedDB has no practical limit. Cache key includes symbol list hash + date range.
     const CACHE_DB_NAME = "portfolio_optimizer_cache";
     const CACHE_STORE = "histData";
-    const CACHE_KEY = `hist_daily_2005_2025_v2_${allSymbols.length}`;
+    // Key on a CONTENT hash of the symbol list (not just its length — a different
+    // list of the same size must not collide), plus a 7-day TTL so a partially
+    // failed fetch can't poison results indefinitely.
+    const symHash = (() => {
+      const s = [...allSymbols].sort().join(",");
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+      return h.toString(36);
+    })();
+    const CACHE_KEY = `hist_daily_2005_2025_v3_${allSymbols.length}_${symHash}`;
+    const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
 
     const openCacheDB = () => new Promise((resolve, reject) => {
       const req = indexedDB.open(CACHE_DB_NAME, 1);
@@ -4579,13 +4620,18 @@ export default function App() {
 
     let histData = {};
     let usedCache = false;
+    let fetchErrorSymbols = [];
     try {
       const cacheDB = await openCacheDB();
       const cached = await getCached(cacheDB);
-      if (cached && Object.keys(cached).length >= allSymbols.length * 0.8) {
+      // Accept cache only when fresh (TTL) and reasonably complete; support the
+      // wrapped {ts, data} format (legacy unwrapped caches are ignored → refetch)
+      const cachedData = cached?.ts && (Date.now() - cached.ts) < CACHE_TTL_MS ? cached.data : null;
+      if (cachedData && Object.keys(cachedData).length >= allSymbols.length * 0.8) {
         // Cache hit — skip API calls entirely
-        histData = cached;
+        histData = cachedData;
         usedCache = true;
+        fetchErrorSymbols = cached.errors || [];
         setBtProgress(`Loaded ${Object.keys(histData).length} symbols from cache (instant)`);
       } else {
         // Cache miss — fetch from API and store
@@ -4596,11 +4642,16 @@ export default function App() {
           const resp = await fetch(`/api/history?symbols=${batch.join(",")}&start=2005-01-01&end=2025-12-31&interval=1d`);
           const json = await resp.json();
           if (json.data) Object.assign(histData, json.data);
+          // Surface per-symbol fetch failures instead of dropping them silently
+          if (Array.isArray(json.errors) && json.errors.length) {
+            fetchErrorSymbols.push(...json.errors.map(e => e.symbol || e));
+          }
         }
-        // Store in IndexedDB for next run
+        if (fetchErrorSymbols.length) console.warn(`Backtest: ${fetchErrorSymbols.length} symbols failed to fetch:`, fetchErrorSymbols.slice(0, 20));
+        // Store in IndexedDB for next run (wrapped with timestamp for TTL)
         if (Object.keys(histData).length > 10) {
           setBtProgress(`Caching ${Object.keys(histData).length} symbols for instant future runs...`);
-          setCache(cacheDB, histData);
+          setCache(cacheDB, { ts: Date.now(), errors: fetchErrorSymbols, data: histData });
         }
       }
     } catch (e) {
@@ -4682,8 +4733,45 @@ export default function App() {
     // Each evaluation only uses data up to 12 months before the current month.
     // The model is rebuilt periodically (every 12 months) for efficiency.
     let regimeDurModel = null;
-    let lastModelBuildDate = null;
+    let lastModelBuildAbsM = null; // absolute month index of last model rebuild
+    let lastHmmBuildAbsM = null;   // absolute month index of last HMM retrain
     let adaptiveFactorWeights = null; // rolling IC-based factor weights
+
+    // ── Monthly regime key index (historicalRegimes is keyed YYYY-MM) ──
+    // Several helpers were previously fed DAILY date keys against this MONTHLY map,
+    // silently returning undefined and disabling the feature. All monthly lookups
+    // now go through these.
+    const regMonthKeys = historicalRegimes ? Object.keys(historicalRegimes).sort() : [];
+    const regMonthToIdx = {}; regMonthKeys.forEach((k, i) => { regMonthToIdx[k] = i; });
+    const mkOf = (absM) => `${Math.floor(absM / 12)}-${String((absM % 12) + 1).padStart(2, "0")}`;
+
+    // ── Monthly SPY return shim for the regime-duration model ──
+    // buildRegimeDurationModel computes forward SPY returns per MONTH; give it a
+    // monthly-keyed series (index-bounded by its cutoff, so no leakage).
+    const spyMonthlyShim = {};
+    { let curMk = null, acc = 1;
+      for (const d of sortedDates) {
+        const r = returnsByDateSym[d]?.SPY;
+        if (!r) continue;
+        const mk = d.slice(0, 7);
+        if (curMk && mk !== curMk) { spyMonthlyShim[curMk] = { SPY: { ret: acc - 1 } }; acc = 1; }
+        curMk = mk; acc *= (1 + r.ret);
+      }
+      if (curMk) spyMonthlyShim[curMk] = { SPY: { ret: acc - 1 } };
+    }
+
+    // ── Point-in-time universe helpers ──
+    // Stocks must be members of THAT year's S&P roster (not today's) and past their
+    // IPO year. NOTE: rosters only contain names that still exist in the data source —
+    // delisted casualties (Lehman, WaMu, ...) are absent, so residual survivorship
+    // bias remains and is disclosed in the results.
+    const etfSet = new Set(ETF_DB.map(e => e.t));
+
+    // ── Full daily series for honest metrics ──
+    // The chart curve is sampled (every 5th day + month-ends), which understates
+    // true max drawdown and distorts vol/beta estimates. Keep complete daily values
+    // for all metric computation; the sampled curve remains chart-only.
+    const dailyDates = [], dailyOpt = [], dailySpy = [], dailyBal = [];
 
     // ── Drawdown control state ──
     let ddPeak = startCash; // rolling portfolio peak value
@@ -4692,7 +4780,54 @@ export default function App() {
     let ddRecoveryMonths = 0; // months since drawdown ended (for gradual re-entry)
     let ddEquityScale = 1.0; // current equity scaling factor (1.0 = no reduction)
     let ddBaseAlloc = null; // ORIGINAL allocation from optimizer (before drawdown scaling)
+    let ddAppliedScale = 1.0; // last equity scale actually TRADED to (stepped, costed)
     const drawdownEvents = []; // track drawdown events for results
+    let overlayTxCost = 0, overlayTaxPaid = 0; // running totals for the DD/CPPI overlay
+
+    // ── Costed allocation shift for the daily drawdown/CPPI overlay ──
+    // Previously the overlay rewrote optAlloc daily with ZERO transaction costs,
+    // ZERO taxes, and no basis updates — free crash protection. Every overlay trade
+    // now pays spread+impact and realizes gains/losses against tracked cost basis
+    // (losses feed the carryover, like the main rebalance path).
+    const applyCostedShift = (targetAlloc, dateKey2, dayData2, mIdx2) => {
+      const txc = computeTransactionCosts(optAlloc, targetAlloc, optValue, etfDbMap);
+      let stG = 0, ltG = 0, loss = 0;
+      const allSyms = new Set([...Object.keys(optAlloc), ...Object.keys(targetAlloc)]);
+      for (const sym of allSyms) {
+        const oldWt = optAlloc[sym] || 0;
+        const newWt = targetAlloc[sym] || 0;
+        if (newWt < oldWt - 0.002 && oldWt > 0) {
+          // Sell: realize G/L on the sold fraction against tracked basis
+          const proportionSold = Math.min(1, (oldWt - newWt) / oldWt);
+          const proceeds = (oldWt - newWt) * optValue;
+          const basisSold = (costBasisMap[sym] || 0) * proportionSold;
+          const gl = proceeds - basisSold;
+          const estKey = posEstablishedMap[sym];
+          const holdDays = estKey ? (mIdx2 - (dateToIdx[estKey] || 0)) : 0;
+          if (gl > 0) { if (holdDays >= 252) ltG += gl; else stG += gl; }
+          else loss += -gl;
+          costBasisMap[sym] = (costBasisMap[sym] || 0) * (1 - proportionSold);
+          sharesMap[sym] = (sharesMap[sym] || 0) * (1 - proportionSold);
+        } else if (newWt > oldWt + 0.002) {
+          // Buy: new dollars at today's close become basis
+          const addedDollars = (newWt - oldWt) * optValue;
+          const close = dayData2[sym]?.close || 0;
+          costBasisMap[sym] = (costBasisMap[sym] || 0) + addedDollars;
+          if (close > 0) sharesMap[sym] = (sharesMap[sym] || 0) + addedDollars / close;
+          if (!posEstablishedMap[sym]) posEstablishedMap[sym] = dateKey2;
+        }
+      }
+      // Losses offset ST gains first, then LT, then feed the carryover
+      let avail = loss + lossCarryover;
+      const stOff = Math.min(avail, stG); avail -= stOff;
+      const ltOff = Math.min(avail, ltG); avail -= ltOff;
+      lossCarryover = avail;
+      const shiftTax = (stG - stOff) * (btTaxRates.st / 100) + (ltG - ltOff) * (btTaxRates.lt / 100);
+      optValue -= txc.totalCostDollars + shiftTax;
+      totalTaxPaid += shiftTax; annualTaxSpent += shiftTax;
+      overlayTxCost += txc.totalCostDollars; overlayTaxPaid += shiftTax;
+      optAlloc = { ...targetAlloc };
+    };
 
     // ── Walk-forward trailing window size ──
     // Walk-forward uses stricter rolling window (48 months) for more robust out-of-sample estimates
@@ -4703,34 +4838,67 @@ export default function App() {
     for (let mi = 0; mi < simDates.length; mi++) {
       const dateKey = simDates[mi];
       const mIdx = dateToIdx[dateKey];
-      const monthKey = dateToMonth(dateKey); // YYYY-MM for regime lookup
+      const monthKey = dateToMonth(dateKey); // YYYY-MM (calendar bookkeeping)
       const mYear = parseInt(dateKey.slice(0, 4));
       const mMonth = parseInt(dateKey.slice(5, 7)) - 1;
+      const curAbsM = mYear * 12 + mMonth; // absolute month index (0-based months)
+      // ── Look-ahead guard: regime entries for month M are scored from FRED data
+      // as of the 28th of M (api/regime.js) — consuming them intra-month M would be
+      // look-ahead of up to ~27 days. Use the PRIOR month's entry, which is fully
+      // observable by day 1 of month M.
+      const regimeMonthKey = mkOf(curAbsM - 1);
       const dayData = returnsByDateSym[dateKey] || {};
+      // Daily cash yield: idle cash (weights summing < 1) accrues the risk-free rate
+      const cashRFPct = historicalRegimes?.[regimeMonthKey]?.dgs10 ?? RF; // percent units (DGS10/RF)
+      const dailyCashRet = Math.max(0, cashRFPct) / 100 / TRADING_DAYS_PER_YEAR;
       // Declare regime variables BEFORE the try block so they're available throughout
       let btRegime = null, btState5 = null, btRegimeScore = null, btAcceleration = null;
       let btDuration = 0, btTransition = null, regimeChanged = false;
       try {
 
-      // Step 1: Apply daily returns
+      // Step 1: Apply daily returns — weights DRIFT with prices (buy-and-hold between
+      // trades, not a free daily-rebalanced constant mix), and idle cash accrues the
+      // risk-free rate. The drawdown base drifts identically so overlay scaling
+      // always applies to real, drifted weights.
       if (Object.keys(optAlloc).length > 0) {
-        let optDayRet = 0;
+        const investedWt = Object.values(optAlloc).reduce((s, w) => s + w, 0);
+        let optDayRet = Math.max(0, 1 - investedWt) * dailyCashRet;
         for (const [sym, wt] of Object.entries(optAlloc)) {
           const md = dayData[sym];
           if (md) optDayRet += wt * md.ret;
         }
         optValue *= (1 + optDayRet);
+        if (optDayRet > -0.99) {
+          for (const sym of Object.keys(optAlloc)) {
+            const r = dayData[sym]?.ret ?? 0;
+            optAlloc[sym] = optAlloc[sym] * (1 + r) / (1 + optDayRet);
+          }
+          if (ddBaseAlloc) {
+            const baseInvested = Object.values(ddBaseAlloc).reduce((s, w) => s + w, 0);
+            let baseRet = Math.max(0, 1 - baseInvested) * dailyCashRet;
+            for (const [sym, wt] of Object.entries(ddBaseAlloc)) baseRet += wt * (dayData[sym]?.ret ?? 0);
+            if (baseRet > -0.99) {
+              for (const sym of Object.keys(ddBaseAlloc)) {
+                ddBaseAlloc[sym] = ddBaseAlloc[sym] * (1 + (dayData[sym]?.ret ?? 0)) / (1 + baseRet);
+              }
+            }
+          }
+        }
       }
       const spyMd = dayData["SPY"];
       if (spyMd) spyValue *= (1 + spyMd.ret);
-      bal60Value *= (1 + 0.6 * (dayData["VTI"]?.ret || 0) + 0.4 * (dayData["BND"]?.ret || 0));
+      // 60/40 benchmark: BND didn't exist until Apr 2007 — fall back to AGG (2003)
+      // so the bond sleeve isn't a fake 0% for the 2006 leg
+      bal60Value *= (1 + 0.6 * (dayData["VTI"]?.ret || 0) + 0.4 * (dayData["BND"]?.ret ?? dayData["AGG"]?.ret ?? 0));
       // ── Update position peak prices for trailing stop detection ──
       for (const sym of Object.keys(optAlloc)) {
         const closePrice = dayData[sym]?.close;
         if (closePrice) positionPeakPrice[sym] = Math.max(positionPeakPrice[sym] || 0, closePrice);
       }
+      // ── Full daily series for metrics (DD/vol/beta computed on true daily data) ──
+      dailyDates.push(dateKey); dailyOpt.push(optValue); dailySpy.push(spyValue); dailyBal.push(bal60Value);
       // Record curve at daily granularity (sampled to ~monthly for chart performance)
-      // Always push last trading day of each month + every 5th day for drawdown precision
+      // Always push last trading day of each month + every 5th day for chart size
       const isMonthEnd = mi + 1 >= simDates.length || dateToMonth(simDates[mi + 1]) !== monthKey;
       if (isMonthEnd || mi % 5 === 0) {
         optCurve.push({ date: dateKey, value: optValue });
@@ -4813,34 +4981,47 @@ export default function App() {
         }
         const effEquityScale = Math.min(ddEquityScale, Math.max(0.25, cppiScale));
 
-        // Apply the equity scale to the BASE allocation (not the already-scaled one)
-        if (effEquityScale < 1.0 && ddBaseAlloc) {
-          const scaledAlloc = {};
-          let equityReduced = 0;
-          for (const [sym, wt] of Object.entries(ddBaseAlloc)) {
-            const db = etfDbMap[sym];
-            const ms = MACRO_SECTOR_MAP[db?.c] || "other";
-            if (ms === "fixed-income" || ms === "alternatives") {
-              scaledAlloc[sym] = wt;
-            } else {
-              scaledAlloc[sym] = wt * effEquityScale;
-              equityReduced += wt * (1 - effEquityScale);
+        // ── STEPPED, COSTED application: only trade when the target scale has moved
+        // ≥5% from the last TRADED scale (or on full recovery). Each step goes
+        // through applyCostedShift → real spread/impact costs + realized G/L taxes.
+        // (Previously this rewrote optAlloc every day for free.)
+        const scaleMoved = Math.abs(effEquityScale - ddAppliedScale) >= 0.05 ||
+          (effEquityScale >= 1.0 && ddAppliedScale < 1.0);
+        if (scaleMoved && ddBaseAlloc) {
+          if (effEquityScale < 1.0) {
+            const scaledAlloc = {};
+            let equityReduced = 0;
+            for (const [sym, wt] of Object.entries(ddBaseAlloc)) {
+              const db = etfDbMap[sym];
+              const ms = MACRO_SECTOR_MAP[db?.c] || "other";
+              if (ms === "fixed-income" || ms === "alternatives") {
+                scaledAlloc[sym] = wt;
+              } else {
+                scaledAlloc[sym] = wt * effEquityScale;
+                equityReduced += wt * (1 - effEquityScale);
+              }
             }
+            // Shift freed equity to the largest bond holding (or BND)
+            const bondHolding = Object.keys(scaledAlloc).find(s => {
+              const db = etfDbMap[s];
+              return MACRO_SECTOR_MAP[db?.c] === "fixed-income";
+            });
+            if (bondHolding) scaledAlloc[bondHolding] = (scaledAlloc[bondHolding] || 0) + equityReduced;
+            else if (equityReduced > 0.01) {
+              // Prefer a bond ETF that actually trades today (BND only exists from Apr 2007)
+              const bondDest = dayData["BND"] ? "BND" : dayData["AGG"] ? "AGG" : "IEF";
+              scaledAlloc[bondDest] = (scaledAlloc[bondDest] || 0) + equityReduced;
+            }
+            // Re-normalize
+            const totalWt = Object.values(scaledAlloc).reduce((s, w) => s + w, 0);
+            if (totalWt > 0) for (const sym of Object.keys(scaledAlloc)) scaledAlloc[sym] /= totalWt;
+            applyCostedShift(scaledAlloc, dateKey, dayData, mIdx);
+            ddAppliedScale = effEquityScale;
+          } else {
+            // Fully recovered — trade back to the (drifted) base allocation, costed
+            applyCostedShift({ ...ddBaseAlloc }, dateKey, dayData, mIdx);
+            ddAppliedScale = 1.0;
           }
-          // Shift freed equity to the largest bond holding (or BND)
-          const bondHolding = Object.keys(scaledAlloc).find(s => {
-            const db = etfDbMap[s];
-            return MACRO_SECTOR_MAP[db?.c] === "fixed-income";
-          });
-          if (bondHolding) scaledAlloc[bondHolding] = (scaledAlloc[bondHolding] || 0) + equityReduced;
-          else if (equityReduced > 0.01) scaledAlloc["BND"] = (scaledAlloc["BND"] || 0) + equityReduced;
-          // Re-normalize
-          const totalWt = Object.values(scaledAlloc).reduce((s, w) => s + w, 0);
-          if (totalWt > 0) for (const sym of Object.keys(scaledAlloc)) scaledAlloc[sym] /= totalWt;
-          optAlloc = scaledAlloc;
-        } else if (effEquityScale >= 1.0 && ddBaseAlloc) {
-          // Fully recovered — restore original allocation
-          optAlloc = { ...ddBaseAlloc };
         }
       }
 
@@ -4849,18 +5030,18 @@ export default function App() {
       const isFirstAllocation = prevTickers.length === 0;
       const monthsSinceRebal = lastRebalanceMonth ? (mIdx - dateToIdx[lastRebalanceMonth]) : 999;
       // btRegime, btState5, etc. declared before try block (above) to avoid TDZ
-      // Dynamic risk-free rate from 10Y Treasury yield at this date
-      const dynamicRF = historicalRegimes?.[monthKey]?.dgs10 ?? RF;
+      // Dynamic risk-free rate from 10Y Treasury yield — lagged month (look-ahead guard)
+      const dynamicRF = historicalRegimes?.[regimeMonthKey]?.dgs10 ?? RF;
       if (useRegime && historicalRegimes) {
-        const regData = historicalRegimes[monthKey];
+        const regData = historicalRegimes[regimeMonthKey];
         if (regData) {
           btState5 = regData.state5 || null; btRegimeScore = regData.score; btAcceleration = regData.acceleration ?? null;
           const regime3 = regData.regime; btDuration = 1;
-          // Walk back by MONTH (regime data is monthly) to compute duration
-          { const curMonthNum = mYear * 12 + mMonth;
+          // Walk back by MONTH (regime data is monthly) from the LAGGED month
+          { const curMonthNum = curAbsM - 1; // regimeMonthKey's absolute month
             for (let lb = 1; lb <= 36; lb++) {
               const prevM = curMonthNum - lb;
-              const prevMk = `${Math.floor(prevM / 12)}-${String(prevM % 12 + 1).padStart(2, "0")}`;
+              const prevMk = mkOf(prevM);
               const prev = historicalRegimes[prevMk];
               if (prev && prev.regime === regime3) btDuration++; else { if (prev) btTransition = `${prev.regime}→${regime3}`; break; }
             }
@@ -4904,16 +5085,39 @@ export default function App() {
             }
           }
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
-            threeStage: computeThreeStageCtx(historicalRegimes, sortedDates, mIdx),
+            // MONTHLY keys + lagged month index (was fed daily keys → always null)
+            threeStage: computeThreeStageCtx(historicalRegimes, regMonthKeys, regMonthToIdx[regimeMonthKey] ?? -1),
             volSignal: regData?.volSignal || 0,
             vixInversion: regData?.vixInversion || false,
             arShift: btArShift };
-          if (mi > 0) { const prevReg = historicalRegimes[simDates[mi - 1]]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
+          // Regime change: compare the lagged month's regime to the month before it
+          // (was comparing against a DAILY key → always undefined → gate never fired)
+          { const prevReg = historicalRegimes[mkOf(curAbsM - 2)]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
+
+          // ── Causal HMM inference for the lagged month ──
+          // The ensemble map only ever covered months ≤ (training cutoff − 3), so a
+          // current-month lookup NEVER hit — the fusion below was inert. Fix: run the
+          // forward-only filter (causal) through the lagged month using the trained
+          // (≥3-months-stale) model. Model params are stale; data is strictly past.
+          if (btHmmModel && btHmmAllScores && !btHmmEnsembleMap[regimeMonthKey]) {
+            const infIdx = btHmmDateToIdx[regimeMonthKey];
+            if (infIdx != null && infIdx >= 12) {
+              try {
+                const scoresToNow = btHmmAllScores.slice(0, infIdx + 1);
+                const filteredNow = hmmFilter(scoresToNow, btHmmModel);
+                const cpNow = runBOCPD(scoresToNow);
+                const ensNow = runEnsemble(filteredNow, cpNow);
+                btHmmEnsembleMap[regimeMonthKey] = ensNow[ensNow.length - 1];
+              } catch { /* inference failed — fusion simply skipped this month */ }
+            }
+          }
 
           // ── HMM ensemble overlay (conservative fusion, same logic as live optimizer) ──
-          // Uses incrementally-trained HMM — only past data, no look-ahead
-          if (btHmmEnsembleMap[monthKey]) {
-              const ensProbs = btHmmEnsembleMap[monthKey];
+          // Uses incrementally-trained HMM — only past data, no look-ahead.
+          // Lagged month: the ensemble estimate for month M is built from the
+          // month-M regime score (28th-of-M data) — observable only from M+1.
+          if (btHmmEnsembleMap[regimeMonthKey]) {
+              const ensProbs = btHmmEnsembleMap[regimeMonthKey];
               const hmmState5 = hmmToState5(ensProbs);
               const fredState5 = btRegime.state5;
               const riskOrder = ["strong_risk_off", "mild_risk_off", "neutral", "mild_risk_on", "strong_risk_on"];
@@ -4929,9 +5133,8 @@ export default function App() {
               }
               btRegime.hmmState5 = hmmState5;
               btRegime.hmmProbs = ensProbs;
-              // Detect regime change from HMM perspective too (compare current month to prev month)
-              const curMonthNum2 = mYear * 12 + mMonth;
-              const prevMonthKey = `${Math.floor((curMonthNum2 - 1) / 12)}-${String((curMonthNum2 - 1) % 12 + 1).padStart(2, "0")}`;
+              // Detect regime change from HMM perspective too (lagged month vs its prior)
+              const prevMonthKey = mkOf(curAbsM - 2);
               if (btHmmEnsembleMap[prevMonthKey]) {
                 const prevHmmState = hmmToState5(btHmmEnsembleMap[prevMonthKey]);
                 if (prevHmmState !== hmmState5) regimeChanged = true;
@@ -4950,7 +5153,7 @@ export default function App() {
       let shouldEvaluate = isFirstAllocation;
 
       if (!shouldEvaluate && isNewMonth && useRegime && historicalRegimes) {
-        const regData = historicalRegimes[monthKey];
+        const regData = historicalRegimes[regimeMonthKey]; // lagged (look-ahead guard)
 
         // ── Gate 1: Regime change — only if persistent (not a 1-month flicker) ──
         // Require the regime to have been different for at least 2 consecutive months
@@ -4959,9 +5162,8 @@ export default function App() {
 
         // ── Gate 2: Three-stage pattern prediction — only high confidence ──
         if (!shouldEvaluate && !isFirstAllocation) {
-          const regEntries = Object.keys(historicalRegimes).sort();
-          const regMonthIdx = regEntries.indexOf(monthKey);
-          const threeStagePredict = regMonthIdx >= 0 ? computeThreeStagePredict(historicalRegimes, regEntries, regMonthIdx) : null;
+          const regMonthIdx = regMonthToIdx[regimeMonthKey] ?? -1; // lagged month index
+          const threeStagePredict = regMonthIdx >= 0 ? computeThreeStagePredict(historicalRegimes, regMonthKeys, regMonthIdx) : null;
           // Raised confidence threshold from 55% to 65% for daily mode
           if (threeStagePredict?.shouldTrigger && threeStagePredict.confidence >= 0.90 && monthsSinceRebal >= taxCooldownDays) {
             shouldEvaluate = true;
@@ -4977,7 +5179,7 @@ export default function App() {
           if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.8) signalCount++;
 
           // Signal 2: Volatility regime shift (only dramatic transitions)
-          { const prevMk = `${Math.floor((mYear * 12 + mMonth - 1) / 12)}-${String((mYear * 12 + mMonth - 1) % 12 + 1).padStart(2, "0")}`;
+          { const prevMk = mkOf(curAbsM - 2); // month before the lagged regime month
             const prevReg = historicalRegimes[prevMk];
             const volShift = regData?.volRegime !== prevReg?.volRegime;
             const meaningfulShift = volShift && (
@@ -5064,8 +5266,8 @@ export default function App() {
       }
       const momDecay = Math.max(0.02, Math.min(0.12, 0.13 - trailingSPYVol * 0.003));
 
-      // ── Adaptive trailing window (in trading days) ──
-      const regData = historicalRegimes?.[monthKey];
+      // ── Adaptive trailing window (in trading days) — lagged month (look-ahead guard) ──
+      const regData = historicalRegimes?.[regimeMonthKey];
       const volRegime = regData?.volRegime || "normal";
       const adaptiveTrailDays = walkForward
         ? (volRegime === "normal" || volRegime === "compression" ? 504 : 1008) // 24mo or 48mo in trading days
@@ -5181,9 +5383,19 @@ export default function App() {
         }
       }
 
+      // ── Point-in-time stock membership (survivorship mitigation) ──
+      // Stocks must be in THAT year's S&P roster and past their IPO year — today's
+      // membership must not select 2015's winners in 2007. (Residual bias remains:
+      // delisted-to-zero names have no data at all and can never be candidates.)
+      const pitStocks = new Set(getStocksForYear(mYear));
       const allCandidates = Object.values(trailingStats).filter(s => {
         // SPY allowed as a position — the optimizer can hold it and tilt around it
         if (s.v <= 0 || s.r <= returnFloor) return false;
+        if (!etfSet.has(s.t)) {
+          // Individual stock: enforce point-in-time roster + IPO-year gate
+          if (!pitStocks.has(s.t)) return false;
+          if (s.ipo && s.ipo > mYear) return false;
+        }
         return true;
       });
 
@@ -5243,22 +5455,26 @@ export default function App() {
       const btIterations = 2000;
       setBtProgress(`${dateKey}: ${isBullish ? "bull" : "bear/neutral"} → ${allCandidates.length}→${candidates.length} candidates, ${btIterations} iterations`);
 
-      // Rebuild regime-duration model periodically (every 12 months) using only PAST data
-      // This prevents forward-looking bias: the model at 2008-10 only knows data up to 2007-10
-      if (historicalRegimes && (!lastModelBuildDate || mIdx - dateToIdx[lastModelBuildDate] >= 12)) {
-        const cutoffIdx = Math.max(0, mIdx - 6); // 6-month gap to prevent leakage
-        if (cutoffIdx > 24) {
-          regimeDurModel = buildRegimeDurationModel(historicalRegimes, sortedDates, returnsByDateSym, cutoffIdx);
-          lastModelBuildDate = monthKey;
-          // Also recompute adaptive factor weights (rolling IC)
+      // Rebuild regime-duration model periodically (every 12 MONTHS) using only PAST data
+      // This prevents forward-looking bias: the model at 2008-10 only knows data up to 2008-04.
+      // (Cadence and cutoff previously mixed daily indices with monthly keys — the model
+      // was silently empty and rebuilt on every evaluation.)
+      if (historicalRegimes && (lastModelBuildAbsM == null || curAbsM - lastModelBuildAbsM >= 12)) {
+        const regIdx = regMonthToIdx[regimeMonthKey];
+        const regCutoff = regIdx != null ? Math.max(0, regIdx - 6) : 0; // 6-MONTH gap
+        if (regCutoff > 24) {
+          regimeDurModel = buildRegimeDurationModel(historicalRegimes, regMonthKeys, spyMonthlyShim, regCutoff);
+          lastModelBuildAbsM = curAbsM;
+          // Also recompute adaptive factor weights (rolling IC) on the same cadence
           adaptiveFactorWeights = computeAdaptiveFactorWeights(returnsByDateSym, sortedDates, mIdx, etfDbMap, 36);
         }
       }
 
-      // ── Incremental HMM training: retrain every 12 months on PAST data only ──
+      // ── Incremental HMM training: retrain every 12 MONTHS on PAST data only ──
       // At 2008-01, the HMM has only seen data up to 2007-10 (3-month gap).
-      // This prevents any future information from leaking into regime classifications.
-      if (btHmmAllScores && (!lastHmmBuildDate || mIdx - (dateToIdx[lastHmmBuildDate] || 0) >= 12)) {
+      // (Cadence check previously compared a monthly key against a daily-keyed index —
+      // always true — so the HMM retrained on nearly every evaluation.)
+      if (btHmmAllScores && (lastHmmBuildAbsM == null || curAbsM - lastHmmBuildAbsM >= 12)) {
         const hmmCutoffIdx = btHmmDateToIdx[monthKey];
         if (hmmCutoffIdx != null) {
           const pastCutoff = Math.max(0, hmmCutoffIdx - 3); // 3-month gap to prevent leakage
@@ -5273,7 +5489,7 @@ export default function App() {
               for (let k = 0; k < pastCutoff; k++) {
                 btHmmEnsembleMap[btHmmAllDates[k]] = pastEnsemble[k];
               }
-              lastHmmBuildDate = monthKey;
+              lastHmmBuildAbsM = curAbsM;
             } catch (e) { /* HMM training failed for this window, continue */ }
           }
         }
@@ -5291,17 +5507,23 @@ export default function App() {
       let trailRetMatrix = null;
       {
         const trailDays = Math.min(504, mIdx); // ~2 years of trading days
-        const rows = [];
+        const rows = [], maskRows = [];
         for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
           const row = new Float64Array(candidates.length);
+          const maskRow = new Uint8Array(candidates.length);
           let hasData = false;
           for (let ci = 0; ci < candidates.length; ci++) {
             const e = returnsByDateSym[sortedDates[td]]?.[candidates[ci].t];
-            if (e) { row[ci] = e.ret; hasData = true; }
+            if (e) { row[ci] = e.ret; maskRow[ci] = 1; hasData = true; }
           }
-          if (hasData) rows.push(row);
+          if (hasData) { rows.push(row); maskRows.push(maskRow); }
         }
-        if (rows.length >= 60) trailRetMatrix = rows; // need at least ~3 months of daily data
+        if (rows.length >= 60) {
+          trailRetMatrix = rows; // need at least ~3 months of daily data
+          // Validity mask: missing days are EXCLUDED from correlation estimation
+          // (zero-filling faked calm 0% days for late-inception assets)
+          trailRetMatrix.mask = maskRows;
+        }
       }
 
       let warmWeights = null;
@@ -5558,19 +5780,26 @@ export default function App() {
             newCostBasis[ticker] = (costBasisMap[ticker] || 0) + addedDollars;
             newShares[ticker] = totalShares;
             newCostPerShare[ticker] = totalShares > 0 ? newCostBasis[ticker] / totalShares : closePrice;
-            newPosEstablished[ticker] = dateKey; // reset establishment date (new lot at higher cost)
+            // FIFO (IRS default): partial sells consume the OLDEST lot first, so the
+            // position keeps its original establishment date on adds. Resetting the
+            // clock here over-classified later sales as short-term.
+            newPosEstablished[ticker] = posEstablishedMap[ticker] || dateKey;
           }
         }
 
         optAlloc = newAlloc; optValue = postTaxValue; totalTaxPaid += estTC; totalTaxSaved += taxSaved; totalRebalances++; lastRebalanceMonth = dateKey;
         annualTaxSpent += estTC; // track against annual tax budget
         ddBaseAlloc = { ...newAlloc }; // reset drawdown base to fresh optimizer output
+        ddAppliedScale = 1.0; // fresh allocation IS the traded state (any DD scale re-applies via costed shift)
         ddPeak = Math.max(ddPeak, optValue); // update peak after rebalance
-        // Reset position peak prices: keep peaks for held positions, set current price for new ones
+        // Reset position peak prices: keep peaks for held positions; NEW positions
+        // start their peak at today's close (a stale peak from an earlier holding
+        // period would fire the trailing stop spuriously right after re-entry)
         const newPeaks = {};
         for (const sym of Object.keys(newAlloc)) {
           const currentClose = dayData[sym]?.close;
-          newPeaks[sym] = Math.max(positionPeakPrice[sym] || 0, currentClose || 0);
+          const isNewPos = (prevAlloc[sym] || 0) <= 0.005;
+          newPeaks[sym] = isNewPos ? (currentClose || 0) : Math.max(positionPeakPrice[sym] || 0, currentClose || 0);
         }
         positionPeakPrice = newPeaks;
         costBasisMap = newCostBasis; sharesMap = newShares; costPerShareMap = newCostPerShare; posEstablishedMap = newPosEstablished;
@@ -5755,29 +5984,27 @@ export default function App() {
     const spyCAGR = (Math.pow(spyValue / startCash, 1 / numYears) - 1) * 100;
     const bal60CAGR = (Math.pow(bal60Value / startCash, 1 / numYears) - 1) * 100;
 
-    // Max drawdown
-    const calcDD = (curve) => {
+    // ── All risk metrics computed on the FULL DAILY series ──
+    // The chart curve is sampled (every 5th day + month-ends): computing DD/vol on
+    // it missed intra-window troughs (understating max drawdown for every series)
+    // and mis-scaled variance via heterogeneous spacing.
+    const dVol = (vals) => {
+      if (vals.length < 3) return 0;
+      let s = 0, sq = 0;
+      for (let i = 1; i < vals.length; i++) { const r = vals[i] / vals[i - 1] - 1; s += r; sq += r * r; }
+      const nR = vals.length - 1;
+      const v = Math.max(0, sq / (nR - 1) - (s / nR) * (s / nR) * nR / (nR - 1));
+      return Math.sqrt(v) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
+    };
+    const dDD = (vals) => {
       let peak = 0, maxDD = 0;
-      for (const pt of curve) { peak = Math.max(peak, pt.value); maxDD = Math.max(maxDD, (peak - pt.value) / peak); }
+      for (const v of vals) { peak = Math.max(peak, v); if (peak > 0) maxDD = Math.max(maxDD, (peak - v) / peak); }
       return maxDD * 100;
     };
 
-    // Volatility from curve returns (auto-detect frequency from data spacing)
-    const calcVol = (curve) => {
-      const rets = [];
-      for (let i = 1; i < curve.length; i++) rets.push(curve[i].value / curve[i-1].value - 1);
-      if (rets.length < 2) return 0;
-      const avg = rets.reduce((s, r) => s + r, 0) / rets.length;
-      const v = rets.reduce((s, r) => s + (r - avg) ** 2, 0) / (rets.length - 1);
-      // Estimate periods per year from data density
-      const numYears = curve.length > 1 ? (new Date(curve[curve.length-1].date) - new Date(curve[0].date)) / (365.25 * 86400000) : 1;
-      const periodsPerYear = numYears > 0 ? rets.length / numYears : 12;
-      return Math.sqrt(v) * Math.sqrt(periodsPerYear) * 100;
-    };
-
-    const optVol = calcVol(optCurve);
-    const spyVol = calcVol(spyCurve);
-    const bal60Vol = calcVol(bal60Curve);
+    const optVol = dVol(dailyOpt);
+    const spyVol = dVol(dailySpy);
+    const bal60Vol = dVol(dailyBal);
 
     // ── 80/20 In-Sample / Out-of-Sample Split ──
     const OOS_FRACTION = oosFraction;
@@ -5788,35 +6015,26 @@ export default function App() {
     // Tag annual results
     for (const ar of annualResults) ar.isOOS = ar.year >= splitYear;
 
-    // Helper: compute metrics for a curve segment
-    const segmentMetrics = (curve, startVal, numYrs) => {
-      if (!curve.length || numYrs <= 0) return { final: startVal, cagr: 0, vol: 0, dd: 0, sharpe: 0 };
-      const endVal = curve[curve.length - 1].value;
+    // Helper: compute metrics for a DAILY value segment
+    const segmentMetrics = (vals, startVal, numYrs) => {
+      if (!vals.length || numYrs <= 0) return { final: startVal, cagr: 0, vol: 0, dd: 0, sharpe: 0 };
+      const endVal = vals[vals.length - 1];
       const cagr = (Math.pow(Math.max(0, endVal) / Math.max(1, startVal), 1 / numYrs) - 1) * 100;
-      const vol = calcVol(curve);
-      const dd = calcDD(curve);
+      const withStart = [startVal, ...vals]; // continuity across the split boundary
+      const vol = dVol(withStart);
+      const dd = dDD(withStart);
       const sharpe = vol > 0 ? (cagr - RF) / vol : 0;
       return { final: endVal, cagr, vol, dd, sharpe };
     };
 
-    // Split curves at boundary
-    const isOptCurve = optCurve.filter(p => p.date < splitDate);
-    const oosOptCurve = optCurve.filter(p => p.date >= splitDate);
-    const isSpyCurve = spyCurve.filter(p => p.date < splitDate);
-    const oosSpyCurve = spyCurve.filter(p => p.date >= splitDate);
-    const isBal60Curve = bal60Curve.filter(p => p.date < splitDate);
-    const oosBal60Curve = bal60Curve.filter(p => p.date >= splitDate);
-
+    // Split the daily series at the boundary
+    const splitDayIdx = dailyDates.findIndex(d => d >= splitDate);
+    const sIdx = splitDayIdx < 0 ? dailyDates.length : splitDayIdx;
     const isYears = splitIdx;
     const oosYears = simYears.length - splitIdx;
-
-    // Prepend the last IS point to OOS curves so vol/dd calculations have a starting reference
-    const lastISopt = isOptCurve.length > 0 ? isOptCurve[isOptCurve.length - 1] : { value: startCash };
-    const lastISspy = isSpyCurve.length > 0 ? isSpyCurve[isSpyCurve.length - 1] : { value: startCash };
-    const lastISbal = isBal60Curve.length > 0 ? isBal60Curve[isBal60Curve.length - 1] : { value: startCash };
-    const oosOptFull = [lastISopt, ...oosOptCurve];
-    const oosSpyFull = [lastISspy, ...oosSpyCurve];
-    const oosBal60Full = [lastISbal, ...oosBal60Curve];
+    const lastISoptVal = sIdx > 0 ? dailyOpt[sIdx - 1] : startCash;
+    const lastISspyVal = sIdx > 0 ? dailySpy[sIdx - 1] : startCash;
+    const lastISbalVal = sIdx > 0 ? dailyBal[sIdx - 1] : startCash;
 
     const oosAnalysis = {
       splitYear,
@@ -5824,30 +6042,29 @@ export default function App() {
       isYears,
       oosYears,
       is: {
-        opt: segmentMetrics(isOptCurve, startCash, isYears),
-        spy: segmentMetrics(isSpyCurve, startCash, isYears),
-        bal60: segmentMetrics(isBal60Curve, startCash, isYears),
+        opt: segmentMetrics(dailyOpt.slice(0, sIdx), startCash, isYears),
+        spy: segmentMetrics(dailySpy.slice(0, sIdx), startCash, isYears),
+        bal60: segmentMetrics(dailyBal.slice(0, sIdx), startCash, isYears),
       },
       oos: {
-        opt: segmentMetrics(oosOptFull, lastISopt.value, oosYears),
-        spy: segmentMetrics(oosSpyFull, lastISspy.value, oosYears),
-        bal60: segmentMetrics(oosBal60Full, lastISbal.value, oosYears),
+        opt: segmentMetrics(dailyOpt.slice(sIdx), lastISoptVal, oosYears),
+        spy: segmentMetrics(dailySpy.slice(sIdx), lastISspyVal, oosYears),
+        bal60: segmentMetrics(dailyBal.slice(sIdx), lastISbalVal, oosYears),
       },
     };
 
     // ── Benchmark-relative statistics vs SPY — the actual mandate is beating the
     // S&P 500, so measure it directly: Jensen's alpha (CAPM), beta, tracking error,
-    // information ratio, and up/down capture from aligned curve returns.
+    // information ratio, and up/down capture — from TRUE DAILY returns.
     const benchStats = (() => {
+      const nPts = Math.min(dailyOpt.length, dailySpy.length);
+      if (nPts < 60) return null;
       const rets = [], bRets = [];
-      const nPts = Math.min(optCurve.length, spyCurve.length);
       for (let i = 1; i < nPts; i++) {
-        rets.push(optCurve[i].value / optCurve[i - 1].value - 1);
-        bRets.push(spyCurve[i].value / spyCurve[i - 1].value - 1);
+        rets.push(dailyOpt[i] / dailyOpt[i - 1] - 1);
+        bRets.push(dailySpy[i] / dailySpy[i - 1] - 1);
       }
-      if (rets.length < 12) return null;
-      const yrs = (new Date(optCurve[nPts - 1].date) - new Date(optCurve[0].date)) / (365.25 * 86400000);
-      const ppy = yrs > 0 ? rets.length / yrs : 12; // periods per year from data density
+      const ppy = TRADING_DAYS_PER_YEAR;
       const mean = a => a.reduce((s, r) => s + r, 0) / a.length;
       const mo = mean(rets), mb = mean(bRets);
       let covOB = 0, varB = 0;
@@ -5877,16 +6094,16 @@ export default function App() {
     setBtResult({
       curves: { opt: optCurve, spy: spyCurve, bal60: bal60Curve },
       summary: {
-        opt: { final: optValue, total: optTotal, cagr: optCAGR, vol: optVol, dd: calcDD(optCurve), sharpe: optVol > 0 ? (optCAGR - RF) / optVol : 0 },
-        spy: { final: spyValue, total: spyTotal, cagr: spyCAGR, vol: spyVol, dd: calcDD(spyCurve), sharpe: spyVol > 0 ? (spyCAGR - RF) / spyVol : 0 },
-        bal60: { final: bal60Value, total: bal60Total, cagr: bal60CAGR, vol: bal60Vol, dd: calcDD(bal60Curve), sharpe: bal60Vol > 0 ? (bal60CAGR - RF) / bal60Vol : 0 },
+        opt: { final: optValue, total: optTotal, cagr: optCAGR, vol: optVol, dd: dDD(dailyOpt), sharpe: optVol > 0 ? (optCAGR - RF) / optVol : 0 },
+        spy: { final: spyValue, total: spyTotal, cagr: spyCAGR, vol: spyVol, dd: dDD(dailySpy), sharpe: spyVol > 0 ? (spyCAGR - RF) / spyVol : 0 },
+        bal60: { final: bal60Value, total: bal60Total, cagr: bal60CAGR, vol: bal60Vol, dd: dDD(dailyBal), sharpe: bal60Vol > 0 ? (bal60CAGR - RF) / bal60Vol : 0 },
       },
       annual: annualResults,
       startCash,
       etfsUsed: available.length,
       oosAnalysis,
       benchmark: benchStats,
-      regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (incremental, no look-ahead)" : "FRED (12-series, 5-state, daily EMA)") : "Proxy (SPY momentum/vol)",
+      regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (1-month lagged, causal, no look-ahead)" : "FRED (12-series, 5-state, 1-month lagged)") : "Proxy (SPY momentum/vol)",
       regimeDurationModel: regimeDurModel ? true : false,
       tax: {
         totalPaid: Math.round(totalTaxPaid),
@@ -5904,6 +6121,20 @@ export default function App() {
         events: drawdownEvents,
         triggerCount: drawdownEvents.filter(e => e.type === "TRIGGER").length,
         recoveryCount: drawdownEvents.filter(e => e.type === "RECOVERED").length,
+        overlayTxCost: Math.round(overlayTxCost),
+        overlayTaxPaid: Math.round(overlayTaxPaid),
+      },
+      dataQuality: {
+        usedCache,
+        fetchErrors: fetchErrorSymbols.length,
+        coverage: allSymbols.length > 0 ? +((available.length / allSymbols.length) * 100).toFixed(0) : 100,
+        // Honest-methodology disclosures shown in the UI
+        notes: [
+          "Regime data lagged 1 month + FRED publication lags (no macro look-ahead)",
+          "Point-in-time S&P rosters by year; residual survivorship: delisted names absent from data source",
+          "Weights drift between trades; DD/CPPI overlay trades pay costs + taxes; idle cash earns 10Y yield",
+          "Risk metrics (DD/vol/beta) computed on full daily series",
+        ],
       },
       walkForward,
       weightingMethod,
@@ -5934,7 +6165,14 @@ export default function App() {
       // Try IndexedDB cache first (same cache as backtest)
       const CACHE_DB_NAME = "portfolio_optimizer_cache";
       const CACHE_STORE = "histData";
-      const CACHE_KEY = `hist_daily_2005_2025_v2_${allSymbols.length}`;
+      // Same content-hashed, TTL-wrapped cache key as the main backtest
+      const symHash = (() => {
+        const s = [...allSymbols].sort().join(",");
+        let h = 5381;
+        for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+        return h.toString(36);
+      })();
+      const CACHE_KEY = `hist_daily_2005_2025_v3_${allSymbols.length}_${symHash}`;
       const cacheDB = await new Promise((resolve, reject) => {
         const req = indexedDB.open(CACHE_DB_NAME, 1);
         req.onupgradeneeded = () => { req.result.createObjectStore(CACHE_STORE); };
@@ -5944,8 +6182,9 @@ export default function App() {
       const cached = await new Promise((resolve) => {
         try { const tx = cacheDB.transaction(CACHE_STORE, "readonly"); const req = tx.objectStore(CACHE_STORE).get(CACHE_KEY); req.onsuccess = () => resolve(req.result || null); req.onerror = () => resolve(null); } catch { resolve(null); }
       });
-      if (cached && Object.keys(cached).length >= allSymbols.length * 0.8) {
-        histData = cached;
+      const cachedData = cached?.ts && (Date.now() - cached.ts) < 7 * 24 * 3600 * 1000 ? cached.data : null;
+      if (cachedData && Object.keys(cachedData).length >= allSymbols.length * 0.8) {
+        histData = cachedData;
         setSimProgress(`Loaded ${Object.keys(histData).length} symbols from cache`);
       } else {
         for (let i = 0; i < allSymbols.length; i += 15) {
@@ -6010,8 +6249,10 @@ export default function App() {
       } catch (e) { /* proceed without regime */ }
     }
 
-    // Build incremental HMM ensemble map for simulation (no look-ahead bias)
-    // Retrain every 12 months using only PAST data, same as backtest
+    // Build CAUSAL HMM ensemble map for simulation (no look-ahead bias):
+    // entry for month i is produced by forward-filtering data ≤ i with a model
+    // trained only on data ≤ (last retrain − 3 months). The old pattern overwrote
+    // every past entry with the newest model — future params leaking backward.
     let simHmmEnsembleMap = {};
     if (simHistRegimes) {
       try {
@@ -6019,17 +6260,19 @@ export default function App() {
         const allScores = entries.map(([, r]) => r.score ?? 0);
         const allDates = entries.map(([d]) => d);
         if (allScores.length > 36) {
-          let lastBuild = -999;
+          let model = null, lastBuild = -999;
           for (let i = 36; i < allScores.length; i++) {
             if (i - lastBuild >= 12) {
-              const pastCutoff = Math.max(0, i - 3);
-              const pastScores = allScores.slice(0, pastCutoff);
-              const model = hmmTrain(pastScores, 25);
-              const filtered = hmmFilter(pastScores, model);
-              const cp = runBOCPD(pastScores);
-              const ensemble = runEnsemble(filtered, cp);
-              for (let k = 0; k < pastCutoff; k++) simHmmEnsembleMap[allDates[k]] = ensemble[k];
+              const pastScores = allScores.slice(0, Math.max(0, i - 3)); // 3-month gap
+              model = hmmTrain(pastScores, 25);
               lastBuild = i;
+            }
+            if (model) {
+              const prefix = allScores.slice(0, i + 1); // data through month i only
+              const filtered = hmmFilter(prefix, model); // forward-only (causal)
+              const cp = runBOCPD(prefix);
+              const ensemble = runEnsemble(filtered, cp);
+              simHmmEnsembleMap[allDates[i]] = ensemble[ensemble.length - 1];
             }
           }
         }
@@ -6067,19 +6310,41 @@ export default function App() {
       let simDDBaseAlloc = null;
 
       for (let mi = 0; mi < simDates.length; mi++) {
-        const monthKey = simDates[mi];
+        const monthKey = simDates[mi]; // NOTE: full DAILY date key (legacy name)
         const mIdx = dateToIdx[monthKey];
         const mYear = parseInt(monthKey.slice(0, 4));
         const mMonth = parseInt(monthKey.slice(5, 7)) - 1;
         const monthData = returnsByDateSym[monthKey] || {};
+        // ── Lagged MONTHLY regime key (simHistRegimes is keyed YYYY-MM; feeding it
+        // daily keys silently disabled every regime gate below, and consuming the
+        // current month would be look-ahead — same fixes as the main backtest)
+        const simAbsM = mYear * 12 + mMonth;
+        const mkOfSim = (a) => `${Math.floor(a / 12)}-${String((a % 12) + 1).padStart(2, "0")}`;
+        const simRegMK = mkOfSim(simAbsM - 1);
+        const simPrevRegMK = mkOfSim(simAbsM - 2);
+        const simCashRF = Math.max(0, simHistRegimes?.[simRegMK]?.dgs10 ?? RF) / 100 / 252;
 
-        // Apply returns
+        // Apply returns — weights drift (buy-and-hold), idle cash earns RF (matches backtest)
         if (Object.keys(optAlloc).length > 0) {
-          let mRet = 0;
+          const investedWt = Object.values(optAlloc).reduce((s, w) => s + w, 0);
+          let mRet = Math.max(0, 1 - investedWt) * simCashRF;
           for (const [sym, wt] of Object.entries(optAlloc)) {
             mRet += wt * (monthData[sym]?.ret || 0);
           }
           optValue *= (1 + mRet);
+          if (mRet > -0.99) {
+            for (const sym of Object.keys(optAlloc)) {
+              optAlloc[sym] = optAlloc[sym] * (1 + (monthData[sym]?.ret || 0)) / (1 + mRet);
+            }
+            if (simDDBaseAlloc) {
+              const bInv = Object.values(simDDBaseAlloc).reduce((s, w) => s + w, 0);
+              let bRet = Math.max(0, 1 - bInv) * simCashRF;
+              for (const [sym, wt] of Object.entries(simDDBaseAlloc)) bRet += wt * (monthData[sym]?.ret || 0);
+              if (bRet > -0.99) for (const sym of Object.keys(simDDBaseAlloc)) {
+                simDDBaseAlloc[sym] = simDDBaseAlloc[sym] * (1 + (monthData[sym]?.ret || 0)) / (1 + bRet);
+              }
+            }
+          }
           simMonthlyRets.push(mRet);
           if (optValue > simPeak) simPeak = optValue;
           const dd = (simPeak - optValue) / simPeak;
@@ -6088,7 +6353,10 @@ export default function App() {
           simMonthlyRets.push(0);
         }
 
-        // ── Drawdown protection (matches main backtest) ──
+        // ── Drawdown protection (simplified vs main backtest) ──
+        // NOTE: the Monte Carlo sim applies DD shifts WITHOUT costs/taxes (the main
+        // backtest charges both via applyCostedShift). The sim is a relative-dispersion
+        // diagnostic; its absolute levels read slightly rich vs the main backtest.
         if (drawdownProtection && Object.keys(optAlloc).length > 0) {
           if (!simDDBaseAlloc) simDDBaseAlloc = { ...optAlloc };
           const currentDD = simPeak > 0 ? (simPeak - optValue) / simPeak : 0;
@@ -6143,15 +6411,15 @@ export default function App() {
         // Rebalance triggers matching backtest's tighter gates
         let shouldEval = isFirst;
         if (!shouldEval && simHistRegimes) {
-          const rd = simHistRegimes[monthKey];
+          // MONTHLY lagged keys (daily keys against the monthly map disabled these gates)
+          const rd = simHistRegimes[simRegMK];
           // Gate 1: Regime change — require 2+ months persistence
-          if (mi > 0) {
-            const prevRd = simHistRegimes[simDates[mi - 1]];
+          { const prevRd = simHistRegimes[simPrevRegMK];
             if (prevRd && rd && prevRd.regime !== rd.regime) {
-              // Check duration >= 2
+              // Check duration >= 2 (walk back by MONTH from the lagged month)
               let simDur = 1;
-              for (let lb = 2; lb <= 36 && mi - lb >= 0; lb++) {
-                const prev2 = simHistRegimes[simDates[mi - lb]];
+              for (let lb = 2; lb <= 36; lb++) {
+                const prev2 = simHistRegimes[mkOfSim(simAbsM - lb)];
                 if (prev2 && prev2.regime === rd.regime) simDur++; else break;
               }
               if (simDur >= 2) shouldEval = true;
@@ -6162,8 +6430,7 @@ export default function App() {
             let sigCount = 0;
             if (Math.abs(rd.stressAcceleration || 0) >= 0.8) sigCount++;
             if (rd.vixInversion) sigCount++;
-            if (mi > 0) {
-              const prevRd = simHistRegimes[simDates[mi - 1]];
+            { const prevRd = simHistRegimes[simPrevRegMK];
               const volShift = rd.volRegime !== prevRd?.volRegime;
               if (volShift && ((prevRd?.volRegime === "compression" && rd.volRegime === "expansion") ||
                   (prevRd?.volRegime === "normal" && rd.volRegime === "elevated"))) sigCount++;
@@ -6182,12 +6449,12 @@ export default function App() {
 
         // Trailing stats with recency weighting + shrinkage (matches main backtest)
         // Use regime-aware decay and adaptive trailing window
-        const simRd = simHistRegimes?.[monthKey];
+        const simRd = simHistRegimes?.[simRegMK]; // lagged monthly key
         const simState5 = (() => {
           if (!simRd) return "neutral";
           let s5 = simRd.state5 || "neutral";
-          if (simHmmEnsembleMap[monthKey]) {
-            const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
+          if (simHmmEnsembleMap[simRegMK]) {
+            const hmmS5 = hmmToState5(simHmmEnsembleMap[simRegMK]);
             const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
             const fR = ro.indexOf(s5), hR = ro.indexOf(hmmS5);
             if (fR >= 0 && hR >= 0) s5 = ro[Math.min(fR, hR)];
@@ -6239,7 +6506,17 @@ export default function App() {
         const simReturnFloor = isBullishSim ? -50 : -80;
         // ── Trend filter (matching backtest): 200-day MA ──
         const simTrendSignals = {};
-        const simAllCands = Object.values(trailingStats).filter(s => s.v > 0 && s.r > simReturnFloor);
+        // Point-in-time stock membership + IPO gate (matches backtest; survivorship mitigation)
+        const simEtfSet = new Set(ETF_DB.map(e => e.t));
+        const simPitStocks = new Set(getStocksForYear(mYear));
+        const simAllCands = Object.values(trailingStats).filter(s => {
+          if (!(s.v > 0 && s.r > simReturnFloor)) return false;
+          if (!simEtfSet.has(s.t)) {
+            if (!simPitStocks.has(s.t)) return false;
+            if (s.ipo && s.ipo > mYear) return false;
+          }
+          return true;
+        });
         for (const s of simAllCands) {
           let sc = 0, cc = 0;
           for (let td = Math.max(0, mIdx - 200); td < mIdx; td++) {
@@ -6252,7 +6529,7 @@ export default function App() {
             if (cur) simTrendSignals[s.t] = { aboveMA: cur > ma, distFromMA: (cur - ma) / ma };
           }
         }
-        const simDynamicRF2 = simHistRegimes?.[monthKey]?.dgs10 ?? RF;
+        const simDynamicRF2 = simHistRegimes?.[simRegMK]?.dgs10 ?? RF; // lagged monthly key
         const simSortScore = (s) => {
           const sh = (s.r - simDynamicRF2 * 100) / (s.v || 1);
           const f = s.factorScore ?? 0.5;
@@ -6275,12 +6552,12 @@ export default function App() {
         // Lightweight optimizer with regime context (matches main backtest strategy)
         let simRegime = null;
         if (simHistRegimes) {
-          const rd = simHistRegimes[monthKey];
+          const rd = simHistRegimes[simRegMK]; // lagged monthly key (was daily → always null)
           if (rd) {
             let sDur = 1;
             const sRegime3 = rd.regime;
-            for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
-              const prev = simHistRegimes[sortedDates[mIdx - lb]];
+            for (let lb = 1; lb <= 36; lb++) {
+              const prev = simHistRegimes[mkOfSim(simAbsM - 1 - lb)];
               if (prev && prev.regime === sRegime3) sDur++; else break;
             }
             // Lightweight AR approximation (matching backtest)
@@ -6303,15 +6580,15 @@ export default function App() {
             }
             simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null, volSignal: rd.volSignal || 0, vixInversion: rd.vixInversion || false, arShift: simArShift };
             // HMM overlay (conservative fusion, incremental — no look-ahead)
-            if (simHmmEnsembleMap[monthKey]) {
-              const hmmS5 = hmmToState5(simHmmEnsembleMap[monthKey]);
+            if (simHmmEnsembleMap[simRegMK]) {
+              const hmmS5 = hmmToState5(simHmmEnsembleMap[simRegMK]);
               const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
               const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
               if (fR >= 0 && hR >= 0) {
                 const bOn2 = fR >= 3 && hR >= 3, bOff2 = fR <= 1 && hR <= 1;
                 simRegime.state5 = ro[(bOn2 || bOff2) ? Math.max(fR, hR) : Math.min(fR, hR)];
               }
-              simRegime.hmmProbs = simHmmEnsembleMap[monthKey]; // pass HMM probs for confidence scaling
+              simRegime.hmmProbs = simHmmEnsembleMap[simRegMK]; // pass HMM probs for confidence scaling
             }
           }
         }
@@ -6321,17 +6598,18 @@ export default function App() {
         let simTrailRetMatrix = null;
         {
           const trailDays = Math.min(504, mIdx);
-          const tmRows = [];
+          const tmRows = [], tmMask = [];
           for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
             const row = new Float64Array(cands.length);
+            const mrow = new Uint8Array(cands.length);
             let hasData = false;
             for (let ci = 0; ci < cands.length; ci++) {
               const e = returnsByDateSym[sortedDates[td]]?.[cands[ci].t];
-              if (e) { row[ci] = e.ret; hasData = true; }
+              if (e) { row[ci] = e.ret; mrow[ci] = 1; hasData = true; }
             }
-            if (hasData) tmRows.push(row);
+            if (hasData) { tmRows.push(row); tmMask.push(mrow); }
           }
-          if (tmRows.length >= 60) simTrailRetMatrix = tmRows;
+          if (tmRows.length >= 60) { simTrailRetMatrix = tmRows; simTrailRetMatrix.mask = tmMask; }
         }
         // Scale iterations to candidate count (matching backtest)
         const simIterations = cands.length > 80 ? 600 : cands.length > 40 ? 400 : 300;
@@ -6341,8 +6619,8 @@ export default function App() {
           simWarmWeights = new Float64Array(cands.length);
           for (let ci = 0; ci < cands.length; ci++) simWarmWeights[ci] = simLastBestWeights[cands[ci].t] || 0;
         }
-        // Dynamic RF from regime data (matching backtest)
-        const simDynamicRF = simHistRegimes?.[monthKey]?.dgs10 ?? RF;
+        // Dynamic RF from regime data (matching backtest; lagged monthly key)
+        const simDynamicRF = simHistRegimes?.[simRegMK]?.dgs10 ?? RF;
         const result = optimizeCash([], optValue, 0, cands, simEffectiveOT, srMode, volTarget, useKelly, simRegime, simIterations, simWarmWeights, simDynamicRF, simTrailRetMatrix);
         if (!result || result.length === 0) continue;
 
@@ -9457,6 +9735,31 @@ useEffect(() => {
                         <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: s.c }}>{s.v}</div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              </div>}
+              {/* ── Methodology & Data Quality (backtest integrity disclosures) ── */}
+              {btResult.dataQuality && <div style={{ ...cardS, marginBottom: 14, background: "rgba(141,141,141,.02)", borderColor: "rgba(141,141,141,.12)" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: cs.dim }}>Methodology & Data Quality</div>
+                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 3, lineHeight: 1.5 }}>
+                      {btResult.dataQuality.notes.map((n, i) => <div key={i}>· {n}</div>)}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Symbol Coverage</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: btResult.dataQuality.coverage >= 90 ? cs.green : cs.yellow }}>{btResult.dataQuality.coverage}%</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Fetch Errors</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: btResult.dataQuality.fetchErrors > 0 ? cs.yellow : cs.green }}>{btResult.dataQuality.fetchErrors}</div>
+                    </div>
+                    {btResult.drawdown?.enabled && <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 7, color: cs.dim }}>Overlay Costs+Tax</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: cs.red }}>{fmt$((btResult.drawdown.overlayTxCost || 0) + (btResult.drawdown.overlayTaxPaid || 0))}</div>
+                    </div>}
                   </div>
                 </div>
               </div>}
