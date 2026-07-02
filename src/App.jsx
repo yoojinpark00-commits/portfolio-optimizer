@@ -1608,6 +1608,14 @@ function orthogonalizeSignals(factorScores, priorityOrder, minResidualNorm = 0.1
   return { orthScores, droppedFactors };
 }
 
+// Research-informed default factor weights (module scope so the momentum crash
+// guard can derive a guarded copy when no adaptive weights are available)
+const DEFAULT_FACTOR_WEIGHTS = {
+  mom12_1: 0.10, mom6_1: 0.06, mom3_1: 0.04, tsmom: 0.08,
+  fipQuality: 0.04, nearHigh: 0.04, momAccel: 0.03, trendEnsemble: 0.05,
+  rev1m: 0.06, val: 0.10, qual: 0.10, lowvol: 0.08, carry: 0.10, csRev: 0.08,
+};
+
 function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveWeights, lookbackPeriods = 12) {
   const syms = Object.keys(trailingStats);
   if (syms.length < 3 || mIdx < lookbackPeriods + 1) return { enriched: trailingStats, factorRanks: {} };
@@ -1733,12 +1741,7 @@ function computeFactorScores(returnsByDate, sortedDates, mIdx, trailingStats, et
 
   // ── Composite factor score ──
   // Expanded 14-factor model with adaptive IC-based weights or research-informed defaults
-  const defaultFactorWeights = {
-    mom12_1: 0.10, mom6_1: 0.06, mom3_1: 0.04, tsmom: 0.08,
-    fipQuality: 0.04, nearHigh: 0.04, momAccel: 0.03, trendEnsemble: 0.05,
-    rev1m: 0.06, val: 0.10, qual: 0.10, lowvol: 0.08, carry: 0.10, csRev: 0.08,
-  };
-  const factorWeights = adaptiveWeights || defaultFactorWeights;
+  const factorWeights = adaptiveWeights || DEFAULT_FACTOR_WEIGHTS;
   for (const sym of syms) {
     let composite = 0;
     for (const [f, w] of Object.entries(factorWeights)) {
@@ -2114,6 +2117,115 @@ function cppiExposure(portfolioValue, peakValue, maxDD = 0.20, multiplier = 5, s
   return Math.max(0.05, Math.min(1.5, dynMult * cushion / portfolioValue));
 }
 
+/**
+ * Empirical correlation matrix from a trailing daily-return matrix (T rows × n cols),
+ * stabilized with Ledoit-Wolf shrinkage toward identity. The blend of this with the
+ * static category prior gives the optimizer a data-driven covariance path that
+ * captures actual co-movement (including crisis correlation spikes).
+ * Returns null when there is insufficient history (< 120 days).
+ */
+function shrunkEmpiricalCorr(trailRetMatrix, n) {
+  if (!trailRetMatrix || trailRetMatrix.length < 120 || n < 2) return null;
+  const T = trailRetMatrix.length;
+  const means = new Float64Array(n);
+  for (let m = 0; m < T; m++) { const row = trailRetMatrix[m]; for (let i = 0; i < n; i++) means[i] += row[i]; }
+  for (let i = 0; i < n; i++) means[i] /= T;
+  const cov = Array.from({ length: n }, () => new Float64Array(n));
+  for (let m = 0; m < T; m++) {
+    const row = trailRetMatrix[m];
+    for (let i = 0; i < n; i++) {
+      const di = row[i] - means[i];
+      if (di === 0) continue;
+      for (let j = i; j < n; j++) cov[i][j] += di * (row[j] - means[j]);
+    }
+  }
+  const sd = new Float64Array(n);
+  for (let i = 0; i < n; i++) sd[i] = Math.sqrt(cov[i][i] / T);
+  const corr = [];
+  for (let i = 0; i < n; i++) {
+    corr[i] = new Array(n);
+    for (let j = 0; j < n; j++) {
+      if (i === j) { corr[i][j] = 1; continue; }
+      const denom = sd[i] * sd[j];
+      // Sparse-history symbols (near-zero variance) fall back to 0 → the category
+      // prior dominates via the blend, which is the safe default
+      const c = denom > 1e-10 ? ((i < j ? cov[i][j] : cov[j][i]) / T) / denom : 0;
+      corr[i][j] = Math.max(-0.99, Math.min(0.99, c));
+    }
+  }
+  return ledoitWolfShrinkage(corr, T);
+}
+
+/**
+ * Crash-protection overlay — an ensemble of three published defensive signals:
+ * - Absolute momentum gate (Antonacci 2014): SPY 12-month excess return < 0,
+ *   confirmed by the Faber (2007) 200-day MA to avoid single-signal whipsaw.
+ * - Canary breadth (Keller & Keuning 2018, DAA): 13612W momentum of VWO + BND;
+ *   each non-positive canary cuts equity exposure by 25%.
+ * - Bear state (Daniel & Moskowitz 2016): trailing 24-month market return < 0 —
+ *   consumed by the momentum crash guard to de-weight cross-sectional momentum.
+ * Exposure floor of 0.35 keeps some equity (limits whipsaw and tax churn).
+ */
+function computeCrashOverlay(returnsByDateSym, sortedDates, mIdx, rfRate = 0.04) {
+  const closeAt = (sym, idx) => returnsByDateSym[sortedDates[idx]]?.[sym]?.close ?? null;
+  // Scan back a few days for the nearest available close (holidays / missing bars)
+  const closeNear = (sym, idx) => {
+    for (let k = idx; k >= idx - 5 && k >= 0; k--) { const c = closeAt(sym, k); if (c) return c; }
+    return null;
+  };
+  const p0For = (sym) => closeNear(sym, mIdx - 1);
+  // Keller 13612W weighted momentum: (12·r1m + 4·r3m + 2·r6m + 1·r12m) / 4
+  const mom13612W = (sym) => {
+    const p0 = p0For(sym);
+    const p1 = closeNear(sym, mIdx - 1 - 21), p3 = closeNear(sym, mIdx - 1 - 63);
+    const p6 = closeNear(sym, mIdx - 1 - 126), p12 = closeNear(sym, mIdx - 1 - 252);
+    if (!p0 || !p1 || !p3 || !p6 || !p12) return null;
+    return (12 * (p0 / p1 - 1) + 4 * (p0 / p3 - 1) + 2 * (p0 / p6 - 1) + (p0 / p12 - 1)) / 4;
+  };
+  let canaryBreadth = 0, canaryCount = 0;
+  for (const c of ["VWO", "BND"]) {
+    const m = mom13612W(c);
+    if (m != null) { canaryCount++; if (m <= 0) canaryBreadth++; }
+  }
+  // Absolute momentum: SPY 12-month total return minus T-bill proxy (risk-free rate)
+  const spy0 = p0For("SPY"), spy12 = closeNear("SPY", mIdx - 1 - 252);
+  const absMom = spy0 && spy12 ? (spy0 / spy12 - 1) - (rfRate > 1 ? rfRate / 100 : rfRate) : null;
+  // Faber 200-day MA confirmation
+  let spyAboveMA = true;
+  { let s = 0, cnt = 0;
+    for (let td = Math.max(0, mIdx - 200); td < mIdx; td++) { const c = closeAt("SPY", td); if (c) { s += c; cnt++; } }
+    if (cnt >= 100 && spy0) spyAboveMA = spy0 > s / cnt;
+  }
+  const absMomNeg = absMom != null && absMom < 0 && !spyAboveMA;
+  // Daniel-Moskowitz bear state: trailing 24-month market return negative
+  const spy24 = closeNear("SPY", mIdx - 1 - 504);
+  const bearState = !!(spy0 && spy24 && spy0 / spy24 - 1 < 0);
+  let equityScale = 1.0;
+  if (canaryCount === 2) equityScale -= canaryBreadth * 0.25; // 1 canary → 0.75, 2 → 0.50
+  if (absMomNeg) equityScale *= 0.6;
+  equityScale = Math.max(0.35, equityScale);
+  return { equityScale, bearState, canaryBreadth, absMomNeg };
+}
+
+/**
+ * Momentum crash guard (Daniel & Moskowitz 2016): following bear markets with high
+ * volatility, the momentum portfolio behaves like a short call on the market rebound
+ * — crashes occur on the recovery, not the decline. De-weight cross-sectional
+ * momentum factors by 60% and shift the freed weight to reversal/low-vol/quality
+ * (the factors that historically carry the rebound). Time-series trend (tsmom,
+ * trendEnsemble) is deliberately NOT dampened — it self-corrects via its own signal.
+ */
+function applyMomCrashGuard(weights) {
+  const MOM_FACTORS = ["mom12_1", "mom6_1", "mom3_1", "nearHigh", "momAccel", "fipQuality"];
+  const SAFE_FACTORS = ["rev1m", "lowvol", "qual"];
+  const out = { ...weights };
+  let freed = 0;
+  for (const f of MOM_FACTORS) if (out[f]) { freed += out[f] * 0.6; out[f] *= 0.4; }
+  const safeSum = SAFE_FACTORS.reduce((s, f) => s + (out[f] || 0), 0);
+  if (safeSum > 0) for (const f of SAFE_FACTORS) if (out[f]) out[f] += freed * (out[f] / safeSum);
+  return out;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 
 // regimeCtx: { state5, acceleration, duration, transition, durationModel } or just a string
@@ -2351,6 +2463,38 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     }
   }
 
+  // ── Data-driven covariance (Ledoit-Wolf 2004): blend shrunk empirical correlations
+  // from trailing daily returns with the static category prior. The empirical estimate
+  // captures actual co-movement (incl. crisis correlation spikes) the prior can't see;
+  // the 35% prior weight keeps structure stable when history is short or noisy.
+  const empCorr = shrunkEmpiricalCorr(trailRetMatrix, n);
+  if (empCorr) {
+    const EMP_W = 0.65;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const gi = nEx + i, gj = nEx + j;
+        const blended = EMP_W * empCorr[i][j] + (1 - EMP_W) * corrMatrix[gi * totalItems + gj];
+        corrMatrix[gi * totalItems + gj] = blended;
+        corrMatrix[gj * totalItems + gi] = blended;
+      }
+    }
+  }
+
+  // ── HRP seed portfolio (López de Prado 2016): hierarchical risk parity weights on
+  // the blended correlation matrix. Used to seed a share of the stochastic search —
+  // the optimizer explores around a structurally diversified allocation instead of
+  // relying purely on random draws.
+  let hrpW = null, hrpOrder = null;
+  if (n >= 4) {
+    const candCorr = [];
+    for (let i = 0; i < n; i++) {
+      candCorr[i] = [];
+      for (let j = 0; j < n; j++) candCorr[i][j] = corrMatrix[(nEx + i) * totalItems + (nEx + j)];
+    }
+    hrpW = computeHRP(candCorr, Array.from(volArr));
+    hrpOrder = hrpW.map((_, i) => i).sort((a, b) => hrpW[b] - hrpW[a]);
+  }
+
   // Pre-compute existing portfolio weights and properties
   const newTV = totalVal + cash;
   const exW = new Float64Array(nEx), exVol = new Float64Array(nEx), exRet = new Float64Array(nEx);
@@ -2414,6 +2558,14 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
         const idx = Math.floor(Math.random() * n);
         if (ws[idx] > 0) { wSum -= ws[idx]; ws[idx] = 0; }
         else { ws[idx] = Math.random() * 0.3; wSum += ws[idx]; }
+      }
+    } else if (hrpW && Math.random() < 0.25) {
+      // HRP-seeded draw: top-numActive assets by HRP weight, jittered ±30%
+      const kk = Math.min(numActive, hrpOrder.length);
+      for (let i = 0; i < kk; i++) {
+        const idx = hrpOrder[i];
+        ws[idx] = (hrpW[idx] + 1e-6) * (0.7 + Math.random() * 0.6);
+        wSum += ws[idx];
       }
     } else {
       // Balanced random weights using -log(U) (Gamma(1) ≈ Exponential)
@@ -4649,8 +4801,20 @@ export default function App() {
           }
         }
 
+        // ── CPPI continuous floor (Black & Perold 1992): smooth glide path between
+        // the discrete confirmation-gated levels. The discrete levels need 21+ days
+        // of confirmation — too slow for fast crashes (e.g., Feb-Mar 2020). CPPI
+        // reacts daily to the cushion above a 25%-drawdown floor. Only engages when
+        // the regime allows de-risking (avoids selling confirmed V-recoveries).
+        let cppiScale = 1.0;
+        if (ddRegimeAllowsTrigger) {
+          cppiScale = cppiExposure(optValue, ddPeak, 0.25, 4);
+          if (cppiScale > 0.95) cppiScale = 1.0; // deadband — ignore tiny cushion noise
+        }
+        const effEquityScale = Math.min(ddEquityScale, Math.max(0.25, cppiScale));
+
         // Apply the equity scale to the BASE allocation (not the already-scaled one)
-        if (ddEquityScale < 1.0 && ddBaseAlloc) {
+        if (effEquityScale < 1.0 && ddBaseAlloc) {
           const scaledAlloc = {};
           let equityReduced = 0;
           for (const [sym, wt] of Object.entries(ddBaseAlloc)) {
@@ -4659,8 +4823,8 @@ export default function App() {
             if (ms === "fixed-income" || ms === "alternatives") {
               scaledAlloc[sym] = wt;
             } else {
-              scaledAlloc[sym] = wt * ddEquityScale;
-              equityReduced += wt * (1 - ddEquityScale);
+              scaledAlloc[sym] = wt * effEquityScale;
+              equityReduced += wt * (1 - effEquityScale);
             }
           }
           // Shift freed equity to the largest bond holding (or BND)
@@ -4674,7 +4838,7 @@ export default function App() {
           const totalWt = Object.values(scaledAlloc).reduce((s, w) => s + w, 0);
           if (totalWt > 0) for (const sym of Object.keys(scaledAlloc)) scaledAlloc[sym] /= totalWt;
           optAlloc = scaledAlloc;
-        } else if (ddEquityScale >= 1.0 && ddBaseAlloc) {
+        } else if (effEquityScale >= 1.0 && ddBaseAlloc) {
           // Fully recovered — restore original allocation
           optAlloc = { ...ddBaseAlloc };
         }
@@ -4957,9 +5121,23 @@ export default function App() {
       // In bear/neutral: relax to -80% so crash recovery candidates remain accessible.
       const returnFloor = isBullish ? -50 : -80;
 
+      // ── Crash-protection signals (Antonacci absolute momentum + Faber 200d MA,
+      // Keller canary breadth, Daniel-Moskowitz bear state) — computed once per
+      // evaluation, consumed by the factor-weight guard here and the exposure
+      // overlay after optimization.
+      const crashOverlay = computeCrashOverlay(returnsByDateSym, sortedDates, mIdx, dynamicRF);
+
+      // ── Momentum crash guard (Daniel & Moskowitz 2016) ──
+      // In bear states with elevated vol, cross-sectional momentum is a short call on
+      // the rebound — de-weight it and shift toward reversal/low-vol/quality.
+      const momCrashRisk = crashOverlay.bearState && trailingSPYVol > 25;
+      const scoringWeights = momCrashRisk
+        ? applyMomCrashGuard(adaptiveFactorWeights || DEFAULT_FACTOR_WEIGHTS)
+        : adaptiveFactorWeights;
+
       // ── Compute multi-factor scores (with adaptive IC-based weights if available) ──
       // Use 252 trading days lookback for daily data
-      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap, adaptiveFactorWeights, TRADING_DAYS_PER_YEAR);
+      computeFactorScores(returnsByDateSym, sortedDates, mIdx, trailingStats, etfDbMap, scoringWeights, TRADING_DAYS_PER_YEAR);
 
       // ── Second-pass shrinkage: let high-quality-momentum winners ride in bull regimes ──
       if (isBullish) {
@@ -5105,11 +5283,13 @@ export default function App() {
 
       // Step 4: Optimizer (btIterations scaled to candidate pool size)
       // Build warm-start weights: map previous best allocation to current candidate indices
-      // ── Pre-compute trailing return matrix for empirical CVaR ──
+      // ── Pre-compute trailing return matrix for empirical CVaR + data-driven covariance ──
       // Uses daily returns (~504 trading days = 2 years) for robust tail estimation.
       // With 504 observations, worst 5% = 25 data points — statistically meaningful.
+      // Always built (not just for CVaR mode): it also feeds the Ledoit-Wolf-shrunk
+      // empirical correlation blend inside optimizeCash.
       let trailRetMatrix = null;
-      if (srMode === "cvar") {
+      {
         const trailDays = Math.min(504, mIdx); // ~2 years of trading days
         const rows = [];
         for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
@@ -5175,6 +5355,34 @@ export default function App() {
             }
           }
         }
+      }
+
+      // ── Crash-protection overlay: dual momentum (Antonacci 2014) + Faber 200d MA
+      // confirm + canary breadth (Keller & Keuning 2018). Scales EQUITY exposure only
+      // (bonds/alternatives untouched); the freed weight is implicit cash. GEM-style
+      // absolute momentum historically cuts max drawdown from ~51% to under 20%
+      // while keeping equity-like returns — the core lever for beating SPY over a
+      // full cycle is losing less in the crashes.
+      if (crashOverlay.equityScale < 0.999 && Object.keys(newAlloc).length > 0) {
+        for (const sym of Object.keys(newAlloc)) {
+          const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
+          if (ms !== "fixed-income" && ms !== "alternatives") newAlloc[sym] *= crashOverlay.equityScale;
+        }
+      }
+
+      // ── No-trade zones (Leland 1999): skip trades inside a cost/vol-derived band
+      // around target weights — cuts turnover, transaction costs, and tax churn.
+      // Bands widen 1.5x in high-vol regimes (drift is noisier, trading costlier).
+      if (!isFirstAllocation && prevTickers.length > 0) {
+        const ntzCosts = {}, ntzVols = {};
+        for (const sym of new Set([...Object.keys(newAlloc), ...prevTickers])) {
+          ntzCosts[sym] = etfDbMap[sym]?.type === "stock" ? 8 : 5; // spread bps
+          ntzVols[sym] = (trailingStats[sym]?.v || 15) / 100;
+        }
+        const ntzScale = trailingSPYVol > 25 ? 1.5 : 1.0;
+        const { trades: bandedAlloc } = applyNoTradeZones(newAlloc, optAlloc, ntzCosts, ntzVols, 3, ntzScale);
+        for (const sym of Object.keys(newAlloc)) delete newAlloc[sym];
+        for (const [sym, wt] of Object.entries(bandedAlloc)) if (wt > 0.001) newAlloc[sym] = wt;
       }
 
       // Step 5: Compare
@@ -5627,6 +5835,45 @@ export default function App() {
       },
     };
 
+    // ── Benchmark-relative statistics vs SPY — the actual mandate is beating the
+    // S&P 500, so measure it directly: Jensen's alpha (CAPM), beta, tracking error,
+    // information ratio, and up/down capture from aligned curve returns.
+    const benchStats = (() => {
+      const rets = [], bRets = [];
+      const nPts = Math.min(optCurve.length, spyCurve.length);
+      for (let i = 1; i < nPts; i++) {
+        rets.push(optCurve[i].value / optCurve[i - 1].value - 1);
+        bRets.push(spyCurve[i].value / spyCurve[i - 1].value - 1);
+      }
+      if (rets.length < 12) return null;
+      const yrs = (new Date(optCurve[nPts - 1].date) - new Date(optCurve[0].date)) / (365.25 * 86400000);
+      const ppy = yrs > 0 ? rets.length / yrs : 12; // periods per year from data density
+      const mean = a => a.reduce((s, r) => s + r, 0) / a.length;
+      const mo = mean(rets), mb = mean(bRets);
+      let covOB = 0, varB = 0;
+      for (let i = 0; i < rets.length; i++) { covOB += (rets[i] - mo) * (bRets[i] - mb); varB += (bRets[i] - mb) ** 2; }
+      covOB /= rets.length - 1; varB /= rets.length - 1;
+      const beta = varB > 0 ? covOB / varB : 1;
+      const rfP = (RF / 100) / ppy;
+      const alpha = ((mo - rfP) - beta * (mb - rfP)) * ppy * 100; // annualized Jensen's alpha %
+      const active = rets.map((r, i) => r - bRets[i]);
+      const ma = mean(active);
+      const te = Math.sqrt(active.reduce((s, r) => s + (r - ma) ** 2, 0) / (active.length - 1)) * Math.sqrt(ppy) * 100;
+      const ir = te > 0 ? (optCAGR - spyCAGR) / te : 0;
+      let upO = 0, upB = 0, dnO = 0, dnB = 0;
+      for (let i = 0; i < rets.length; i++) {
+        if (bRets[i] > 0) { upO += rets[i]; upB += bRets[i]; }
+        else if (bRets[i] < 0) { dnO += rets[i]; dnB += bRets[i]; }
+      }
+      return {
+        alpha: +alpha.toFixed(2), beta: +beta.toFixed(2), te: +te.toFixed(1), ir: +ir.toFixed(2),
+        upCapture: upB !== 0 ? +((upO / upB) * 100).toFixed(0) : 100,
+        downCapture: dnB !== 0 ? +((dnO / dnB) * 100).toFixed(0) : 100,
+        winRate: +(active.filter(a => a > 0).length / active.length * 100).toFixed(0),
+        activeCagr: +(optCAGR - spyCAGR).toFixed(2),
+      };
+    })();
+
     setBtResult({
       curves: { opt: optCurve, spy: spyCurve, bal60: bal60Curve },
       summary: {
@@ -5638,6 +5885,7 @@ export default function App() {
       startCash,
       etfsUsed: available.length,
       oosAnalysis,
+      benchmark: benchStats,
       regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (incremental, no look-ahead)" : "FRED (12-series, 5-state, daily EMA)") : "Proxy (SPY momentum/vol)",
       regimeDurationModel: regimeDurModel ? true : false,
       tax: {
@@ -6068,9 +6316,10 @@ export default function App() {
           }
         }
         const simEffectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
-        // Build trailing return matrix for empirical CVaR (daily data, matches backtest)
+        // Build trailing return matrix for empirical CVaR + data-driven covariance
+        // (daily data, matches backtest — always built, feeds Ledoit-Wolf blend)
         let simTrailRetMatrix = null;
-        if (srMode === "cvar") {
+        {
           const trailDays = Math.min(504, mIdx);
           const tmRows = [];
           for (let td = Math.max(0, mIdx - trailDays); td < mIdx; td++) {
@@ -6122,6 +6371,15 @@ export default function App() {
                 if (tw > 1.0) for (const s of Object.keys(newAlloc)) newAlloc[s] /= tw;
               }
             }
+          }
+        }
+
+        // ── Crash-protection overlay (matches backtest): dual momentum + canary breadth ──
+        const simCrash = computeCrashOverlay(returnsByDateSym, sortedDates, mIdx, simDynamicRF);
+        if (simCrash.equityScale < 0.999 && Object.keys(newAlloc).length > 0) {
+          for (const sym of Object.keys(newAlloc)) {
+            const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
+            if (ms !== "fixed-income" && ms !== "alternatives") newAlloc[sym] *= simCrash.equityScale;
           }
         }
 
@@ -9175,6 +9433,30 @@ useEffect(() => {
                       <div style={{ fontSize: 7, color: cs.dim }}>After-Tax Value</div>
                       <div style={{ fontSize: 14, fontWeight: 600, fontFamily: mono2, color: cs.green }}>{fmt$(summary.opt.final)}</div>
                     </div>
+                  </div>
+                </div>
+              </div>}
+              {/* ── Benchmark-Relative Statistics (vs S&P 500) ── */}
+              {btResult.benchmark && <div style={{ ...cardS, marginBottom: 14, background: "rgba(66,190,101,.02)", borderColor: "rgba(66,190,101,.1)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: cs.green }}>⚔ vs S&P 500 Benchmark</div>
+                    <div style={{ fontSize: 8, color: cs.dim, marginTop: 2 }}>Jensen's alpha (CAPM) · tracking error {btResult.benchmark.te}% · period win rate {btResult.benchmark.winRate}% · beat SPY = positive active CAGR with ≤100% down capture</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    {[
+                      { l: "Active CAGR", v: `${btResult.benchmark.activeCagr >= 0 ? "+" : ""}${btResult.benchmark.activeCagr}%`, c: btResult.benchmark.activeCagr >= 0 ? cs.green : cs.red },
+                      { l: "Alpha (ann.)", v: `${btResult.benchmark.alpha >= 0 ? "+" : ""}${btResult.benchmark.alpha}%`, c: btResult.benchmark.alpha >= 0 ? cs.green : cs.red },
+                      { l: "Info Ratio", v: btResult.benchmark.ir.toFixed(2), c: btResult.benchmark.ir >= 0 ? cs.green : cs.red },
+                      { l: "Beta", v: btResult.benchmark.beta.toFixed(2), c: cs.blue },
+                      { l: "Up Capture", v: `${btResult.benchmark.upCapture}%`, c: cs.green },
+                      { l: "Down Capture", v: `${btResult.benchmark.downCapture}%`, c: btResult.benchmark.downCapture <= 100 ? cs.green : cs.red },
+                    ].map(s => (
+                      <div key={s.l} style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 7, color: cs.dim }}>{s.l}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, fontFamily: mono2, color: s.c }}>{s.v}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>}
