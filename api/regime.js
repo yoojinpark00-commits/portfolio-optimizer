@@ -636,6 +636,38 @@ function computeRegimeAnalytics(monthlyRegimes, data) {
     forwardReturns[d] = fwd;
   }
 
+  // ── 3b. Forward returns by TREND regime (Faber 10-month SMA) ──
+  // The stress-regime table below reads "counter-intuitively" by construction:
+  // "bear" = maximum-stress months, which cluster near market bottoms where the
+  // equity risk premium is highest (high-VIX quintiles historically deliver the
+  // HIGHEST forward returns), so bear shows high and bull low forward returns.
+  // That is a real contrarian/risk-premium effect, not a bug. This TREND lens
+  // (price vs 10-month SMA) is the intuitive complement: downtrend months are
+  // bad while they're still bad. Both lenses are shown in the UI.
+  const trendReturns = { uptrend: {}, downtrend: {} };
+  {
+    const months = monthlyRegimes.map(r => r.date);
+    const closes = months.map(d => spyMonthly[d]?.close ?? null);
+    const acc = { uptrend: { "1m": [], "3m": [], "6m": [], "12m": [] }, downtrend: { "1m": [], "3m": [], "6m": [], "12m": [] } };
+    for (let i = 10; i < months.length; i++) {
+      if (closes[i] == null) continue;
+      let sum = 0, cnt = 0;
+      for (let k = i - 9; k <= i; k++) { if (closes[k] != null) { sum += closes[k]; cnt++; } }
+      if (cnt < 8) continue;
+      const trendState = closes[i] >= sum / cnt ? "uptrend" : "downtrend";
+      const fwd = forwardReturns[months[i]] || {};
+      for (const h of ["1m", "3m", "6m", "12m"]) {
+        if (fwd[h] != null) acc[trendState][h].push(fwd[h]);
+      }
+    }
+    for (const st of ["uptrend", "downtrend"]) {
+      for (const h of ["1m", "3m", "6m", "12m"]) {
+        const a = acc[st][h];
+        trendReturns[st][h] = a.length ? { avg: Math.round((a.reduce((s, x) => s + x, 0) / a.length) * 100) / 100, n: a.length } : null;
+      }
+    }
+  }
+
   // ── 4. Transition matrix ──
   const transitions = { bull: { bull: 0, neutral: 0, bear: 0 }, neutral: { bull: 0, neutral: 0, bear: 0 }, bear: { bull: 0, neutral: 0, bear: 0 } };
   for (let i = 1; i < monthlyRegimes.length; i++) {
@@ -754,6 +786,8 @@ function computeRegimeAnalytics(monthlyRegimes, data) {
     durationStats,
     transitionProb,
     durationReturns,
+    trendReturns,
+    methodNote: "Regime labels here are STRESS states (composite of credit spreads, VIX structure, macro). High stress ('bear') clusters near market bottoms where the equity risk premium is highest, so forward returns after 'bear' months are genuinely above average (contrarian/risk-premium effect) — not a data error. The trend lens (10-month SMA) is the intuitive complement: downtrends precede below-average returns. The optimizer uses trend for direction and stress for intensity.",
     transitionPatterns: Object.fromEntries(Object.entries(transitionPatterns).map(([k, v]) => [k, { count: v.count, avgDuration: v.avgDuration, avgFwd: v.avgFwd }])),
     entrySignals,
     current: {

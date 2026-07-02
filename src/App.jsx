@@ -1001,235 +1001,8 @@ function getRegimeDurationFwd(model, state5, duration) {
   return { fwd: b.avgFwd || 0, confidence: b.confidence || 0, count: b.count || 0, std: b.stdFwd || 0 };
 }
 
-// ── Three-Stage Pattern Prediction ──
-// Given the two most recent regime states, predicts the likely next state
-// using historical transition frequencies and acceleration data.
-function computeThreeStagePredict(historicalRegimes, sortedDates, mIdx) {
-  if (mIdx < 6) return null;
-
-  // Find current regime and how long it's been running
-  const currentDate = sortedDates[mIdx];
-  const currentReg = historicalRegimes[currentDate];
-  if (!currentReg) return null;
-  const currentRegime = currentReg.regime; // bull/neutral/bear
-
-  let currentDuration = 1;
-  for (let lb = 1; lb <= 36 && mIdx - lb >= 0; lb++) {
-    const prev = historicalRegimes[sortedDates[mIdx - lb]];
-    if (prev && prev.regime === currentRegime) currentDuration++;
-    else break;
-  }
-
-  // Find previous regime (before the current one started)
-  let prevRegime = null, prevDuration = 0;
-  const prevStart = mIdx - currentDuration;
-  if (prevStart >= 0) {
-    const prevReg = historicalRegimes[sortedDates[prevStart]];
-    if (prevReg) {
-      prevRegime = prevReg.regime;
-      prevDuration = 1;
-      for (let lb = 1; lb <= 36 && prevStart - lb >= 0; lb++) {
-        const p = historicalRegimes[sortedDates[prevStart - lb]];
-        if (p && p.regime === prevRegime) prevDuration++;
-        else break;
-      }
-    }
-  }
-
-  if (!prevRegime || prevRegime === currentRegime) return null;
-
-  // Count historical transitions from this two-stage pattern
-  // Scan all history up to current point (no look-ahead)
-  const transitions = { bull: 0, neutral: 0, bear: 0 };
-  let totalTransitions = 0;
-  let scanRegime = null, scanPrevRegime = null, scanDur = 0;
-
-  for (let i = 1; i < mIdx - 3; i++) { // stop 3 months before current to avoid leakage
-    const r = historicalRegimes[sortedDates[i]];
-    const rPrev = historicalRegimes[sortedDates[i - 1]];
-    if (!r || !rPrev) continue;
-
-    if (rPrev.regime !== r.regime) {
-      // Regime changed
-      scanPrevRegime = scanRegime;
-      scanRegime = r.regime;
-      scanDur = 1;
-
-      // Check if the PREVIOUS two-stage matches our pattern
-      if (scanPrevRegime === prevRegime && rPrev.regime === currentRegime) {
-        // This is the transition OUT of our pattern — what came next?
-        transitions[r.regime]++;
-        totalTransitions++;
-      }
-    } else {
-      scanDur++;
-      if (!scanRegime) scanRegime = r.regime;
-    }
-  }
-
-  if (totalTransitions < 3) return null; // not enough data
-
-  // Find most likely next state
-  let bestNext = null, bestCount = 0;
-  for (const [regime, count] of Object.entries(transitions)) {
-    if (count > bestCount) { bestCount = count; bestNext = regime; }
-  }
-
-  const probability = bestCount / totalTransitions;
-
-  // Compute acceleration confirmation
-  const accel = currentReg.acceleration || 0;
-  const accelConfirms = (
-    (prevRegime === "bear" && currentRegime === "neutral" && accel < -0.05) || // improving after bear
-    (prevRegime === "bull" && currentRegime === "neutral" && accel > 0.05) || // worsening after bull
-    (prevRegime === "neutral" && currentRegime === "bear" && accel > 0.1)    // deteriorating into bear
-  );
-
-  // Confidence: base probability + acceleration confirmation + duration sweet spot
-  let confidence = probability;
-  if (accelConfirms) confidence = Math.min(1, confidence + 0.10);
-  if (currentDuration >= 2 && currentDuration <= 6) confidence = Math.min(1, confidence + 0.05);
-
-  // Determine if this should trigger a rebalance
-  const pattern = `${prevRegime}\u2192${currentRegime}`;
-  const isActionable = (
-    confidence >= 0.55 && // at least 55% confident
-    totalTransitions >= 4 // enough historical observations
-  );
-
-  // Determine the directional signal
-  let reason = "";
-  let shouldTrigger = false;
-
-  if (isActionable) {
-    if (prevRegime === "bear" && currentRegime === "neutral" && bestNext === "bull") {
-      reason = `Bear\u2192Neutral historically leads to Bull ${(probability*100).toFixed(0)}% of the time (${bestCount}/${totalTransitions}). Pre-position for recovery.`;
-      shouldTrigger = true;
-    } else if (prevRegime === "bull" && currentRegime === "neutral" && bestNext === "bear") {
-      reason = `Bull\u2192Neutral historically leads to Bear ${(probability*100).toFixed(0)}% of the time (${bestCount}/${totalTransitions}). Shift defensive.`;
-      shouldTrigger = true;
-    } else if (prevRegime === "bear" && currentRegime === "neutral" && bestNext === "bear") {
-      reason = `Bear\u2192Neutral\u2192Bear pattern (false recovery) at ${(probability*100).toFixed(0)}% probability. Stay defensive.`;
-      shouldTrigger = true;
-    } else if (prevRegime === "neutral" && currentRegime === "bear" && bestNext === "neutral") {
-      reason = `Neutral\u2192Bear historically reverts to Neutral ${(probability*100).toFixed(0)}% of the time. Prepare for recovery.`;
-      shouldTrigger = currentDuration >= 3; // wait a bit before acting on this
-    } else if (confidence >= 0.60) {
-      reason = `${pattern}\u2192${bestNext} at ${(probability*100).toFixed(0)}% confidence (${bestCount}/${totalTransitions}).`;
-      shouldTrigger = true;
-    }
-  }
-
-  return {
-    pattern,
-    prevRegime,
-    currentRegime,
-    currentDuration,
-    predictedNext: bestNext,
-    probability,
-    confidence,
-    transitions,
-    totalTransitions,
-    accelConfirms,
-    shouldTrigger,
-    reason,
-  };
-}
-
-// ── Three-Stage Regime Context ──
-// Tracks the pattern: prevRegime → bridgeRegime → currentRegime
-// This distinguishes: bull→neutral(1m)→bull (brief pause) from bear→neutral(3m)→bull (genuine reversal)
-function computeThreeStageCtx(historicalRegimes, sortedDates, mIdx) {
-  if (!historicalRegimes || mIdx < 3) return null;
-  const dateKey = sortedDates[mIdx];
-  const current = historicalRegimes[dateKey];
-  if (!current) return null;
-
-  const curRegime = current.regime; // bull/neutral/bear (3-state)
-
-  // Walk backward to find: current run → bridge regime → previous regime
-  let curDuration = 1;
-  let bridgeRegime = null, bridgeDuration = 0;
-  let prevRegime = null, prevDuration = 0;
-  let phase = "current"; // current → bridge → prev
-
-  for (let lb = 1; lb <= 60 && mIdx - lb >= 0; lb++) {
-    const prev = historicalRegimes[sortedDates[mIdx - lb]];
-    if (!prev) continue;
-    const r = prev.regime;
-
-    if (phase === "current") {
-      if (r === curRegime) { curDuration++; }
-      else { bridgeRegime = r; bridgeDuration = 1; phase = "bridge"; }
-    } else if (phase === "bridge") {
-      if (r === bridgeRegime) { bridgeDuration++; }
-      else { prevRegime = r; prevDuration = 1; phase = "prev"; }
-    } else if (phase === "prev") {
-      if (r === prevRegime) { prevDuration++; }
-      else break; // found all three stages
-    }
-  }
-
-  if (!bridgeRegime) return null; // no transition found (been in same regime entire history)
-
-  // Classify the pattern
-  let patternType, patternSignal;
-  const fullPattern = `${prevRegime || "?"}→${bridgeRegime}→${curRegime}`;
-
-  if (prevRegime === curRegime) {
-    // Same regime before and after the bridge
-    if (bridgeDuration <= 2) {
-      patternType = "continuation_brief"; // brief pause, resume — treat as extended run
-      patternSignal = 0; // no special signal, just extend duration
-    } else if (bridgeDuration <= 6) {
-      patternType = "continuation_extended"; // consolidation then re-entry
-      patternSignal = curRegime === "bull" ? 0.03 : curRegime === "bear" ? -0.03 : 0;
-    } else {
-      patternType = "consolidation_reset"; // long pause = fresh start, don't extend duration
-      patternSignal = 0;
-    }
-  } else if (prevRegime && prevRegime !== curRegime) {
-    // Different regime — genuine reversal
-    if (prevRegime === "bear" && curRegime === "bull") {
-      patternType = "reversal_bear_to_bull";
-      patternSignal = bridgeDuration <= 3 ? 0.10 : bridgeDuration <= 6 ? 0.06 : 0.03; // shorter bridge = sharper reversal = stronger signal
-    } else if (prevRegime === "bull" && curRegime === "bear") {
-      patternType = "reversal_bull_to_bear";
-      patternSignal = bridgeDuration <= 3 ? -0.10 : bridgeDuration <= 6 ? -0.06 : -0.03;
-    } else if (prevRegime === "bear" && curRegime === "neutral") {
-      patternType = "recovery_emerging";
-      patternSignal = 0.04; // cautious optimism
-    } else if (prevRegime === "bull" && curRegime === "neutral") {
-      patternType = "topping_emerging";
-      patternSignal = -0.04; // cautious pessimism
-    } else {
-      patternType = "transition";
-      patternSignal = 0;
-    }
-  } else {
-    patternType = "unknown";
-    patternSignal = 0;
-  }
-
-  // For continuation patterns with brief bridge, compute effective duration
-  // bull(12m) → neutral(1m) → bull(3m) should feel like bull for ~15 months, not 3
-  let effectiveDuration = curDuration;
-  if (patternType === "continuation_brief" && prevDuration > 0) {
-    effectiveDuration = curDuration + bridgeDuration + prevDuration; // full run including bridge
-  } else if (patternType === "continuation_extended") {
-    effectiveDuration = curDuration + Math.floor(prevDuration * 0.5); // partial credit for pre-bridge
-  }
-
-  return {
-    pattern: fullPattern,
-    patternType,
-    patternSignal, // additional tilt adjustment
-    prevRegime, prevDuration,
-    bridgeRegime, bridgeDuration,
-    currentRegime: curRegime, currentDuration: curDuration,
-    effectiveDuration, // used instead of raw duration for tilt scaling
-  };
-}
+// (Three-stage pattern prediction/context removed — pattern-mined on a handful of
+// regime episodes with tiny samples; superseded by the statistical jump model.)
 
 // 5-state tilt table: [defensive_bonus, aggressive_bonus, kelly_mult]
 // Amplified magnitudes so regime signal is meaningful vs Sharpe (0.6-1.2 range)
@@ -1283,6 +1056,111 @@ const HMM_LOG2PI = Math.log(2 * Math.PI);
 function hmmGauss(x, mu, s) { const z = (x - mu) / s; return -0.5 * (HMM_LOG2PI + 2 * Math.log(s) + z * z); }
 function hmmLSE(v) { if (!v.length) return -Infinity; const m = Math.max(...v); if (m === -Infinity) return -Infinity; return m + Math.log(v.reduce((s, x) => s + Math.exp(x - m), 0)); }
 function hmmNorm(lp) { const l = hmmLSE(lp); return lp.map(x => Math.exp(x - l)); }
+
+// ═══ STATISTICAL JUMP MODEL (Nystrup, Lindström & Madsen 2020; Shu, Yu & Mulvey 2024) ═══
+// 2-state (bull/bear) trend regime on daily returns. Fits by coordinate descent:
+// (a) optimal state sequence via dynamic programming minimizing
+//     Σ_t ||x_t − μ_{s_t}||² + λ·1[s_t ≠ s_{t−1}],
+// (b) centroid update. The jump penalty λ enforces persistence — JMs beat HMMs
+// out-of-sample on identification accuracy and downside-risk reduction.
+// Features: EWM downside deviation (halflife 10d), EWM Sortino (halflives 20d/60d).
+function jmEwmMean(vals, halflife) {
+  const alpha = 1 - Math.exp(-Math.LN2 / halflife);
+  const out = new Float64Array(vals.length);
+  let m = vals[0] || 0;
+  for (let i = 0; i < vals.length; i++) { m = alpha * vals[i] + (1 - alpha) * m; out[i] = m; }
+  return out;
+}
+function jmFeatures(rets) {
+  const negSq = rets.map(r => (r < 0 ? r * r : 0));
+  const dd10 = jmEwmMean(negSq, 10).map(Math.sqrt);
+  const m20 = jmEwmMean(rets, 20), m60 = jmEwmMean(rets, 60);
+  const dd20 = jmEwmMean(negSq, 20).map(Math.sqrt), dd60 = jmEwmMean(negSq, 60).map(Math.sqrt);
+  const feats = [];
+  for (let t = 0; t < rets.length; t++) {
+    feats.push([dd10[t], m20[t] / (dd20[t] || 1e-8), m60[t] / (dd60[t] || 1e-8)]);
+  }
+  return feats;
+}
+const jmSqDist = (a, b) => { let s = 0; for (let d = 0; d < a.length; d++) s += (a[d] - b[d]) ** 2; return s; };
+
+function fitJumpModel(rets, lambda = 80, maxIter = 30) {
+  if (!rets || rets.length < 250) return null;
+  const raw = jmFeatures(rets).slice(60); // skip EWM warmup
+  const T = raw.length, D = raw[0].length, K = 2;
+  // z-score features over the fit window
+  const featMu = new Float64Array(D), featSd = new Float64Array(D);
+  for (const f of raw) for (let d = 0; d < D; d++) featMu[d] += f[d];
+  for (let d = 0; d < D; d++) featMu[d] /= T;
+  for (const f of raw) for (let d = 0; d < D; d++) featSd[d] += (f[d] - featMu[d]) ** 2;
+  for (let d = 0; d < D; d++) featSd[d] = Math.sqrt(featSd[d] / T) || 1e-8;
+  const z = raw.map(f => f.map((v, d) => (v - featMu[d]) / featSd[d]));
+  // Init: split by downside-deviation median
+  const sorted0 = z.map(f => f[0]).sort((a, b) => a - b);
+  const med = sorted0[T >> 1];
+  let centroids = [new Float64Array(D), new Float64Array(D)];
+  const cnt0 = [0, 0];
+  for (const f of z) { const k = f[0] <= med ? 0 : 1; for (let d = 0; d < D; d++) centroids[k][d] += f[d]; cnt0[k]++; }
+  for (let k = 0; k < K; k++) for (let d = 0; d < D; d++) centroids[k][d] /= (cnt0[k] || 1);
+
+  let states = new Uint8Array(T);
+  let prevCost = Infinity;
+  for (let it = 0; it < maxIter; it++) {
+    const cost = [new Float64Array(T), new Float64Array(T)];
+    const back = [new Uint8Array(T), new Uint8Array(T)];
+    for (let k = 0; k < K; k++) cost[k][0] = jmSqDist(z[0], centroids[k]);
+    for (let t = 1; t < T; t++) {
+      for (let k = 0; k < K; k++) {
+        const stay = cost[k][t - 1];
+        const jump = cost[1 - k][t - 1] + lambda;
+        back[k][t] = stay <= jump ? k : 1 - k;
+        cost[k][t] = jmSqDist(z[t], centroids[k]) + Math.min(stay, jump);
+      }
+    }
+    let last = cost[0][T - 1] <= cost[1][T - 1] ? 0 : 1;
+    const totalCost = cost[last][T - 1];
+    const newStates = new Uint8Array(T);
+    newStates[T - 1] = last;
+    for (let t = T - 1; t > 0; t--) { last = back[last][t]; newStates[t - 1] = last; }
+    const nc = [new Float64Array(D), new Float64Array(D)];
+    const ncCnt = [0, 0];
+    for (let t = 0; t < T; t++) { const k = newStates[t]; for (let d = 0; d < D; d++) nc[k][d] += z[t][d]; ncCnt[k]++; }
+    if (ncCnt[0] === 0 || ncCnt[1] === 0) { states = newStates; break; }
+    for (let k = 0; k < K; k++) for (let d = 0; d < D; d++) nc[k][d] /= ncCnt[k];
+    states = newStates; centroids = nc;
+    if (Math.abs(prevCost - totalCost) < 1e-9) break;
+    prevCost = totalCost;
+  }
+  // Normalize: state 1 = bear (higher standardized downside deviation)
+  if (centroids[0][0] > centroids[1][0]) {
+    centroids = [centroids[1], centroids[0]];
+    for (let t = 0; t < T; t++) states[t] = 1 - states[t];
+  }
+  return { centroids, featMu: Array.from(featMu), featSd: Array.from(featSd), lastState: states[T - 1] };
+}
+
+// Causal inference: filtered (forward-only) DP over a trailing window with FIXED
+// centroids; labels the LAST day of `rets`. No future data touched.
+function jumpModelInfer(rets, model, prevState, lambda = 80, window = 250) {
+  if (!model || !rets || rets.length < 130) return prevState ?? 0;
+  const raw = jmFeatures(rets);
+  const start = Math.max(60, raw.length - window);
+  const z = [];
+  for (let t = start; t < raw.length; t++) {
+    z.push(raw[t].map((v, d) => (v - model.featMu[d]) / model.featSd[d]));
+  }
+  const T = z.length;
+  if (T < 2) return prevState ?? 0;
+  const cost = [new Float64Array(T), new Float64Array(T)];
+  for (let k = 0; k < 2; k++) cost[k][0] = jmSqDist(z[0], model.centroids[k]);
+  for (let t = 1; t < T; t++) {
+    for (let k = 0; k < 2; k++) {
+      cost[k][t] = jmSqDist(z[t], model.centroids[k]) +
+        Math.min(cost[k][t - 1], cost[1 - k][t - 1] + lambda);
+    }
+  }
+  return cost[0][T - 1] <= cost[1][T - 1] ? 0 : 1;
+}
 
 function hmmTrain(obs, maxIter = 50) {
   const T = obs.length, N = HMM_N;
@@ -2268,37 +2146,31 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const n = candidates.length; let best = null, bs = -Infinity;
   const numIterations = iterations || 6000;
 
-  // Parse regimeCtx
-  let state5 = "neutral", acceleration = 0, duration = 1, transition = null, durationModel = null, threeStage = null;
-  let volSignal = 0, vixInversion = false;
+  // Parse regimeCtx — SIMPLIFIED signal set. The old stack (three-stage patterns,
+  // transition entry bonuses, acceleration modifiers, vol-regime and VIX-inversion
+  // multipliers) layered five fragile micro-signals on top of each other; each was
+  // fit on a handful of historical episodes. Removed. What remains is defensible:
+  // state (trend×stress fused), duration, the EMPIRICAL duration-forward model,
+  // absorption ratio, and signal agreement.
+  let state5 = "neutral", duration = 1, durationModel = null;
   if (typeof regimeCtx === "string") {
     if (regimeCtx === "bull") state5 = "mild_risk_on";
     else if (regimeCtx === "bear") state5 = "mild_risk_off";
     else if (REGIME_TILTS[regimeCtx]) state5 = regimeCtx;
   } else if (regimeCtx && typeof regimeCtx === "object") {
     state5 = regimeCtx.state5 || "neutral";
-    acceleration = regimeCtx.acceleration || 0;
     duration = regimeCtx.duration || 1;
-    transition = regimeCtx.transition || null;
     durationModel = regimeCtx.durationModel || null;
-    threeStage = regimeCtx.threeStage || null;
-    volSignal = regimeCtx.volSignal || 0;
-    vixInversion = regimeCtx.vixInversion || false;
-  }
-
-  // If three-stage context available, use effectiveDuration instead of raw duration
-  if (threeStage?.effectiveDuration > 0) {
-    duration = threeStage.effectiveDuration;
   }
 
   const [baseDefBonus, baseAggBonus, baseKellyMult] = REGIME_TILTS[state5] || [0, 0, 1.0];
 
-  // ── Confidence scaling: scale tilt magnitude by HMM posterior probability ──
-  // 90%+ confident → full tilt (1.0). 55% barely classified → 51% of tilt.
-  // This makes tilts data-driven instead of full-blast on every regime detection.
+  // ── Confidence scaling ──
+  // Preferred: explicit trend×stress signal agreement (backtest jump-model path).
+  // Fallback: HMM posterior (live path); 0.7 when neither is available.
   const hmmProbs = regimeCtx?.hmmProbs;
-  const maxProb = hmmProbs ? Math.max(...hmmProbs) : 0.7; // fallback if no HMM
-  let confidenceScale = 0.3 + 0.7 * Math.min(1, (maxProb - 0.4) / 0.5);
+  const maxProb = hmmProbs ? Math.max(...hmmProbs) : 0.7;
+  let confidenceScale = regimeCtx?.signalAgreement ?? (0.3 + 0.7 * Math.min(1, (maxProb - 0.4) / 0.5));
 
   // ── Absorption Ratio Amplifier (Kritzman et al. 2011) ──
   // When cross-asset correlations are high (markets "tightly coupled"), a shock in
@@ -2320,9 +2192,6 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   }
 
   const durationScale = Math.min(2.0, 0.5 + (duration / 12) * 1.5);
-  let accelMod = 1.0;
-  if (state5.includes("risk_off")) accelMod = acceleration < -0.15 ? 0.6 : acceleration > 0.15 ? 1.3 : 1.0;
-  else if (state5.includes("risk_on")) accelMod = acceleration > 0.15 ? 0.6 : acceleration < -0.15 ? 1.2 : 1.0;
 
   // ── Regime-Duration Forward Return Signal ──
   // Historical data tells us: at this state + duration, what does the market typically do next?
@@ -2349,43 +2218,19 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     }
   }
 
-  let entryBonus = 0;
-  // Three-stage pattern signal overrides simple transition when available
-  if (threeStage && threeStage.patternSignal !== 0) {
-    entryBonus = threeStage.patternSignal;
-    // Scale by how fresh the current stage is (strongest in months 1-6)
-    if (threeStage.currentDuration > 8) entryBonus *= 0.5; // fade after 8 months
-  } else if (transition) {
-    // Fallback: simple two-stage transition (backward compat)
-    const [from, to] = transition.includes("→") ? transition.split("→") : [null, null];
-    if (from === "bear" && (to === "bull" || to === "neutral") && duration >= 2 && duration <= 8) entryBonus = 0.08;
-    else if (from === "neutral" && to === "bull" && duration >= 1 && duration <= 4) entryBonus = 0.04;
-  }
-
-  // Vol regime modifier: gentler tilts to avoid over-trading alpha decay
-  // Compression is NOT amplified (contrarian trap — often precedes crashes)
-  // Expansion dampens risk-on modestly; VIX inversion is a tilt modifier only (not a rebalance trigger)
-  const volMod = volSignal < 0 ? 0.85 : 1.0; // only dampen during expansion, never amplify
-  const vixMod = vixInversion ? 0.7 : 1.0; // gentler than before (was 0.5)
-
-  const defBonus = baseDefBonus * confidenceScale * durationScale * accelMod * durationFwdMod * (volSignal < 0 ? 1.15 : 1.0);
-  // Entry bonus reaches aggressive categories in ANY state (including neutral after bear→neutral recovery)
-  const aggBonus = (baseAggBonus * confidenceScale * durationScale * accelMod * durationFwdMod) * volMod * vixMod + entryBonus;
+  // Tilt = base regime tilt × confidence × duration × empirical forward-return mod.
+  // The durationFwdMod is what keeps tilts honest against the risk premium: when
+  // history says an extended risk-off state precedes ABOVE-average returns (the
+  // "counter-intuitive" contrarian effect), the defensive tilt scales back.
+  const defBonus = baseDefBonus * confidenceScale * durationScale * durationFwdMod;
+  const aggBonus = baseAggBonus * confidenceScale * durationScale * durationFwdMod;
   const kellyMult = baseKellyMult * (0.5 + 0.5 * confidenceScale);
   const regimeTilt = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const c = candidates[i];
-    if (state5 === "neutral" && entryBonus === 0) {
-      // Neutral regime: use acceleration direction for a small trend-following tilt
-      // instead of going silent. Negative accel = improving → slight risk-on. Positive = worsening → slight risk-off.
-      const neutralTilt = acceleration < -0.05 ? 0.04 : acceleration > 0.05 ? -0.04 : 0;
-      if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = -neutralTilt;
-      else if (AGGRESSIVE_CATS.has(c.c)) regimeTilt[i] = neutralTilt;
-      continue;
-    }
-    if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = defBonus - (entryBonus > 0 ? entryBonus * 0.5 : 0);
+    if (state5 === "neutral") continue; // no directional tilt in neutral
+    if (DEFENSIVE_CATS.has(c.c)) regimeTilt[i] = defBonus;
     else if (AGGRESSIVE_CATS.has(c.c)) regimeTilt[i] = aggBonus;
-    else regimeTilt[i] = entryBonus > 0 ? entryBonus * 0.3 : 0;
   }
 
   // ── Pre-compute factor-aware returns (Black-Litterman blend if factor scores available) ──
@@ -2541,7 +2386,7 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
   const alloc = new Float64Array(n);
   const itemW = new Float64Array(totalItems);
   const itemVol = new Float64Array(totalItems);
-  const hasRegimeTilt = state5 !== "neutral" || entryBonus > 0;
+  const hasRegimeTilt = state5 !== "neutral";
 
   // Warm-start: build initial best from prevBest if available
   if (prevBest && prevBest.length === n) {
@@ -4534,20 +4379,13 @@ export default function App() {
       }
     }
 
-    // ── Prepare HMM data arrays for INCREMENTAL training during backtest ──
-    // NO full-history training here — that would be look-ahead bias.
-    // Instead, we prepare the raw score arrays and retrain periodically in the loop.
-    let btHmmAllScores = null, btHmmAllDates = null, btHmmDateToIdx = {};
-    let btHmmModel = null, btHmmEnsembleMap = {}; // date → ensemble probs
-    if (historicalRegimes) {
-      try {
-        const regEntries = Object.entries(historicalRegimes).sort((a, b) => a[0].localeCompare(b[0]));
-        btHmmAllScores = regEntries.map(([, r]) => r.score ?? 0);
-        btHmmAllDates = regEntries.map(([d]) => d);
-        btHmmAllDates.forEach((d, i) => { btHmmDateToIdx[d] = i; });
-        setBtProgress(`Prepared ${btHmmAllScores.length} months of FRED scores for incremental HMM. Fetching ETF prices...`);
-      } catch (e) { console.warn("HMM data prep failed:", e); }
-    }
+    // ── Statistical Jump Model state (replaces the monthly HMM/BOCPD ensemble) ──
+    // The 5-state HMM was retrained on ~240 monthly composite scores — statistically
+    // fragile, and jump models beat HMMs out-of-sample on regime persistence and
+    // downside-risk reduction (Nystrup 2020; Shu-Yu-Mulvey 2024). The JM fits on
+    // ~2000 DAILY SPY returns, refit every 6 months, inferred causally in the loop.
+    let jmModel = null, lastJmFitAbsM = null, jmState = 0, jmStateAtLastEval = 0;
+    const jmStateByMonth = {}; // monthKey → trend state (for annual reporting)
 
     // Core ETF universe for backtest — focused on uncorrelated categories for better optimization
     // (fewer but more diverse ETFs runs faster AND produces better results than 80+ correlated funds)
@@ -4734,7 +4572,6 @@ export default function App() {
     // The model is rebuilt periodically (every 12 months) for efficiency.
     let regimeDurModel = null;
     let lastModelBuildAbsM = null; // absolute month index of last model rebuild
-    let lastHmmBuildAbsM = null;   // absolute month index of last HMM retrain
     let adaptiveFactorWeights = null; // rolling IC-based factor weights
 
     // ── Monthly regime key index (historicalRegimes is keyed YYYY-MM) ──
@@ -4758,6 +4595,17 @@ export default function App() {
         curMk = mk; acc *= (1 + r.ret);
       }
       if (curMk) spyMonthlyShim[curMk] = { SPY: { ret: acc - 1 } };
+    }
+
+    // ── SPY daily return series for the jump model ──
+    // Contiguous array plus a cumulative count per date index, so the loop can take
+    // a strictly-causal slice (returns before day mIdx) in O(1).
+    const spyRetSeries = [];
+    const spyRetCountAt = new Int32Array(sortedDates.length + 1);
+    for (let i = 0; i < sortedDates.length; i++) {
+      const r = returnsByDateSym[sortedDates[i]]?.SPY;
+      spyRetCountAt[i + 1] = spyRetCountAt[i] + (r ? 1 : 0);
+      if (r) spyRetSeries.push(r.ret);
     }
 
     // ── Point-in-time universe helpers ──
@@ -5085,61 +4933,46 @@ export default function App() {
             }
           }
           btRegime = { state5: btState5 || regime3, acceleration: btAcceleration || 0, duration: btDuration, transition: btTransition,
-            // MONTHLY keys + lagged month index (was fed daily keys → always null)
-            threeStage: computeThreeStageCtx(historicalRegimes, regMonthKeys, regMonthToIdx[regimeMonthKey] ?? -1),
-            volSignal: regData?.volSignal || 0,
-            vixInversion: regData?.vixInversion || false,
             arShift: btArShift };
           // Regime change: compare the lagged month's regime to the month before it
           // (was comparing against a DAILY key → always undefined → gate never fired)
           { const prevReg = historicalRegimes[mkOf(curAbsM - 2)]; if (prevReg && prevReg.regime !== regime3) regimeChanged = true; }
 
-          // ── Causal HMM inference for the lagged month ──
-          // The ensemble map only ever covered months ≤ (training cutoff − 3), so a
-          // current-month lookup NEVER hit — the fusion below was inert. Fix: run the
-          // forward-only filter (causal) through the lagged month using the trained
-          // (≥3-months-stale) model. Model params are stale; data is strictly past.
-          if (btHmmModel && btHmmAllScores && !btHmmEnsembleMap[regimeMonthKey]) {
-            const infIdx = btHmmDateToIdx[regimeMonthKey];
-            if (infIdx != null && infIdx >= 12) {
-              try {
-                const scoresToNow = btHmmAllScores.slice(0, infIdx + 1);
-                const filteredNow = hmmFilter(scoresToNow, btHmmModel);
-                const cpNow = runBOCPD(scoresToNow);
-                const ensNow = runEnsemble(filteredNow, cpNow);
-                btHmmEnsembleMap[regimeMonthKey] = ensNow[ensNow.length - 1];
-              } catch { /* inference failed — fusion simply skipped this month */ }
-            }
+          // ── Statistical Jump Model trend state (Nystrup 2020; Shu-Yu-Mulvey 2024) ──
+          // Primary bull/bear detector on SPY daily returns: penalized clustering with
+          // a jump penalty that beats monthly HMMs out-of-sample on persistence and
+          // downside-risk reduction (and replaces the fragile 5-state HMM/BOCPD
+          // ensemble that was fit on ~240 monthly points). Refit every 6 months on
+          // trailing data; inference is a forward-only filtered path — fully causal.
+          const spyCount = spyRetCountAt[mIdx];
+          if (spyCount >= 500 && (lastJmFitAbsM == null || curAbsM - lastJmFitAbsM >= 6)) {
+            const fitted = fitJumpModel(spyRetSeries.slice(Math.max(0, spyCount - 2000), spyCount), 80);
+            if (fitted) { jmModel = fitted; lastJmFitAbsM = curAbsM; }
           }
+          if (jmModel && spyCount >= 130) {
+            jmState = jumpModelInfer(spyRetSeries.slice(Math.max(0, spyCount - 310), spyCount), jmModel, jmState, 80);
+          }
+          jmStateByMonth[monthKey] = jmState;
 
-          // ── HMM ensemble overlay (conservative fusion, same logic as live optimizer) ──
-          // Uses incrementally-trained HMM — only past data, no look-ahead.
-          // Lagged month: the ensemble estimate for month M is built from the
-          // month-M regime score (28th-of-M data) — observable only from M+1.
-          if (btHmmEnsembleMap[regimeMonthKey]) {
-              const ensProbs = btHmmEnsembleMap[regimeMonthKey];
-              const hmmState5 = hmmToState5(ensProbs);
-              const fredState5 = btRegime.state5;
-              const riskOrder = ["strong_risk_off", "mild_risk_off", "neutral", "mild_risk_on", "strong_risk_on"];
-              const fredRisk = riskOrder.indexOf(fredState5);
-              const hmmRisk = riskOrder.indexOf(hmmState5);
-              if (fredRisk >= 0 && hmmRisk >= 0) {
-                // Adaptive fusion: when both agree on direction, use the STRONGER signal
-                // When they disagree, use the more defensive (conservative)
-                const bothRiskOn = fredRisk >= 3 && hmmRisk >= 3; // both mild_risk_on or stronger
-                const bothRiskOff = fredRisk <= 1 && hmmRisk <= 1; // both mild_risk_off or stronger
-                const fusedIdx = (bothRiskOn || bothRiskOff) ? Math.max(fredRisk, hmmRisk) : Math.min(fredRisk, hmmRisk);
-                btRegime.state5 = riskOrder[fusedIdx];
-              }
-              btRegime.hmmState5 = hmmState5;
-              btRegime.hmmProbs = ensProbs;
-              // Detect regime change from HMM perspective too (lagged month vs its prior)
-              const prevMonthKey = mkOf(curAbsM - 2);
-              if (btHmmEnsembleMap[prevMonthKey]) {
-                const prevHmmState = hmmToState5(btHmmEnsembleMap[prevMonthKey]);
-                if (prevHmmState !== hmmState5) regimeChanged = true;
-              }
-          }
+          // ── Trend × stress fusion ──
+          // The jump-model TREND state sets direction: bear = persistent downtrend,
+          // which labels bad periods while they are still bad — so defensive tilts
+          // conditional on "bear" are justified. The FRED composite is a STRESS
+          // intensity measure; empirically, HIGH stress precedes ABOVE-average
+          // returns (equity risk premium / mean reversion) — the source of the
+          // "counter-intuitive" forward-return table — so stress must never set
+          // direction on its own, only modulate the trend state's intensity.
+          const stress = regData.score ?? 0;
+          const fusedState5 = jmState === 1
+            ? (stress > 0.3 ? "strong_risk_off" : "mild_risk_off")
+            : (stress < -0.3 ? "strong_risk_on" : stress <= 0.3 ? "mild_risk_on" : "neutral");
+          btRegime.state5 = fusedState5;
+          btState5 = fusedState5;
+          btRegime.jmState = jmState;
+          // Signal agreement drives tilt confidence (replaces the HMM posterior):
+          // trend and stress agree → full conviction; conflict → tilts at ~55%.
+          btRegime.signalAgreement = (jmState === 1) === (stress > 0.3) ? 1.0
+            : (stress >= -0.3 && stress <= 0.3 ? 0.75 : 0.55);
         }
       }
       // ── Rebalance Trigger Engine (daily monitoring, deliberate rebalancing) ──
@@ -5152,54 +4985,26 @@ export default function App() {
 
       let shouldEvaluate = isFirstAllocation;
 
+      // Trend break: jump-model state flipped since the last evaluation — the
+      // single highest-value trigger (jump penalty already enforces persistence,
+      // so a flip is meaningful by construction; no extra confirmation needed)
+      const jmFlipped = useRegime && jmModel != null && jmState !== jmStateAtLastEval;
+
       if (!shouldEvaluate && isNewMonth && useRegime && historicalRegimes) {
-        const regData = historicalRegimes[regimeMonthKey]; // lagged (look-ahead guard)
+        // ── SIMPLIFIED trigger set ──
+        // Removed: three-stage pattern gate (pattern-mined on a handful of episodes,
+        // 90% "confidence" from tiny samples) and the multi-signal gate (stress
+        // acceleration + vol-shift + VIX inversion — three coincident stress proxies
+        // that mostly re-measure the composite score already driving Gate 1).
+        // What remains is one signal per distinct information source.
 
-        // ── Gate 1: Regime change — only if persistent (not a 1-month flicker) ──
-        // Require the regime to have been different for at least 2 consecutive months
-        // to filter out noise from monthly FRED data revisions
-        if (regimeChanged && btDuration >= 2) shouldEvaluate = true;
+        // ── Gate 1: Regime change — trend break OR persistent stress-regime change ──
+        if (jmFlipped || (regimeChanged && btDuration >= 2)) shouldEvaluate = true;
 
-        // ── Gate 2: Three-stage pattern prediction — only high confidence ──
-        if (!shouldEvaluate && !isFirstAllocation) {
-          const regMonthIdx = regMonthToIdx[regimeMonthKey] ?? -1; // lagged month index
-          const threeStagePredict = regMonthIdx >= 0 ? computeThreeStagePredict(historicalRegimes, regMonthKeys, regMonthIdx) : null;
-          // Raised confidence threshold from 55% to 65% for daily mode
-          if (threeStagePredict?.shouldTrigger && threeStagePredict.confidence >= 0.90 && monthsSinceRebal >= taxCooldownDays) {
-            shouldEvaluate = true;
-            if (btRegime) btRegime.threeStagePredict = threeStagePredict;
-          }
-        }
-
-        // ── Gate 3: Multi-signal confirmation — require MORE signals with daily data ──
-        if (!shouldEvaluate) {
-          let signalCount = 0;
-
-          // Signal 1: Stress acceleration (raised threshold from 0.5 to 0.8)
-          if (regData && Math.abs(regData.stressAcceleration || 0) >= 0.8) signalCount++;
-
-          // Signal 2: Volatility regime shift (only dramatic transitions)
-          { const prevMk = mkOf(curAbsM - 2); // month before the lagged regime month
-            const prevReg = historicalRegimes[prevMk];
-            const volShift = regData?.volRegime !== prevReg?.volRegime;
-            const meaningfulShift = volShift && (
-              (prevReg?.volRegime === "compression" && regData?.volRegime === "expansion") ||
-              (prevReg?.volRegime === "normal" && regData?.volRegime === "elevated")
-            ); // removed elevated→normal (not urgent enough to trade on)
-            if (meaningfulShift) signalCount++;
-          }
-
-          // Signal 3: VIX inversion (keep — this is a strong signal)
-          if (regData?.vixInversion) signalCount++;
-
-          // Raised threshold: need 3 signals regardless of tax state
-          if (signalCount >= 3) shouldEvaluate = true;
-        }
-
-        // ── Gate 4: Semi-annual fallback ──
+        // ── Gate 2: Semi-annual fallback ──
         if (!shouldEvaluate && mMonth % 6 === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
 
-        // ── Gate 5: Monthly drift check ──
+        // ── Gate 3: Monthly drift check ──
         // If any position has drifted >5% from target weight, evaluate rebalance.
         // This catches organic drift (winners growing, losers shrinking) without waiting
         // for a regime signal. SPY auto-rebalances via market-cap weighting — we should too.
@@ -5222,9 +5027,11 @@ export default function App() {
       const currentDDFromPeak = ddPeak > 0 ? (ddPeak - optValue) / ddPeak : 0;
       const isEmergencyDD = currentDDFromPeak >= 0.15;
       const minCooldownDays = Math.max(taxCooldownDays, 63);
-      if (!isFirstAllocation && monthsSinceRebal < minCooldownDays && !isEmergencyDD) shouldEvaluate = false;
+      // Trend breaks (jmFlipped) bypass the cooldown: the jump penalty makes flips
+      // rare by construction, and they mark exactly the moments waiting is costly
+      if (!isFirstAllocation && monthsSinceRebal < minCooldownDays && !isEmergencyDD && !jmFlipped) shouldEvaluate = false;
 
-      // ── Gate 6: Position-level trailing stop ──
+      // ── Gate 4: Position-level trailing stop ──
       // Portfolio-level drawdown can mask single-position blowups (e.g., -40% in one stock
       // while portfolio is only -8%). Force rebalance evaluation if any position drops >25%
       // from its peak weight-adjusted value.
@@ -5246,6 +5053,7 @@ export default function App() {
       if (!isFirstAllocation && annualTaxSpent > optValue * TAX_BUDGET_PCT / 100) shouldEvaluate = false;
 
       if (!shouldEvaluate) continue;
+      jmStateAtLastEval = jmState; // consume the trend-break trigger
       // Yield to UI every evaluation to prevent freeze
       setBtProgress(`Evaluating ${dateKey}...`);
       await new Promise(r => setTimeout(r, 0));
@@ -5470,30 +5278,8 @@ export default function App() {
         }
       }
 
-      // ── Incremental HMM training: retrain every 12 MONTHS on PAST data only ──
-      // At 2008-01, the HMM has only seen data up to 2007-10 (3-month gap).
-      // (Cadence check previously compared a monthly key against a daily-keyed index —
-      // always true — so the HMM retrained on nearly every evaluation.)
-      if (btHmmAllScores && (lastHmmBuildAbsM == null || curAbsM - lastHmmBuildAbsM >= 12)) {
-        const hmmCutoffIdx = btHmmDateToIdx[monthKey];
-        if (hmmCutoffIdx != null) {
-          const pastCutoff = Math.max(0, hmmCutoffIdx - 3); // 3-month gap to prevent leakage
-          if (pastCutoff > 36) { // need at least 36 months to train meaningfully
-            try {
-              const pastScores = btHmmAllScores.slice(0, pastCutoff);
-              btHmmModel = hmmTrain(pastScores, 30);
-              const pastFiltered = hmmFilter(pastScores, btHmmModel);
-              const pastCP = runBOCPD(pastScores);
-              const pastEnsemble = runEnsemble(pastFiltered, pastCP);
-              // Store ensemble probs for each past date
-              for (let k = 0; k < pastCutoff; k++) {
-                btHmmEnsembleMap[btHmmAllDates[k]] = pastEnsemble[k];
-              }
-              lastHmmBuildAbsM = curAbsM;
-            } catch (e) { /* HMM training failed for this window, continue */ }
-          }
-        }
-      }
+      // (Monthly HMM/BOCPD ensemble removed — the statistical jump model in the
+      // regime block above is the trend detector; see its comment for rationale.)
       // Update btRegime with current model
       if (btRegime) btRegime.durationModel = regimeDurModel;
 
@@ -5819,7 +5605,8 @@ export default function App() {
           returnImprovement: +retImp.toFixed(1), taxCostPct: +tcPct.toFixed(2), currAlpha: +curAlpha.toFixed(1), taxRate: +appRate.toFixed(1), taxType: stGains > ltGains ? "ST-heavy" : ltGains > stGains ? "LT-heavy" : "Blended", regime: btState5, regimeScore: btRegimeScore, acceleration: btAcceleration, duration: btDuration, transition: btTransition,
           fwdSignal: regimeDurModel ? getRegimeDurationFwd(regimeDurModel, btState5 || "neutral", btDuration) : null,
           threeStage: btRegime?.threeStage ? { pattern: btRegime.threeStage.pattern, type: btRegime.threeStage.patternType, signal: btRegime.threeStage.patternSignal, bridgeDur: btRegime.threeStage.bridgeDuration, effDur: btRegime.threeStage.effectiveDuration } : null,
-          threeStagePredict: btRegime?.threeStagePredict || null,
+          threeStagePredict: null, // three-stage pattern gate removed (tiny-sample pattern mining)
+          jmState: btRegime?.jmState ?? null, // jump-model trend state at this rebalance
           candidateCount: candidates.length, iterations: btIterations });
       }
 
@@ -5965,10 +5752,10 @@ export default function App() {
         duration: yearEndDuration,
         transition: yearEndTransition,
         hmmState5: (() => {
-          if (!btHmmEnsembleMap) return null;
+          // Jump-model trend state at year-end (field name kept for UI compat)
           for (let m = 12; m >= 1; m--) {
             const mk = `${year}-${String(m).padStart(2, "0")}`;
-            if (btHmmEnsembleMap[mk]) return hmmToState5(btHmmEnsembleMap[mk]);
+            if (jmStateByMonth[mk] != null) return jmStateByMonth[mk] === 1 ? "mild_risk_off" : "mild_risk_on";
           }
           return null;
         })(),
@@ -6103,7 +5890,7 @@ export default function App() {
       etfsUsed: available.length,
       oosAnalysis,
       benchmark: benchStats,
-      regimeSource: historicalRegimes ? (btHmmModel ? "FRED + HMM Ensemble (1-month lagged, causal, no look-ahead)" : "FRED (12-series, 5-state, 1-month lagged)") : "Proxy (SPY momentum/vol)",
+      regimeSource: historicalRegimes ? (jmModel ? "Jump-Model trend × FRED stress (1-month lagged, causal)" : "FRED stress (1-month lagged)") : "Proxy (SPY momentum/vol)",
       regimeDurationModel: regimeDurModel ? true : false,
       tax: {
         totalPaid: Math.round(totalTaxPaid),
@@ -6249,34 +6036,33 @@ export default function App() {
       } catch (e) { /* proceed without regime */ }
     }
 
-    // Build CAUSAL HMM ensemble map for simulation (no look-ahead bias):
-    // entry for month i is produced by forward-filtering data ≤ i with a model
-    // trained only on data ≤ (last retrain − 3 months). The old pattern overwrote
-    // every past entry with the newest model — future params leaking backward.
-    let simHmmEnsembleMap = {};
-    if (simHistRegimes) {
-      try {
-        const entries = Object.entries(simHistRegimes).sort((a, b) => a[0].localeCompare(b[0]));
-        const allScores = entries.map(([, r]) => r.score ?? 0);
-        const allDates = entries.map(([d]) => d);
-        if (allScores.length > 36) {
-          let model = null, lastBuild = -999;
-          for (let i = 36; i < allScores.length; i++) {
-            if (i - lastBuild >= 12) {
-              const pastScores = allScores.slice(0, Math.max(0, i - 3)); // 3-month gap
-              model = hmmTrain(pastScores, 25);
-              lastBuild = i;
-            }
-            if (model) {
-              const prefix = allScores.slice(0, i + 1); // data through month i only
-              const filtered = hmmFilter(prefix, model); // forward-only (causal)
-              const cp = runBOCPD(prefix);
-              const ensemble = runEnsemble(filtered, cp);
-              simHmmEnsembleMap[allDates[i]] = ensemble[ensemble.length - 1];
-            }
-          }
+    // ── Causal jump-model trend states per month (replaces the monthly HMM map).
+    // Computed ONCE and reused by all simulation runs: walk forward through the
+    // first trading day of each month, refit every 6 months on trailing daily SPY
+    // returns (past only), infer the filtered state from data strictly before it.
+    const simJmStateByMonth = {};
+    {
+      const simSpyRets = [];
+      const simSpyCountAt = new Int32Array(sortedDates.length + 1);
+      for (let i = 0; i < sortedDates.length; i++) {
+        const r = returnsByDateSym[sortedDates[i]]?.SPY;
+        simSpyCountAt[i + 1] = simSpyCountAt[i] + (r ? 1 : 0);
+        if (r) simSpyRets.push(r.ret);
+      }
+      let jm = null, lastFitAbsM = -999, st = 0, curMk = null;
+      for (let i = 0; i < simDates.length; i++) {
+        const mk = simDates[i].slice(0, 7);
+        if (mk === curMk) continue; // evaluate at the first trading day of each month
+        curMk = mk;
+        const cnt = simSpyCountAt[dateToIdx[simDates[i]]];
+        const absM = parseInt(mk.slice(0, 4)) * 12 + parseInt(mk.slice(5, 7)) - 1;
+        if (cnt >= 500 && absM - lastFitAbsM >= 6) {
+          const f = fitJumpModel(simSpyRets.slice(Math.max(0, cnt - 2000), cnt), 80);
+          if (f) { jm = f; lastFitAbsM = absM; }
         }
-      } catch (e) { /* proceed without HMM */ }
+        if (jm && cnt >= 130) st = jumpModelInfer(simSpyRets.slice(Math.max(0, cnt - 310), cnt), jm, st, 80);
+        simJmStateByMonth[mk] = jm ? st : null;
+      }
     }
 
     // ── Run N simulations ──
@@ -6308,6 +6094,7 @@ export default function App() {
       let simDDCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
       let simDDActiveLevel = -1, simDDEquityScale = 1.0, SimDDRecoveryMonths = 0;
       let simDDBaseAlloc = null;
+      let simJmAtLastEval = 0; // trend state at last rebalance evaluation
 
       for (let mi = 0; mi < simDates.length; mi++) {
         const monthKey = simDates[mi]; // NOTE: full DAILY date key (legacy name)
@@ -6408,15 +6195,18 @@ export default function App() {
         const isFirst = prevTickers.length === 0;
         const mSinceRebal = lastRebalMonth ? (mIdx - dateToIdx[lastRebalMonth]) : 999;
 
-        // Rebalance triggers matching backtest's tighter gates
+        // Rebalance triggers — SIMPLIFIED set matching the main backtest
+        // (multi-signal stress gate removed; trend break is first-class)
+        const simJm = simJmStateByMonth[monthKey.slice(0, 7)];
+        const simJmFlipped = simJm != null && simJm !== simJmAtLastEval;
         let shouldEval = isFirst;
         if (!shouldEval && simHistRegimes) {
-          // MONTHLY lagged keys (daily keys against the monthly map disabled these gates)
           const rd = simHistRegimes[simRegMK];
-          // Gate 1: Regime change — require 2+ months persistence
-          { const prevRd = simHistRegimes[simPrevRegMK];
+          // Gate 1: trend break OR persistent stress-regime change
+          if (simJmFlipped) shouldEval = true;
+          if (!shouldEval) {
+            const prevRd = simHistRegimes[simPrevRegMK];
             if (prevRd && rd && prevRd.regime !== rd.regime) {
-              // Check duration >= 2 (walk back by MONTH from the lagged month)
               let simDur = 1;
               for (let lb = 2; lb <= 36; lb++) {
                 const prev2 = simHistRegimes[mkOfSim(simAbsM - lb)];
@@ -6425,41 +6215,27 @@ export default function App() {
               if (simDur >= 2) shouldEval = true;
             }
           }
-          // Gate 2: Multi-signal — require 3 confirming signals
-          if (!shouldEval && rd) {
-            let sigCount = 0;
-            if (Math.abs(rd.stressAcceleration || 0) >= 0.8) sigCount++;
-            if (rd.vixInversion) sigCount++;
-            { const prevRd = simHistRegimes[simPrevRegMK];
-              const volShift = rd.volRegime !== prevRd?.volRegime;
-              if (volShift && ((prevRd?.volRegime === "compression" && rd.volRegime === "expansion") ||
-                  (prevRd?.volRegime === "normal" && rd.volRegime === "elevated"))) sigCount++;
-            }
-            if (sigCount >= 3) shouldEval = true;
-          }
-          // Semi-annual fallback (matching backtest)
+          // Gate 2: semi-annual fallback (matching backtest)
           if (!shouldEval && mMonth % 6 === 0 && mSinceRebal >= simCooldown) shouldEval = true;
         } else if (!shouldEval) {
-          if (mMonth % 6 === 0) shouldEval = true;
+          if (mMonth % 6 === 0 || simJmFlipped) shouldEval = true;
         }
-        // Minimum 63 trading day cooldown (matching backtest)
+        // Minimum 63 trading day cooldown (trend breaks bypass, matching backtest)
         const simMinCooldown = Math.max(simCooldown, 63);
-        if (!isFirst && mSinceRebal < simMinCooldown) shouldEval = false;
+        if (!isFirst && mSinceRebal < simMinCooldown && !simJmFlipped) shouldEval = false;
         if (!shouldEval) continue;
+        simJmAtLastEval = simJm ?? simJmAtLastEval;
 
         // Trailing stats with recency weighting + shrinkage (matches main backtest)
         // Use regime-aware decay and adaptive trailing window
         const simRd = simHistRegimes?.[simRegMK]; // lagged monthly key
+        // Trend × stress fusion (matches backtest): trend sets direction, stress intensity
         const simState5 = (() => {
-          if (!simRd) return "neutral";
-          let s5 = simRd.state5 || "neutral";
-          if (simHmmEnsembleMap[simRegMK]) {
-            const hmmS5 = hmmToState5(simHmmEnsembleMap[simRegMK]);
-            const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
-            const fR = ro.indexOf(s5), hR = ro.indexOf(hmmS5);
-            if (fR >= 0 && hR >= 0) s5 = ro[Math.min(fR, hR)];
-          }
-          return s5;
+          const stress = simRd?.score ?? 0;
+          if (simJm == null) return simRd?.state5 || "neutral";
+          return simJm === 1
+            ? (stress > 0.3 ? "strong_risk_off" : "mild_risk_off")
+            : (stress < -0.3 ? "strong_risk_on" : stress <= 0.3 ? "mild_risk_on" : "neutral");
         })();
         // Vol-derived momentum decay (matches backtest)
         let simSPYVol = 15;
@@ -6578,18 +6354,12 @@ export default function App() {
                 if (cC > 0) simArShift = ((cS / cC) - 0.35) / 0.15;
               }
             }
-            simRegime = { state5: rd.state5 || sRegime3, acceleration: rd.acceleration ?? 0, duration: sDur, transition: null, volSignal: rd.volSignal || 0, vixInversion: rd.vixInversion || false, arShift: simArShift };
-            // HMM overlay (conservative fusion, incremental — no look-ahead)
-            if (simHmmEnsembleMap[simRegMK]) {
-              const hmmS5 = hmmToState5(simHmmEnsembleMap[simRegMK]);
-              const ro = ["strong_risk_off","mild_risk_off","neutral","mild_risk_on","strong_risk_on"];
-              const fR = ro.indexOf(simRegime.state5), hR = ro.indexOf(hmmS5);
-              if (fR >= 0 && hR >= 0) {
-                const bOn2 = fR >= 3 && hR >= 3, bOff2 = fR <= 1 && hR <= 1;
-                simRegime.state5 = ro[(bOn2 || bOff2) ? Math.max(fR, hR) : Math.min(fR, hR)];
-              }
-              simRegime.hmmProbs = simHmmEnsembleMap[simRegMK]; // pass HMM probs for confidence scaling
-            }
+            // Trend × stress fusion (matches backtest): simState5 already fused above
+            const sStress = rd.score ?? 0;
+            simRegime = { state5: simState5, duration: sDur, arShift: simArShift,
+              signalAgreement: simJm == null ? 0.7
+                : (simJm === 1) === (sStress > 0.3) ? 1.0
+                : (sStress >= -0.3 && sStress <= 0.3 ? 0.75 : 0.55) };
           }
         }
         const simEffectiveOT = weightingMethod === "hybrid" ? "hybrid" : weightingMethod === "risk_parity" ? "risk_parity" : ot;
@@ -9383,7 +9153,10 @@ useEffect(() => {
 
                     {/* Forward Returns by Regime + Duration Heatmap */}
                     {a.durationReturns && <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Forward SPY Returns by Regime & Duration</div>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Forward SPY Returns by STRESS Regime & Duration</div>
+                      {a.methodNote && <div style={{ fontSize: 8, color: cs.dim, lineHeight: 1.5, marginBottom: 6, padding: "6px 8px", background: "rgba(120,169,255,.04)", border: "1px solid rgba(120,169,255,.1)" }}>
+                        ℹ {a.methodNote}
+                      </div>}
                       <div style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
                           <thead><tr>
@@ -9409,6 +9182,33 @@ useEffect(() => {
                           </tbody>
                         </table>
                       </div>
+                    </div>}
+
+                    {/* Forward SPY returns by TREND regime (the intuitive lens) */}
+                    {a.trendReturns && <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6 }}>Forward SPY Returns by TREND Regime (10-month SMA)</div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+                          <thead><tr>
+                            <th style={{ padding: "5px 6px", textAlign: "left", color: cs.dim, fontSize: 8 }}>Trend State</th>
+                            {["1m","3m","6m","12m"].map(h => <th key={h} style={{ padding: "5px 6px", textAlign: "center", color: cs.blue, fontSize: 8 }}>Fwd {h}</th>)}
+                            <th style={{ padding: "5px 6px", textAlign: "center", color: cs.dim, fontSize: 8 }}>N (1m)</th>
+                          </tr></thead>
+                          <tbody>
+                            {["uptrend","downtrend"].map(st =>
+                              <tr key={st} style={{ borderTop: "1px solid #1e1e1e" }}>
+                                <td style={{ padding: "5px 6px", color: st === "uptrend" ? cs.green : cs.red, fontWeight: 600 }}>{st === "uptrend" ? "▲ UPTREND (≥ 10mo SMA)" : "▼ DOWNTREND (< 10mo SMA)"}</td>
+                                {["1m","3m","6m","12m"].map(h => {
+                                  const cell = a.trendReturns[st]?.[h];
+                                  return <td key={h} style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, fontWeight: 600, color: cell == null ? cs.muted : cell.avg >= 0 ? cs.green : cs.red }}>{cell != null ? `${cell.avg > 0 ? "+" : ""}${cell.avg}%` : "—"}</td>;
+                                })}
+                                <td style={{ padding: "5px 6px", textAlign: "center", fontFamily: mono2, color: cs.muted }}>{a.trendReturns[st]?.["1m"]?.n ?? "—"}</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ fontSize: 8, color: cs.dim, marginTop: 4 }}>The optimizer's jump-model detector works in this lens: bear = persistent downtrend (defensive tilts justified), with the stress composite only modulating intensity.</div>
                     </div>}
 
                     {/* Optimal Entry Signals — ranked by 6m forward return */}
