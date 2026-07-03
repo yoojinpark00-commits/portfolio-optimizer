@@ -1020,12 +1020,17 @@ const REGIME_TILTS = {
 // bond = fixed-income
 // commodity = alternatives
 // Values are [min, max] as fractions (0-1)
+// Re-cut for the beat-SPY mandate: a 100%-equity benchmark cannot be beaten from a
+// 45-65% equity neutral stance — the old bands forced permanent bond/commodity drag
+// through the strongest equity decades. Now that regime states are TREND-aware
+// (jump model — risk_off genuinely means downtrend), staying near-fully invested in
+// risk_on/neutral is correct; defense concentrates where the trend has actually broken.
 const REGIME_ALLOCATION_RULES = {
-  strong_risk_on: { equity: [0.70, 0.90], bond: [0.05, 0.20], commodity: [0.00, 0.10] }, // Bull/Recovery
-  mild_risk_on:   { equity: [0.60, 0.80], bond: [0.10, 0.25], commodity: [0.00, 0.10] },
-  neutral:        { equity: [0.45, 0.65], bond: [0.15, 0.30], commodity: [0.05, 0.15] },
-  mild_risk_off:  { equity: [0.30, 0.50], bond: [0.25, 0.40], commodity: [0.10, 0.20] }, // Correction/Euphoria
-  strong_risk_off: { equity: [0.15, 0.35], bond: [0.30, 0.45], commodity: [0.15, 0.25] }, // Crisis
+  strong_risk_on: { equity: [0.90, 1.00], bond: [0.00, 0.10], commodity: [0.00, 0.05] }, // uptrend, calm
+  mild_risk_on:   { equity: [0.75, 0.95], bond: [0.05, 0.20], commodity: [0.00, 0.10] },
+  neutral:        { equity: [0.60, 0.85], bond: [0.10, 0.30], commodity: [0.00, 0.10] }, // uptrend, stress building
+  mild_risk_off:  { equity: [0.35, 0.60], bond: [0.25, 0.45], commodity: [0.05, 0.20] }, // downtrend
+  strong_risk_off: { equity: [0.20, 0.45], bond: [0.30, 0.50], commodity: [0.10, 0.25] }, // downtrend + high stress
 };
 
 // ── Drawdown Control Thresholds ──
@@ -2242,13 +2247,10 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
 
   // Pre-compute adjusted returns, vols as typed arrays
   const adjRet = new Float64Array(n), volArr = new Float64Array(n), isLev = new Uint8Array(n);
-  // Pre-compute each candidate's correlation with SPY (US Large Cap category)
-  const spyCorr = new Float64Array(n);
   // Pre-compute skewness and macro-sector for each candidate
   const skewArr = new Float64Array(n);
   const macroSectors = new Array(n);
   for (let i = 0; i < n; i++) {
-    spyCorr[i] = gc(candidates[i].c, "US Large Cap");
     skewArr[i] = CATEGORY_SKEW[candidates[i].c] ?? -0.25;
     macroSectors[i] = MACRO_SECTOR_MAP[candidates[i].c] || "other";
   }
@@ -2609,15 +2611,12 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
     // ── Sector concentration soft penalty: progressive above 40% ──
     const sectorConcPenalty = maxSectorWt > 0.40 ? -0.05 * (maxSectorWt - 0.40) : 0;
 
-    // ── SPY overlap penalty: if portfolio is >85% correlated with SPY, you should just buy SPY ──
-    // ETF-only universe is inherently SPY-correlated — minimize penalty to avoid
-    // forcing the optimizer into exotic/niche ETFs just for differentiation
-    let wtdSpyCorr = 0;
-    for (let i = 0; i < n; i++) wtdSpyCorr += (alloc[i] / (deployAmt || 1)) * spyCorr[i];
-    // Also add existing positions' SPY correlation
-    for (let i = 0; i < nEx; i++) wtdSpyCorr += exW[i] * gc(itemCats[i], "US Large Cap");
-    const spyPenaltyScale = 0.5; // moderate SPY overlap penalty — differentiation matters but don't force exotic picks
-    const spyPenalty = (wtdSpyCorr > 0.85 ? -0.08 * (wtdSpyCorr - 0.85) / 0.15 : wtdSpyCorr < 0.5 ? 0.03 : 0) * spyPenaltyScale;
+    // ── SPY overlap penalty REMOVED ──
+    // It paid the optimizer to be different from the benchmark it's graded against.
+    // For a beat-SPY mandate, being SPY-like in uptrends is CORRECT — the edge
+    // should come from stepping aside in downtrends (trend regime + overlays),
+    // not from holding exotic assets during bull markets.
+    const spyPenalty = 0;
 
     // Factor diversification removed — was forcing neutral factor exposure and preventing
     // tactical tilts toward working factors (e.g., momentum in trending markets)
@@ -2680,10 +2679,13 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
       // Reduced RP dominance (50x, was 100x), increased Sharpe input (0.3, was 0.1)
       sc = -rpDist * 50 + sh * 0.3 + commonSignals;
     } else if (target === "max_sharpe") {
-      // Max Sharpe: primary alpha strategy — Sharpe ratio drives selection
-      // Add return floor: penalize portfolios with expected return below risk-free rate
+      // Max Sharpe: primary alpha strategy — Sharpe ratio drives selection.
+      // Excess-return term added for the beat-SPY mandate: pure Sharpe happily
+      // picks 8%-return/8%-vol portfolios that can never beat a 100%-equity
+      // benchmark on CAGR. Return breaks ties toward the higher-returning
+      // portfolio at comparable Sharpe (0.015 × excess % ≈ Sharpe-scale units).
       const retFloorPenalty = ret < localRF ? -0.10 * (localRF - ret) : 0;
-      sc = sh + retFloorPenalty + volPenalty + levPenalty + commonSignals;
+      sc = sh + (ret - localRF) * 0.015 + retFloorPenalty + volPenalty + levPenalty + commonSignals;
     } else if (target === "min_vol") {
       // Min Vol: minimum volatility WITH a return floor
       // Without a return floor, this always picks 100% bonds. Reward exceeding RF+2%.
@@ -2699,8 +2701,10 @@ function optimizeCash(existing, cash, totalVal, candidates, target, srMode, volT
       const ddPenalty = -0.02 * estMaxDD;
       sc = dynRet * regimeRetMult + shFloor + ddPenalty + volPenalty + levPenalty + commonSignals;
     } else {
-      // Balanced (default): multi-objective — meaningful weight on return + Sharpe + drawdown
-      sc = sh * 0.6 + dynRet * 0.10 - estMaxDD * 0.03 + volPenalty + levPenalty + commonSignals;
+      // Balanced (default): multi-objective — return weight raised for the beat-SPY
+      // mandate (was 0.10; Sharpe-dominance systematically picked low-vol/low-return
+      // portfolios that can't beat a 100%-equity benchmark on CAGR)
+      sc = sh * 0.5 + dynRet * 0.18 - estMaxDD * 0.02 + volPenalty + levPenalty + commonSignals;
     }
     if (sc > bs) { bs = sc; best = new Float64Array(alloc); }
   }
@@ -4386,6 +4390,7 @@ export default function App() {
     // ~2000 DAILY SPY returns, refit every 6 months, inferred causally in the loop.
     let jmModel = null, lastJmFitAbsM = null, jmState = 0, jmStateAtLastEval = 0;
     const jmStateByMonth = {}; // monthKey → trend state (for annual reporting)
+    let lastKnownState5 = null; // fused regime state persisted across days (DD gate runs before the day's regime is computed)
 
     // Core ETF universe for backtest — focused on uncorrelated categories for better optimization
     // (fewer but more diverse ETFs runs faster AND produces better results than 80+ correlated funds)
@@ -4759,8 +4764,11 @@ export default function App() {
       // REGIME-AWARE: Don't trigger new drawdown levels during confirmed recovery/bull.
       // Drawdowns during regime-confirmed rallies are typically V-shaped — selling low
       // and buying back higher destroys alpha. Only trigger when regime confirms stress.
-      const ddRegimeAllowsTrigger = !btState5 || btState5 === "neutral" ||
-        btState5.includes("risk_off"); // only trigger in neutral, bear, or unknown
+      // BUG FIX: this block runs BEFORE the day's regime is computed and btState5 is
+      // re-declared null every iteration — the gate always saw "unknown" and always
+      // allowed triggering. Use the persisted state from the previous day instead.
+      const ddRegimeAllowsTrigger = !lastKnownState5 || lastKnownState5 === "neutral" ||
+        lastKnownState5.includes("risk_off"); // only trigger in neutral, bear, or unknown
       if (drawdownProtection && Object.keys(optAlloc).length > 0) {
         // Save base allocation from optimizer if not already saved
         if (!ddBaseAlloc) ddBaseAlloc = { ...optAlloc };
@@ -4797,13 +4805,17 @@ export default function App() {
             portfolioValue: Math.round(optValue) });
         }
 
-        // Recovery: gradual re-entry with hysteresis
+        // Recovery: gradual re-entry with hysteresis.
+        // FAST RE-ENTRY in confirmed uptrends: the months after stress peaks carry
+        // the highest forward returns (risk premium); a 63-day glide misses most of
+        // the rebound. When the trend regime has flipped back to risk_on, re-enter
+        // in ~10 trading days instead of 63.
         if (ddActiveLevel >= 0) {
           const activeThreshold = DRAWDOWN_LEVELS[ddActiveLevel].threshold;
           if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
             ddRecoveryMonths++;
-            // Linear re-entry over ~63 trading days (3 months) back to full equity
-            ddEquityScale = Math.min(1.0, ddEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[ddActiveLevel].equityReduction)) / 63);
+            const reentryDays = lastKnownState5 && lastKnownState5.includes("risk_on") ? 10 : 63;
+            ddEquityScale = Math.min(1.0, ddEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[ddActiveLevel].equityReduction)) / reentryDays);
             if (ddEquityScale >= 0.98) {
               ddEquityScale = 1.0;
               ddActiveLevel = -1;
@@ -4968,6 +4980,7 @@ export default function App() {
             : (stress < -0.3 ? "strong_risk_on" : stress <= 0.3 ? "mild_risk_on" : "neutral");
           btRegime.state5 = fusedState5;
           btState5 = fusedState5;
+          lastKnownState5 = fusedState5; // persist for tomorrow's DD gate
           btRegime.jmState = jmState;
           // Signal agreement drives tilt confidence (replaces the HMM posterior):
           // trend and stress agree → full conviction; conflict → tilts at ~55%.
@@ -5001,8 +5014,9 @@ export default function App() {
         // ── Gate 1: Regime change — trend break OR persistent stress-regime change ──
         if (jmFlipped || (regimeChanged && btDuration >= 2)) shouldEvaluate = true;
 
-        // ── Gate 2: Semi-annual fallback ──
-        if (!shouldEvaluate && mMonth % 6 === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
+        // ── Gate 2: Annual fallback (was semi-annual — trend breaks + the drift
+        // gate cover real needs; halving forced rebalances cuts tax/cost churn) ──
+        if (!shouldEvaluate && mMonth === 0 && monthsSinceRebal >= taxCooldownDays) shouldEvaluate = true;
 
         // ── Gate 3: Monthly drift check ──
         // If any position has drifted >5% from target weight, evaluate rebalance.
@@ -5017,8 +5031,8 @@ export default function App() {
           if (maxDrift > 0.05) shouldEvaluate = true; // >5% drift in any position
         }
       } else if (!shouldEvaluate && isNewMonth) {
-        // No regime data: semi-annual fallback
-        if (mMonth % 6 === 0) shouldEvaluate = true;
+        // No regime data: annual fallback
+        if (mMonth === 0) shouldEvaluate = true;
       }
 
       // ── Minimum cooldown: 3 months (63 trading days) regardless of tax state ──
@@ -5327,54 +5341,49 @@ export default function App() {
       const newAlloc = {}; const totalDeployed = result.reduce((s, r) => s + r.dollars, 0) || optValue;
       result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDeployed; });
 
-      // ── Volatility Scaling (Moreira & Muir 2017) ──
-      // Scale portfolio exposure inversely to recent realized volatility.
-      // When vol is high, reduce exposure (shift to cash/bonds); when low, stay fully invested.
-      // This improves risk-adjusted returns because high-vol periods have worse return/risk.
-      if (volTarget > 0 && Object.keys(newAlloc).length > 0) {
-        // Compute realized portfolio vol from trailing ~63 trading days (3 months)
-        const volLookback = Math.min(63, mIdx);
-        const portDailyRets = [];
-        for (let vd = Math.max(0, mIdx - volLookback); vd < mIdx; vd++) {
-          const md = returnsByDateSym[sortedDates[vd]];
-          if (!md) continue;
-          let dRet = 0;
-          for (const [sym, wt] of Object.entries(newAlloc)) {
-            if (md[sym]) dRet += wt * md[sym].ret;
-          }
-          portDailyRets.push(dRet);
-        }
-        if (portDailyRets.length >= 21) {
-          const pMean = portDailyRets.reduce((a, b) => a + b, 0) / portDailyRets.length;
-          const pVar = portDailyRets.reduce((a, r) => a + (r - pMean) ** 2, 0) / portDailyRets.length;
-          const realizedVol = Math.sqrt(pVar) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100; // annualized %
-          if (realizedVol > 0) {
-            // Scale = target_vol / realized_vol, capped at [0.5, 1.5] to avoid extreme leverage/deleveraging
-            const volScale = Math.max(0.5, Math.min(1.5, volTarget / realizedVol));
-            if (Math.abs(volScale - 1.0) > 0.05) { // only scale if >5% deviation
-              for (const sym of Object.keys(newAlloc)) newAlloc[sym] *= volScale;
-              // Re-normalize (excess goes to implicit cash position which costs nothing)
-              const totalWtAfterScale = Object.values(newAlloc).reduce((s, w) => s + w, 0);
-              if (totalWtAfterScale > 0 && totalWtAfterScale < 1.0) {
-                // Reduced exposure — the gap is "cash" (no action needed, weights < 1.0 is fine)
-              } else if (totalWtAfterScale > 1.0) {
-                for (const sym of Object.keys(newAlloc)) newAlloc[sym] /= totalWtAfterScale;
-              }
+      // ── SINGLE de-risking governor: min(vol scale, crash overlay) — NOT a product ──
+      // Previously vol targeting (Moreira & Muir) and the crash overlay (Antonacci
+      // dual momentum + Keller canary breadth) multiplied: 0.5 × 0.5 → 25% equity,
+      // then the DD/CPPI layer cut further. Stacked de-risking layers all fire in
+      // the same episodes (they measure the same crisis), so multiplying them
+      // double-counts the signal and — worse — each re-risks on its own slow
+      // schedule, missing the rebound where forward returns are highest. The most
+      // cautious single signal now sets exposure; the others confirm, not compound.
+      if (Object.keys(newAlloc).length > 0) {
+        // Vol-targeting component (de-risk side only; mild lever-up handled below)
+        let volScale = 1.0;
+        if (volTarget > 0) {
+          const volLookback = Math.min(63, mIdx);
+          const portDailyRets = [];
+          for (let vd = Math.max(0, mIdx - volLookback); vd < mIdx; vd++) {
+            const md = returnsByDateSym[sortedDates[vd]];
+            if (!md) continue;
+            let dRet = 0;
+            for (const [sym, wt] of Object.entries(newAlloc)) {
+              if (md[sym]) dRet += wt * md[sym].ret;
             }
+            portDailyRets.push(dRet);
+          }
+          if (portDailyRets.length >= 21) {
+            const pMean = portDailyRets.reduce((a, b) => a + b, 0) / portDailyRets.length;
+            const pVar = portDailyRets.reduce((a, r) => a + (r - pMean) ** 2, 0) / portDailyRets.length;
+            const realizedVol = Math.sqrt(pVar) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
+            if (realizedVol > 0) volScale = Math.max(0.5, Math.min(1.5, volTarget / realizedVol));
           }
         }
-      }
-
-      // ── Crash-protection overlay: dual momentum (Antonacci 2014) + Faber 200d MA
-      // confirm + canary breadth (Keller & Keuning 2018). Scales EQUITY exposure only
-      // (bonds/alternatives untouched); the freed weight is implicit cash. GEM-style
-      // absolute momentum historically cuts max drawdown from ~51% to under 20%
-      // while keeping equity-like returns — the core lever for beating SPY over a
-      // full cycle is losing less in the crashes.
-      if (crashOverlay.equityScale < 0.999 && Object.keys(newAlloc).length > 0) {
-        for (const sym of Object.keys(newAlloc)) {
-          const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
-          if (ms !== "fixed-income" && ms !== "alternatives") newAlloc[sym] *= crashOverlay.equityScale;
+        // Lever-up: calm markets, scale all positions up toward full investment
+        if (volScale > 1.05) {
+          for (const sym of Object.keys(newAlloc)) newAlloc[sym] *= volScale;
+          const totalWt = Object.values(newAlloc).reduce((s, w) => s + w, 0);
+          if (totalWt > 1.0) for (const sym of Object.keys(newAlloc)) newAlloc[sym] /= totalWt;
+        }
+        // De-risk: the MOST CAUTIOUS single signal governs equity exposure
+        const equityGovernor = Math.min(volScale >= 1 ? 1 : volScale, crashOverlay.equityScale);
+        if (equityGovernor < 0.999) {
+          for (const sym of Object.keys(newAlloc)) {
+            const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
+            if (ms !== "fixed-income" && ms !== "alternatives") newAlloc[sym] *= equityGovernor;
+          }
         }
       }
 
@@ -6165,7 +6174,9 @@ export default function App() {
             const activeThreshold = DRAWDOWN_LEVELS[simDDActiveLevel].threshold;
             if (currentDD < activeThreshold - DRAWDOWN_HYSTERESIS) {
               SimDDRecoveryMonths++;
-              simDDEquityScale = Math.min(1.0, simDDEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[simDDActiveLevel].equityReduction)) / 63);
+              // Fast re-entry in confirmed uptrends (matches backtest)
+              const simReentryDays = simJmStateByMonth[monthKey.slice(0, 7)] === 0 ? 10 : 63;
+              simDDEquityScale = Math.min(1.0, simDDEquityScale + (1.0 - (1.0 - DRAWDOWN_LEVELS[simDDActiveLevel].equityReduction)) / simReentryDays);
               if (simDDEquityScale >= 0.98) {
                 simDDEquityScale = 1.0; simDDActiveLevel = -1; SimDDRecoveryMonths = 0;
                 simDDCounters = new Array(DRAWDOWN_LEVELS.length).fill(0);
@@ -6215,10 +6226,10 @@ export default function App() {
               if (simDur >= 2) shouldEval = true;
             }
           }
-          // Gate 2: semi-annual fallback (matching backtest)
-          if (!shouldEval && mMonth % 6 === 0 && mSinceRebal >= simCooldown) shouldEval = true;
+          // Gate 2: annual fallback (matching backtest)
+          if (!shouldEval && mMonth === 0 && mSinceRebal >= simCooldown) shouldEval = true;
         } else if (!shouldEval) {
-          if (mMonth % 6 === 0 || simJmFlipped) shouldEval = true;
+          if (mMonth === 0 || simJmFlipped) shouldEval = true;
         }
         // Minimum 63 trading day cooldown (trend breaks bypass, matching backtest)
         const simMinCooldown = Math.max(simCooldown, 63);
@@ -6398,36 +6409,36 @@ export default function App() {
         const totalDep = result.reduce((s, r) => s + r.dollars, 0) || optValue;
         result.forEach(r => { newAlloc[r.ticker] = r.dollars / totalDep; });
 
-        // ── Volatility Scaling (matching backtest) ──
-        if (volTarget > 0 && Object.keys(newAlloc).length > 0) {
-          const vlb = Math.min(63, mIdx);
-          const pdr = [];
-          for (let vd = Math.max(0, mIdx - vlb); vd < mIdx; vd++) {
-            const md = returnsByDateSym[sortedDates[vd]]; if (!md) continue;
-            let dr = 0; for (const [s, w] of Object.entries(newAlloc)) { if (md[s]) dr += w * md[s].ret; }
-            pdr.push(dr);
-          }
-          if (pdr.length >= 21) {
-            const pm = pdr.reduce((a, b) => a + b, 0) / pdr.length;
-            const pv = pdr.reduce((a, r) => a + (r - pm) ** 2, 0) / pdr.length;
-            const rv = Math.sqrt(pv) * Math.sqrt(252) * 100;
-            if (rv > 0) {
-              const vs = Math.max(0.5, Math.min(1.5, volTarget / rv));
-              if (Math.abs(vs - 1.0) > 0.05) {
-                for (const s of Object.keys(newAlloc)) newAlloc[s] *= vs;
-                const tw = Object.values(newAlloc).reduce((a, w) => a + w, 0);
-                if (tw > 1.0) for (const s of Object.keys(newAlloc)) newAlloc[s] /= tw;
-              }
+        // ── SINGLE de-risking governor: min(vol scale, crash overlay) — matches backtest ──
+        if (Object.keys(newAlloc).length > 0) {
+          let vs = 1.0;
+          if (volTarget > 0) {
+            const vlb = Math.min(63, mIdx);
+            const pdr = [];
+            for (let vd = Math.max(0, mIdx - vlb); vd < mIdx; vd++) {
+              const md = returnsByDateSym[sortedDates[vd]]; if (!md) continue;
+              let dr = 0; for (const [s, w] of Object.entries(newAlloc)) { if (md[s]) dr += w * md[s].ret; }
+              pdr.push(dr);
+            }
+            if (pdr.length >= 21) {
+              const pm = pdr.reduce((a, b) => a + b, 0) / pdr.length;
+              const pv = pdr.reduce((a, r) => a + (r - pm) ** 2, 0) / pdr.length;
+              const rv = Math.sqrt(pv) * Math.sqrt(252) * 100;
+              if (rv > 0) vs = Math.max(0.5, Math.min(1.5, volTarget / rv));
             }
           }
-        }
-
-        // ── Crash-protection overlay (matches backtest): dual momentum + canary breadth ──
-        const simCrash = computeCrashOverlay(returnsByDateSym, sortedDates, mIdx, simDynamicRF);
-        if (simCrash.equityScale < 0.999 && Object.keys(newAlloc).length > 0) {
-          for (const sym of Object.keys(newAlloc)) {
-            const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
-            if (ms !== "fixed-income" && ms !== "alternatives") newAlloc[sym] *= simCrash.equityScale;
+          if (vs > 1.05) {
+            for (const s of Object.keys(newAlloc)) newAlloc[s] *= vs;
+            const tw = Object.values(newAlloc).reduce((a, w) => a + w, 0);
+            if (tw > 1.0) for (const s of Object.keys(newAlloc)) newAlloc[s] /= tw;
+          }
+          const simCrash = computeCrashOverlay(returnsByDateSym, sortedDates, mIdx, simDynamicRF);
+          const eqGov = Math.min(vs >= 1 ? 1 : vs, simCrash.equityScale);
+          if (eqGov < 0.999) {
+            for (const sym of Object.keys(newAlloc)) {
+              const ms = MACRO_SECTOR_MAP[etfDbMap[sym]?.c] || "other";
+              if (ms !== "fixed-income" && ms !== "alternatives") newAlloc[sym] *= eqGov;
+            }
           }
         }
 
